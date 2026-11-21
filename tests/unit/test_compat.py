@@ -125,3 +125,17 @@ def test_source_black_seconds_respects_bounds_and_cuts():
     assert source_black_seconds(segs, 100.0, 110.0) == 1.9
     assert source_black_seconds(segs, 100.0, 110.0, cuts=[(107.5, 108.5)]) == 1.4
     assert source_black_seconds(segs, 101.0, 104.0) == 0.0
+
+
+def test_facecam_prefers_an_edge_face_over_a_frequent_mid_screen_one():
+    """Seen on a GTA VI stream: the character creator kept the game character's face mid-screen in most
+    samples, while the streamer's webcam sat at the left edge."""
+    from clipstudio.vision.facecam import _cluster_faces, overlay_prior
+    from clipstudio.vision.faces import FaceBox
+
+    game = FaceBox(0.47, 0.30, 0.10, 0.16, 0.9)     # centre of the screen
+    cam = FaceBox(0.07, 0.40, 0.05, 0.08, 0.8)      # left edge, small
+    per_frame = [[game] + ([cam] if i % 2 == 0 else []) for i in range(20)]
+    faces, hit = _cluster_faces(per_frame)
+    assert abs(faces[0].cx - cam.cx) < 0.01 and hit == 0.5
+    assert overlay_prior(game) < 0.3 and overlay_prior(cam) == 1.0

@@ -129,14 +129,17 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
         )
     else:
         raise ValueError(f"unsupported layout mode {plan.mode!r}")
-    tail = f"[base]fps={fps:g}"
+    # start_time=0: if the first decoded frame lands after the seek point (live/HLS recordings whose streams
+    # don't start at 0, or a late keyframe), the first frame is held from 0 so video and audio stay aligned
+    tail = f"[base]fps={fps:g}:start_time=0"
     if cuts:
         # crop keyframes and punches live in uncut clip time, so the cut happens after them;
         # captions are already in cut time and burn in after it
         tail += f",select={keep_expr(cuts)},setpts=N/({fps:g}*TB)"
     if ass_name:
         tail += f",ass={ass_name}"
-    return graph + ";" + tail + ",format=yuv420p[vout]"
+    # hold the last frame if the source runs out of video before the clip ends; the output is cut with -t
+    return graph + ";" + tail + ",tpad=stop_mode=clone:stop_duration=5,format=yuv420p[vout]"
 
 
 VOICE_CHAINS = {
@@ -236,7 +239,9 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
              "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(src),
              "-filter_complex", graph, "-map", "[vout]"]
         if media.has_audio:
-            c += ["-filter_complex", f"{agraph};[amix]{afilt}[aout]", "-map", "[aout]"]
+            # same for audio: silence-pad a late start and a short end, so both streams are exactly out_dur long
+            c += ["-filter_complex", f"{agraph};[amix]aresample=async=1:first_pts=0,{afilt},apad[aout]",
+                  "-map", "[aout]"]
             c += ["-c:a", "aac", "-b:a", ecfg.audio_bitrate, "-ar", "48000", "-ac", "2"]
         if enc == "h264_nvenc":
             c += ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", str(ecfg.crf), "-b:v", "0"]

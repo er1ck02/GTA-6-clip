@@ -27,6 +27,7 @@ log = get_logger("vision")
 EDGE_THR = 18.0        # grey-level step that counts as an edge
 LINE_MIN = 0.7         # persistence a border line needs (texture/noise scores about 0.5)
 FULLFRAME_FACE = 0.06  # face area (fraction of frame) above which this is a face-cam-only stream, not an overlay
+MAX_OVERLAY_AREA = 0.2  # a webcam overlay larger than this share of the frame is really gameplay
 
 
 def _gray(frames: np.ndarray) -> np.ndarray:
@@ -52,19 +53,43 @@ def edge_persistence(frames: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nda
     return pv, ph, g.std(0)
 
 
-def _cluster_faces(per_frame: list[list[FaceBox]]) -> tuple[list[FaceBox], float]:
-    """Largest group of faces at the same place across frames, and its hit rate."""
+def _face_clusters(per_frame: list[list[FaceBox]]) -> list[tuple[list[FaceBox], float]]:
+    """Groups of faces at the same place across frames, each with its hit rate, most frequent first."""
     allf = [(i, b) for i, bs in enumerate(per_frame) for b in bs]
-    if not allf:
-        return [], 0.0
-    best: list[tuple[int, FaceBox]] = []
-    for _, ref in allf:
+    groups: list[list[tuple[int, FaceBox]]] = []
+    used: set[int] = set()
+    order = sorted(range(len(allf)), key=lambda k: -allf[k][1].score)
+    for k in order:
+        if k in used:
+            continue
+        ref = allf[k][1]
         tol = max(0.04, 0.6 * max(ref.w, ref.h))
-        grp = [(i, b) for i, b in allf if abs(b.cx - ref.cx) < tol and abs(b.cy - ref.cy) < tol]
-        if len({i for i, _ in grp}) > len({i for i, _ in best}):
-            best = grp
-    frames_hit = len({i for i, _ in best})
-    return [b for _, b in best], frames_hit / max(1, len(per_frame))
+        members = [j for j, (_, b) in enumerate(allf)
+                   if j not in used and abs(b.cx - ref.cx) < tol and abs(b.cy - ref.cy) < tol]
+        used.update(members)
+        groups.append([allf[j] for j in members])
+    n = max(1, len(per_frame))
+    out = [([b for _, b in g], len({i for i, _ in g}) / n) for g in groups]
+    return sorted(out, key=lambda x: -x[1])
+
+
+def overlay_prior(fb: FaceBox) -> float:
+    """How plausible this face position is for a webcam overlay (1 = edge or corner, lower = screen centre).
+
+    Webcam overlays sit near the frame edges; a face in the middle of the screen is usually the game's own
+    character (a cutscene, a character creator, a third-person camera)."""
+    dx = min(fb.cx, 1 - fb.cx)  # distance to the nearest side, 0..0.5
+    dy = min(fb.cy, 1 - fb.cy)
+    edge = min(dx / 0.5, dy / 0.5)  # 0 at an edge, 1 at the centre
+    return float(np.clip(1.25 - 1.5 * edge, 0.15, 1.0)) if min(dx, dy) > 0.2 else 1.0
+
+
+def _cluster_faces(per_frame: list[list[FaceBox]]) -> tuple[list[FaceBox], float]:
+    """The face group most likely to be a webcam: frequent, and near an edge rather than mid-screen."""
+    clusters = _face_clusters(per_frame)
+    if not clusters:
+        return [], 0.0
+    return max(clusters, key=lambda c: c[1] * overlay_prior(_median_box(c[0])))
 
 
 def _median_box(boxes: list[FaceBox]) -> FaceBox:
@@ -207,6 +232,9 @@ def detect_facecam(frames: np.ndarray, detector: FaceDetector | None) -> Facecam
             if x0 <= fb.cx * W <= x1 and y0 <= fb.cy * H <= y1 and ps >= bscore - 0.05 and (x1 - x0) < 6 * fb.w * W:
                 box, bscore, sides = pb, ps, 4
                 break
+        prior = overlay_prior(fb)
+        bx0, by0, bx1, by1 = box
+        area = (bx1 - bx0) * (by1 - by0) / float(W * H)
         if sides >= 2:
             conf = 0.45 + 0.35 * min(1.0, hit / 0.6) + 0.2 * bscore
         else:
@@ -215,6 +243,12 @@ def detect_facecam(frames: np.ndarray, detector: FaceDetector | None) -> Facecam
             conf = 0.30 + 0.35 * min(1.0, hit / 0.8)
         method = "face+border" if sides >= 2 else "face"
         notes.append(f"face in {hit:.0%} of {n} samples; {sides}/4 border lines found (score {bscore:.2f})")
+        if prior < 1.0:
+            conf *= prior
+            notes.append(f"face sits mid-screen (overlay likelihood {prior:.2f}): probably an in-game character")
+        if area > MAX_OVERLAY_AREA:
+            conf = min(conf, 0.35)
+            notes.append(f"box covers {area:.0%} of the frame: too large for a webcam overlay; not auto-applied")
         return FacecamDetection(region=norm(box), face=face_rect, confidence=round(min(1.0, conf), 3), method=method,
                                 detector=detector.name if detector else "none", samples=n,
                                 face_hit_rate=round(hit, 3), border_score=round(bscore, 3), notes=notes)

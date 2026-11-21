@@ -130,3 +130,35 @@ def test_black_edges_detected_on_a_real_encode(tmp_path):
     assert 0.55 <= lead <= 0.75 and 0.45 <= trail <= 0.65, segs
     # a window that starts later sees no leading black
     assert black_edge_trim(black_segments(src, 2.0, 6.0), 4.0) == (0.0, 0.0)
+
+
+def test_late_video_start_stays_in_sync(tmp_path):
+    """Live/HLS recordings: the video stream starts after the audio. A flash and a beep that coincide in the
+    source must coincide in the clip, and both streams must be the full clip length."""
+    src = tmp_path / "late.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y",
+                    "-itsoffset", "0.6", "-f", "lavfi", "-i",
+                    "testsrc2=size=1280x720:rate=30:duration=20,drawbox=c=white:t=fill:enable='between(t,9.4,9.6)'",
+                    "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000:duration=21",
+                    "-filter_complex", "[1:a]volume='if(between(t,10,10.2),0.9,0.0)':eval=frame[a]",
+                    "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-preset", "ultrafast", "-g", "30",
+                    "-c:a", "aac", str(src)], check=True)
+    cfg = _cfg("audio.normalization=false")
+    media = probe(src)
+    plan = plan_layout(media, cfg.reframing, cfg.video, cfg.captions)
+    for start in (0.0, 4.0):
+        out = tmp_path / f"o{start}.mp4"
+        render_clip(media, plan, start, start + 12.0, None, out, cfg.video, cfg.audio, cfg.export, "cpu",
+                    enhance=cfg.enhance)
+        durs = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "csv=p=0",
+                               str(out)], check=True, capture_output=True, text=True).stdout.split()
+        d = {k: float(v) for k, v in (x.split(",") for x in durs)}
+        assert abs(d["video"] - d["audio"]) < 0.1 and abs(d["video"] - 12.0) < 0.1, d
+        # flash time from luma, beep time from audio level
+        lum = [_frame(out, t / 30).mean() for t in range(int((10 - start - 0.5) * 30), int((10 - start + 0.5) * 30))]
+        flash = (int((10 - start - 0.5) * 30) + int(np.argmax(lum))) / 30
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+                             check=True, capture_output=True).stdout
+        x = np.abs(np.frombuffer(raw, np.int16).astype(float))
+        beep = float(np.argmax(x > 0.3 * x.max())) / 8000
+        assert abs(flash - beep) < 0.1, (start, flash, beep)

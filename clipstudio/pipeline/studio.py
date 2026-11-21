@@ -53,7 +53,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 6,
-                  "facecam": 1, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 4, "qc": 5, "platforms": 1, "edges": 1}
+                  "facecam": 2, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 5, "qc": 5, "platforms": 1, "edges": 1}
 
 
 @dataclass
