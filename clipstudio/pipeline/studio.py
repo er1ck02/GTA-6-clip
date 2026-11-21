@@ -36,9 +36,24 @@ from clipstudio.transcription.base import get_backend, resolve_device
 log = get_logger("studio")
 
 # bump a stage's version when its logic changes so caches invalidate
+def source_black_seconds(segs: list[tuple[float, float]], start: float, end: float,
+                         cuts: list[tuple[float, float]] | None = None) -> float:
+    """Seconds of the absolute ``segs`` that fall inside [start, end] and outside the cut ranges."""
+    total = 0.0
+    for a, b in segs:
+        a, b = max(a, start), min(b, end)
+        if b <= a:
+            continue
+        inside = b - a
+        for ca, cb in cuts or []:
+            inside -= max(0.0, min(b, cb) - max(a, ca))
+        total += max(0.0, inside)
+    return round(total, 3)
+
+
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 6,
-                  "facecam": 1, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 4, "qc": 4, "platforms": 1, "edges": 1}
+                  "facecam": 1, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 4, "qc": 5, "platforms": 1, "edges": 1}
 
 
 @dataclass
@@ -187,9 +202,6 @@ class Studio:
                   lambda: extract_audio_wav(src, p.p("audio"), all_tracks), resume=resume, force=force)
 
         speech_tracks = pick_speech_track(media, cfg.transcription.speech_track)
-        if len(media.audio_streams) > 1:
-            names = ", ".join(f"{s.order}:{s.title or '?'}" for s in media.audio_streams)
-            log.info("audio streams: %s; transcribing %s", names, speech_tracks)
         k_sp = key_of("speech_audio", STAGE_VERSIONS["speech_audio"], k_meta, speech_tracks,
                       cfg.transcription.normalize_speech)
         def do_speech() -> None:
@@ -209,6 +221,9 @@ class Studio:
 
         run_stage(p.state, "speech_audio", k_sp, [p.p("speech"), p.p("speech_tracks")], do_speech,
                   resume=resume, force=force)
+        if len(media.audio_streams) > 1:
+            names = ", ".join(f"{s.order}:{s.title or '?'}" for s in media.audio_streams)
+            log.info("audio streams: %s; transcribing %s", names, self.speech_tracks_used(p) or speech_tracks)
 
         k_tr = key_of("transcribe", STAGE_VERSIONS["transcribe"], k_sp, cfg.section_hash("transcription"))
 
@@ -600,7 +615,7 @@ class Studio:
         media = MediaInfo.load(p.p("media"))
         tr_key = p.state.stage("transcribe").key
         cached: list[str] = []
-        c = self._trim_black_edges(p, c, e, cfg, state, resume, force)
+        c, source_black = self._trim_black_edges(p, c, e, cfg, state, resume, force)
         log.info("clip %s  #%d  %.2f-%.2fs  \"%s\"", c.id, c.rank, c.start, c.end, c.title)
 
         f_plan, f_caps, f_ass, f_srt = d / "cropplan.json", d / "captions.json", d / "captions.ass", d / "captions.srt"
@@ -659,7 +674,8 @@ class Studio:
         def do_qc() -> None:
             track = CaptionTrack.load(f_caps) if caps_on else None
             run_qc(c.id, f_out, c.output_duration, plan, track, f_ass if caps_on else None, cfg.quality,
-                   cfg.captions, expect_audio=media.has_audio, face_detector=self.face_detector()).save(f_qc)
+                   cfg.captions, expect_audio=media.has_audio, face_detector=self.face_detector(),
+                   source_black=source_black).save(f_qc)
 
         r = run_stage(state, "qc", k_q, [f_qc], do_qc, resume=resume, force=force)
         cached += [r.name] if r.cached else []
@@ -696,10 +712,11 @@ class Studio:
         return json.loads((d / "platforms.json").read_text())
 
     def _trim_black_edges(self, p: Project, c: Candidate, e: ClipEdit | None, cfg: Config, state: StateFile,
-                          resume: bool, force: bool) -> Candidate:
-        """Move the clip bounds past black frames at its edges. Bounds the user set are never changed."""
-        if not cfg.enhance.trim_black_edges or (e and (e.start is not None or e.end is not None)):
-            return c
+                          resume: bool, force: bool) -> tuple[Candidate, float]:
+        """Move the clip bounds past black frames at its edges (never bounds the user set).
+
+        Returns the clip and how many seconds of black remain inside it in the source footage, so QC can tell
+        an in-game blackout from black the render introduced."""
         f = p.clip_dir(c.id) / "edges.json"
         src = p.source_path()
         k = key_of("edges", STAGE_VERSIONS["edges"], p.state.data["source"]["fingerprint"], c.start, c.end)
@@ -711,18 +728,20 @@ class Studio:
 
         run_stage(state, "edges", k, [f], do_edges, resume=resume, force=force)
         d = json.loads(f.read_text())
+        segs = [(c.start + a, c.start + b) for a, b in d["black"]]
         lead, trail = d["lead"], d["trail"]
-        if not (lead or trail):
-            return c
-        start, end = round(c.start + lead, 3), round(c.end - trail, 3)
-        if end - start < max(3.0, 0.5 * (c.end - c.start)):
-            log.warning("    clip %s is mostly black (%.1fs at the start, %.1fs at the end); bounds kept",
-                        c.id, lead, trail)
-            return c
-        log.info("    trimmed black edges: %.2fs at the start, %.2fs at the end", lead, trail)
-        return c.model_copy(update={"start": start, "end": end, "duration": round(end - start, 3),
-                                    "peak_time": min(max(c.peak_time, start), end),
-                                    "cuts": normalize_cuts(c.cuts, start, end) if c.cuts else c.cuts})
+        user_bounds = bool(e and (e.start is not None or e.end is not None))
+        if cfg.enhance.trim_black_edges and not user_bounds and (lead or trail):
+            start, end = round(c.start + lead, 3), round(c.end - trail, 3)
+            if end - start < max(3.0, 0.5 * (c.end - c.start)):
+                log.warning("    clip %s is mostly black (%.1fs at the start, %.1fs at the end); bounds kept",
+                            c.id, lead, trail)
+            else:
+                log.info("    trimmed black edges: %.2fs at the start, %.2fs at the end", lead, trail)
+                c = c.model_copy(update={"start": start, "end": end, "duration": round(end - start, 3),
+                                         "peak_time": min(max(c.peak_time, start), end),
+                                         "cuts": normalize_cuts(c.cuts, start, end) if c.cuts else c.cuts})
+        return c, source_black_seconds(segs, c.start, c.end, c.cuts)
 
     @staticmethod
     def voice_track(media: MediaInfo, cfg: Config, used: list[int] | None = None) -> int | None:

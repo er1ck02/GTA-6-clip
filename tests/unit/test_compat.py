@@ -116,3 +116,12 @@ def test_fonts_found_without_fontconfig(tmp_path, monkeypatch):
     finally:
         engine._font_index.cache_clear()
         engine.resolve_font.cache_clear()
+
+
+def test_source_black_seconds_respects_bounds_and_cuts():
+    from clipstudio.pipeline.studio import source_black_seconds
+
+    segs = [(99.0, 100.5), (105.0, 105.4), (108.0, 109.0)]
+    assert source_black_seconds(segs, 100.0, 110.0) == 1.9
+    assert source_black_seconds(segs, 100.0, 110.0, cuts=[(107.5, 108.5)]) == 1.4
+    assert source_black_seconds(segs, 101.0, 104.0) == 0.0

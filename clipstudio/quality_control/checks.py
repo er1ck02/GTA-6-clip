@@ -66,7 +66,11 @@ def _hook_check(ass_path: Path, lines: list[str], hook_lines: list[str], W: int,
 
 def run_qc(clip_id: str, output: Path, expected_duration: float, plan: CropPlan, track: CaptionTrack | None,
            ass_path: Path | None, qcfg: QualityCfg, ccfg: CaptionsCfg, expect_audio: bool,
-           face_detector=None) -> QCReport:
+           face_detector=None, source_black: float = 0.0) -> QCReport:
+    """``source_black``: seconds of black already in the source footage inside the clip (in-game blackouts).
+
+    Black the render added always fails above the limit; black that is in the footage itself is a warning, so a
+    real death screen or fade does not block a clip but is still shown in review."""
     checks: list[QCCheck] = []
 
     # ------------------------------------------------------------ video
@@ -105,8 +109,16 @@ def run_qc(clip_id: str, output: Path, expected_duration: float, plan: CropPlan,
     an = run([ffmpeg_bin(), "-hide_banner", "-nostats", "-i", str(output), "-vf", filt_v, *a_args, "-f", "null", "-"])
     log_txt = an.stderr.decode(errors="replace")
     black = sum(float(m.group(1)) for m in re.finditer(r"black_duration:\s*([\d.]+)", log_txt))
-    checks.append(QCCheck(name="black_frames", group="video", status="pass" if black <= qcfg.max_black_seconds else "fail",
-                          detail=f"{black:.2f}s of black frames", value=round(black, 3)))
+    added = max(0.0, black - source_black - 0.1)  # 0.1 s slack: detector timing on source vs output frames
+    if black <= qcfg.max_black_seconds:
+        b_status, b_detail = "pass", f"{black:.2f}s of black frames"
+    elif added > qcfg.max_black_seconds:
+        b_status = "fail"
+        b_detail = f"{black:.2f}s of black frames ({added:.2f}s not in the source footage)"
+    else:
+        b_status = "warn"
+        b_detail = f"{black:.2f}s of black frames, all in the source footage (in-game blackout or fade)"
+    checks.append(QCCheck(name="black_frames", group="video", status=b_status, detail=b_detail, value=round(black, 3)))
 
     # content sanity: sampled frames must not be flat (catches broken crops / empty composites)
     frames = _gray_frames(["-i", str(output)], "fps=1", 90, 160)

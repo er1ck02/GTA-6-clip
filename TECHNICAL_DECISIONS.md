@@ -425,3 +425,7 @@ recording had a silent mic track. A doctor that checks the thing the pipeline wi
 with a reason, are better than a green check followed by a crash. Edge trimming is automatic because a loading
 screen at the start of a highlight is never wanted; QC stays strict for black inside the clip, where cutting
 would change what the clip shows.
+
+Follow-up from the re-run: the remaining black-frames failure was two in-game blackouts inside the clip, present in
+the source at the same times. QC now gets the seconds of source black inside the rendered window (from the edges
+stage) and fails only black the render added; black from the footage is a warning that review still shows.

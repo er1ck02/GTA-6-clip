@@ -174,3 +174,28 @@ def test_silent_mic_stream_falls_back_to_the_mix(tmp_path, sample_short):
 
     assert sum(len(s.words) for s in Transcript.load(p.p("transcript")).segments) > 10
     assert st.voice_track(probe(src), st.cfg, st.speech_tracks_used(p)) is None  # no ducking under a dead mic
+
+
+def test_qc_black_from_the_source_warns_but_render_black_fails(tmp_path):
+    """A real in-game blackout (seen in an Overwatch session) is a warning; black the render added is a failure."""
+    from clipstudio.core.models import CropKeyframe, CropPlan, Panel, PixelRect
+    from clipstudio.quality_control.checks import run_qc
+
+    out = tmp_path / "blackout.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1080x1920:d=6:r=30",
+                    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=6", "-vf",
+                    "drawbox=c=black:t=fill:enable='between(t,3,3.8)'", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-c:a", "aac", "-af", "volume=0.3", str(out)], check=True)
+    plan = CropPlan(mode="gameplay", source_width=1920, source_height=1080, out_width=1080, out_height=1920,
+                    panels=[Panel(name="gameplay", dest=PixelRect(x=0, y=0, w=1080, h=1920))],
+                    keyframes=[CropKeyframe(t=0, gameplay=PixelRect(x=656, y=0, w=608, h=1080))],
+                    caption_band=(192, 1612))
+    cfg = load_config()
+
+    def black(**kw):
+        rep = run_qc("b", out, 6.0, plan, None, None, cfg.quality, cfg.captions, expect_audio=True, **kw)
+        return next(c for c in rep.checks if c.name == "black_frames")
+
+    assert black().status == "fail"
+    chk = black(source_black=0.8)
+    assert chk.status == "warn" and "source footage" in chk.detail

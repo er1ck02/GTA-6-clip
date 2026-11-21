@@ -43,10 +43,10 @@ _Last updated: 2026-11-21 · version 0.6.0_
 
 ## Test results
 
-Run on 2026-11-21 in the CPU-only sandbox (4 vCPU, 15.7 GB RAM), whisper small int8. **170 passed** (`pytest -q`, 5 min 12 s).
+Run on 2026-11-21 in the CPU-only sandbox (4 vCPU, 15.7 GB RAM), whisper small int8. **172 passed** (`pytest -q`, 5 min 22 s).
 
-- `tests/unit` (156): config validation, captions (chunking, timing, ASS/SRT, hook title), layouts across source sizes and modes, candidates and weights, visual/chat signals, LLM provider chain against fakes, facecam and tracking on synthetic frames, chunked transcription resume, audio graph / punch zoom / cut construction, WAV memory-mapping, Windows behaviour (FFmpeg 9 filter list, cuBLAS check and CPU fallback, NVIDIA DLL folders, Ctrl+Break, fonts without fontconfig), CLI JSON and batch input handling, stage runner.
-- `tests/integration` (14): full pipeline + interrupt + resume; every layout renders and passes QC; auto facecam split + tracking; visual + chat signals pick the right moment; QC fails a broken file; doctor; the HTTP API (analyse, crop/caption edits, render, cuts, split, batch export with platform copies, SSE); game ducking, punch zoom, cuts and platform copies measured in real encodes; black clip edges detected; a silent Mic stream falls back to the mix and still gets a transcript.
+- `tests/unit` (157): config validation, captions (chunking, timing, ASS/SRT, hook title), layouts across source sizes and modes, candidates and weights, visual/chat signals, LLM provider chain against fakes, facecam and tracking on synthetic frames, chunked transcription resume, audio graph / punch zoom / cut construction, WAV memory-mapping, Windows behaviour (FFmpeg 9 filter list, cuBLAS check and CPU fallback, NVIDIA DLL folders, Ctrl+Break, fonts without fontconfig), CLI JSON and batch input handling, stage runner.
+- `tests/integration` (15): full pipeline + interrupt + resume; every layout renders and passes QC; auto facecam split + tracking; visual + chat signals pick the right moment; QC fails a broken file; doctor; the HTTP API (analyse, crop/caption edits, render, cuts, split, batch export with platform copies, SSE); game ducking, punch zoom, cuts and platform copies measured in real encodes; black clip edges detected; a silent Mic stream falls back to the mix and still gets a transcript; QC warns on black that is in the source footage and fails black the render added.
 - **Acceptance runner on the owner's real recordings** (`scripts/acceptance.py`):
   - Valorant, 124 s HEVC 1080p60: **12/12** including a real SIGINT during render then `resume`, and a wheel installed into a fresh venv ([report](docs/acceptance/valorant_2026-11-21.md)).
   - Overwatch, 60 s H.264, Game + Mic tracks: 11/12 on the first run; criterion 12 failed on a real dependency conflict (`mediapipe` needs `opencv-contrib-python`, the project asked for the headless build). Fixed; `pip check` is now clean.
@@ -59,10 +59,16 @@ Run on 2026-11-21 in the CPU-only sandbox (4 vCPU, 15.7 GB RAM), whisper small i
     cuBLAS DLLs from pip were not on the Windows search path while the doctor reported CUDA OK; Ctrl+Break was not
     treated as an interrupt; fonts needed fontconfig; the Mic stream on that recording is silent (about -91 dB) so
     transcription produced 0 words; black frames at clip edges were rendered and failed QC.
+- **Owner's PC, re-run on commit 268cd94** (no PATH workarounds): doctor clean (cuBLAS loads, Arial found in
+  C:\Windows\Fonts, all FFmpeg 9.1 filters, NVENC). Acceptance on Valorant: **12/12** in 63 s, including the real
+  interrupt and resume; the recording's silent Mic stream was detected (-120 dBFS) and the mix transcribed (34 words,
+  0 before). The 45.7-minute Overwatch session ran in 135 s (visual pass 106 s of that); its one clip still failed
+  QC on 0.58 s of black, which turned out to be two in-game blackouts in the middle of the clip (also in the source).
+  QC now reports source black as a warning instead of a failure (TD-26).
 - **2-hour VOD** (synthetic, 64 concatenated copies of the 112 s sample, 4.2 GB, 1080p30): 25 min wall time on 4 vCPU for analysis + 3 rendered clips. Transcription 15.4 min (12 chunks, 2 reused from cache after the run was killed by a container restart), visual pass 7.3 min, candidates 30 s, each clip about 25 s render + QC. All 3 clips passed QC. Peak RSS 2.0 GB.
 - Earlier verification still stands: synthetic stream, the owner's Overwatch/Valorant recordings, workstation driven with Playwright (cuts, split, move, platform chips, effects track: no console errors).
 
-**Not tested yet:** a real GTA stream with a webcam, a real 2+ hour stream (the long test repeats the same 112 s), URL ingestion (video sites are blocked in the sandbox), and macOS. Windows and the GPU path were run on the owner's PC (above); the re-run after the fixes is pending.
+**Not tested yet:** a real GTA stream with a webcam, a real 2+ hour stream (the long test repeats the same 112 s), URL ingestion (video sites are blocked in the sandbox), and macOS. Windows and the GPU path were run on the owner's PC (above).
 
 ## Known issues
 
@@ -72,7 +78,7 @@ Run on 2026-11-21 in the CPU-only sandbox (4 vCPU, 15.7 GB RAM), whisper small i
 - When game and voice share one audio track, game announcer lines (Valorant's "Spike planted", "Last player standing") are transcribed and treated as speech. Use a separate mic track when recording, or set `transcription.speech_track`.
 - Scores on real footage were all below the 0.55 threshold (best 0.53 on Valorant, 0.45 on a 45-minute Overwatch session): thresholds were tuned on synthetic speech and need calibration on real streams.
 - On the GPU, the visual pass is about 77% of analysis time (it decodes on the CPU); hardware decode for that pass is the next speed-up.
-- Black frames in the middle of a clip (a death screen, a scene fade) still fail QC; only the edges are trimmed automatically.
+- Black frames in the middle of a clip that are in the source (a death screen, a fade) give a QC warning, not a failure; only the edges are trimmed automatically.
 - The default centre crop can cut off the crosshair/weapon area in shooters; `fit_blur` or a manual crop X is the workaround until tracking lands.
 - Live 9:16 preview in the UI approximates libass text rendering.
 
