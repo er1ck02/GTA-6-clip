@@ -47,6 +47,7 @@ pip install -r requirements.txt                 # core pipeline (CPU or GPU)
 pip install -r requirements/ui.txt              # workstation UI (FastAPI + uvicorn)
 pip install -r requirements/vision.txt          # facecam auto-detection (MediaPipe + OpenCV)
 pip install -r requirements/ingest.txt          # optional: URL ingestion via yt-dlp
+pip install -r requirements/llm.txt             # optional: LLM re-ranking with Claude
 python -m app.cli doctor
 ```
 
@@ -175,6 +176,28 @@ frame over a blurred fill: never cuts anything off), `facecam_split` (facecam
 on top, gameplay below), `facecam_pip` (full-screen gameplay with the facecam in
 a corner box).
 
+Highlight signals: transcript and loudness always; plus, when available,
+**visual** (`visual` section: one low-resolution pass over the whole video for
+scene cuts, motion, flashes and colour-drained death/arrest screens such as
+GTA's WASTED/BUSTED; with [Tesseract](https://github.com/tesseract-ocr/tesseract)
+installed, on-screen words like WASTED, MISSION PASSED or ELIMINATED are read
+too), **chat** (a chat replay next to the video, e.g. `my_vod.chat.json` from
+TwitchDownloader, a chat-downloader JSON, a YouTube `.live_chat.json` from
+yt-dlp, or a CSV with time and message columns; or `process --chat FILE`) and
+an optional **LLM** re-ranker (`llm` section, off by default). Signals a source
+doesn't have drop out of the weighting rather than scoring zero. Clip edges
+snap to nearby scene cuts when that doesn't cut speech.
+
+LLM re-ranking: set `llm.enabled: true`. Providers are tried in order:
+`anthropic` (Claude via the official SDK, key from `ANTHROPIC_API_KEY`),
+`openai_compatible` (any `/chat/completions` endpoint: set `base_url` and
+`api_key_env`) and `ollama` (local, no key). The top `llm.top_k` candidates'
+transcripts and signal summaries are sent to the provider; it scores, re-titles
+and explains each, the answer is validated, and the final score blends both
+(`llm.weight`). If every provider fails, the heuristic ranking is kept and the
+log says why. Note that with a cloud provider the transcripts leave your
+machine; use `ollama` to keep everything local.
+
 Facecam and tracking (`vision` section): the facecam box is found once per
 source from frames sampled across the whole video (a face that stays in one
 place, plus the overlay's straight border). Only detections at or above
@@ -238,9 +261,12 @@ re-transcribe, and check that QC fails a deliberately broken file.
 
 ## 8. Known limitations
 
-- Highlight detection uses transcript and loudness only (speech windows plus
-  loud audio peaks). Visual, chat and LLM signals are Phase 3. Score thresholds
-  still need calibration on real streams.
+- Visual signals are generic image statistics (cuts, flashes, colour drain)
+  plus optional OCR; they are verified on synthetic footage, not yet on real
+  GTA 6 footage, whose HUD may differ. Score thresholds still need calibration
+  on real streams.
+- The LLM re-ranker is tested against local fake servers only; no real
+  provider call has been made from the development sandbox.
 - Record your mic on its own audio track if you can (OBS, SteelSeries and Medal
   support this): the mic track is detected by name and transcribed alone.
   With one shared track, in-game voice lines get transcribed too.

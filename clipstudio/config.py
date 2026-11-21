@@ -77,11 +77,17 @@ class ScoringWeights(_Strict):
     speech_energy: float = Field(0.10, ge=0)
     opening_hook: float = Field(0.15, ge=0)
     completeness: float = Field(0.10, ge=0)
+    # used only when the source has that signal (visual analysis on / a chat replay file)
+    visual_action: float = Field(0.10, ge=0)
+    game_event: float = Field(0.20, ge=0)
+    chat_activity: float = Field(0.20, ge=0)
 
     @model_validator(mode="after")
     def _not_all_zero(self) -> "ScoringWeights":
-        if sum(self.model_dump().values()) <= 0:
-            raise ValueError("at least one highlight scoring weight must be > 0")
+        base = {k: v for k, v in self.model_dump().items() if k not in ("visual_action", "game_event", "chat_activity")}
+        if sum(base.values()) <= 0:
+            raise ValueError("at least one transcript/audio highlight weight must be > 0 "
+                             "(visual and chat signals are not available for every source)")
         return self
 
 
@@ -166,6 +172,31 @@ class ChatCfg(_Strict):
     keywords: list[str] = Field(default_factory=lambda: [
         "lol", "lmao", "lul", "kekw", "omegalul", "pog", "pogchamp", "poggers", "pogu", "clip", "clip it",
         "w", "ww", "www", "no way", "wtf", "holy", "insane", "oof", "f", "ez", "gg", "monkas", "pepelaugh"])
+
+
+class LLMProvider(_Strict):
+    kind: Literal["anthropic", "openai_compatible", "ollama"]
+    model: str
+    base_url: str | None = None          # openai_compatible / ollama endpoint
+    api_key_env: str | None = None       # name of the environment variable holding the key (never the key)
+
+
+class LLMCfg(_Strict):
+    """Optional re-ranking of the top heuristic candidates by a language model.
+
+    Off by default. When on, the top candidates' transcripts and signal summaries are sent to the
+    first provider that answers; if every provider fails, the heuristic ranking is kept.
+    """
+    enabled: bool = False
+    providers: list[LLMProvider] = Field(default_factory=lambda: [
+        LLMProvider(kind="anthropic", model="claude-opus-5-5", api_key_env="ANTHROPIC_API_KEY"),
+        LLMProvider(kind="ollama", model="llama3.1:8b", base_url="http://localhost:11434"),
+    ])
+    top_k: int = Field(12, ge=1, le=50)
+    weight: float = Field(0.5, ge=0, le=1)   # final = (1-weight)*heuristic + weight*llm
+    effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"  # Anthropic models only
+    timeout_seconds: float = Field(180, gt=0)
+    retitle: bool = True                     # use the model's short title for each clip
 
 
 class VisionCfg(_Strict):
@@ -303,6 +334,7 @@ class Config(_Strict):
     vision: VisionCfg = VisionCfg()
     visual: VisualCfg = VisualCfg()
     chat: ChatCfg = ChatCfg()
+    llm: LLMCfg = LLMCfg()
     video: VideoCfg = VideoCfg()
     captions: CaptionsCfg = CaptionsCfg()
     audio: AudioCfg = AudioCfg()

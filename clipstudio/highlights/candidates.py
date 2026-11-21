@@ -1,11 +1,13 @@
-"""Phase 2 highlight engine: transcript + audio signals, configurable weights.
+"""Highlight engine: transcript, audio, visual and chat signals with configurable weights.
 
-Candidates are built from whole sentences so a clip never starts or ends
-mid-word, scored with explainable features, then de-duplicated.
+Candidates are built from whole sentences (so a clip never starts or ends
+mid-word) and from peaks in the audio, visual and chat signals, scored with
+explainable features, snapped to nearby scene cuts, then de-duplicated.
 
-This is deliberately a transparent heuristic. Phase 3 adds visual and chat
-signals and an optional LLM re-ranking pass over the top candidates; the
-features and per-feature contributions stored here are the LLM's input.
+This is deliberately a transparent heuristic. Signals that are not available
+for a source (no chat file, visual analysis off) drop out of the weighting
+instead of counting as zero. The optional LLM pass (``llm.py``) re-ranks the
+top candidates using the features and contributions stored here.
 """
 from __future__ import annotations
 
@@ -18,7 +20,7 @@ import numpy as np
 
 from clipstudio.audio_analysis.loudness import slice_db
 from clipstudio.config import HighlightsCfg
-from clipstudio.core.models import Candidate, CandidateSet, LoudnessTrack, Transcript, Word
+from clipstudio.core.models import Candidate, CandidateSet, LoudnessTrack, Transcript, VisualTrack, Word
 
 # phrase -> weight. Multi-word phrases are matched on normalised text.
 REACTION_LEXICON: dict[str, float] = {
@@ -32,6 +34,56 @@ LAUGH_WORDS = {"haha", "hahaha", "lol", "lmao", "laughing", "hehe", "ahaha"}
 ACTION_WORDS = {"exploded", "explosion", "explode", "crash", "crashed", "shoot", "shot", "police", "cops",
                 "chase", "wanted", "killed", "kill", "died", "fire", "car", "heist", "bomb", "jump"}
 TERMINAL = re.compile(r"[.!?…]['\")\]]*$")
+
+
+@dataclass
+class Signals:
+    """Optional non-transcript signals for one source."""
+    visual: VisualTrack | None = None
+    chat_rate: np.ndarray | None = None
+    chat_hype: np.ndarray | None = None
+    chat_window: float = 5.0
+    snap_to_cuts: bool = True
+
+    @property
+    def has_chat(self) -> bool:
+        return self.chat_rate is not None and float(self.chat_rate.sum()) > 0
+
+
+EVENT_WEIGHT = {"hud_text": 1.0, "desaturation": 0.8, "flash": 0.55}
+
+
+def visual_features(v: VisualTrack, start: float, end: float) -> dict[str, float]:
+    i0, i1 = int(start * v.sample_fps), int(end * v.sample_fps) + 1
+    mo = np.asarray(v.motion[i0:i1], np.float32)
+    if mo.size:
+        top = np.sort(mo)[-max(1, int(len(mo) * 0.3)):].mean()
+        act = _clip01((float(top) / max(1.0, v.motion_median) - 1.0) / 2.0)
+    else:
+        act = 0.0
+    ev = [EVENT_WEIGHT[e.kind] * (e.strength if e.kind != "hud_text" else 1.0)
+          for e in v.events if e.start < end and e.end > start]
+    return {"visual_action": round(act, 4), "game_event": round(max(ev, default=0.0), 4)}
+
+
+def _event_label(v: VisualTrack | None, start: float, end: float) -> str:
+    if v is None:
+        return ""
+    hud = [e.label for e in v.events if e.kind == "hud_text" and start <= e.start <= end]
+    if hud:
+        return hud[0]
+    kinds = {e.kind for e in v.events if e.start < end and e.end > start}
+    return "death/kill screen" if "desaturation" in kinds else ("flash" if "flash" in kinds else "")
+
+
+def _snap(t: float, cuts: list[float], lo: float, hi: float, sents: list["Sentence"]) -> float:
+    """Nearest scene cut within [t+lo, t+hi] that does not fall inside a sentence; else t."""
+    best = t
+    for c in cuts:
+        if t + lo <= c <= t + hi and not any(s.start < c < s.end for s in sents):
+            if best == t or abs(c - t) < abs(best - t):
+                best = c
+    return best
 
 
 @dataclass
@@ -191,7 +243,8 @@ def _audio_peaks(loud: LoudnessTrack, min_rise_db: float = 6.0, radius_s: float 
     return peaks
 
 
-def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg, media_duration: float) -> CandidateSet:
+def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg, media_duration: float,
+                        signals: Signals | None = None) -> CandidateSet:
     """Two candidate sources, scored the same way and de-duplicated together:
 
     * sentence windows: whole sentences grouped to the target length (padded with
@@ -199,14 +252,26 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
     * audio-peak windows: built around loud moments, so gameplay with little or no
       commentary still produces candidates. Window edges never cut a sentence.
     """
+    sig = signals or Signals()
     weights = cfg.weights.model_dump()
-    wsum = sum(weights.values())
+    # signals that don't exist for this source drop out instead of scoring zero
+    if sig.visual is None:
+        weights.pop("visual_action"), weights.pop("game_event")
+    if not sig.has_chat:
+        weights.pop("chat_activity")
+    wsum = sum(weights.values()) or 1.0
+    cuts = sig.visual.scene_cuts if (sig.visual is not None and sig.snap_to_cuts) else []
     sents = build_sentences(tr)
     raw: list[Candidate] = []
     span = max(1e-6, cfg.maximum_duration - cfg.minimum_duration)
 
     def make(start: float, end: float, source: str, peak: float | None = None) -> None:
         start, end = max(0.0, start), min(media_duration, end)
+        if cuts:
+            s2 = _snap(start, cuts, -1.5, 0.8, sents)
+            e2 = _snap(end, cuts, -0.8, 1.5, sents)
+            if cfg.minimum_duration - 1e-6 <= e2 - s2 <= cfg.maximum_duration + 1e-6 and (peak is None or s2 <= peak <= e2):
+                start, end = s2, e2
         dur = end - start
         if dur < cfg.minimum_duration - 1e-6 or dur > cfg.maximum_duration + 1e-6:
             return
@@ -214,6 +279,11 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
         prev_end = max((s.end for s in sents if s.end <= start + 1e-3), default=0.0)
         next_start = min((s.start for s in sents if s.start >= end - 1e-3), default=media_duration)
         f = compute_features(group, loud, start, end, prev_end, next_start)
+        if sig.visual is not None:
+            f.update(visual_features(sig.visual, start, end))
+        if sig.has_chat:
+            from clipstudio.chat.replay import chat_score
+            f["chat_activity"] = round(chat_score(sig.chat_rate, sig.chat_hype, start, end, sig.chat_window), 4)
         contrib = {k: round(weights[k] * f[k] / wsum, 4) for k in weights}
         score = sum(contrib.values())
         score *= 1.0 - 0.15 * abs(dur - cfg.target_duration) / span
@@ -228,7 +298,10 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
         text = " ".join(s.text for s in group)
         top = sorted(contrib.items(), key=lambda kv: -kv[1])[:3]
         reason = ("Strongest signals: " + ", ".join(f"{k.replace('_', ' ')} ({f[k]:.2f})" for k, _ in top)
-                  + ("" if source == "speech" else "; found from an audio peak"))
+                  + ("" if source == "speech" else f"; found from a{'n' if source[0] in 'aeiou' else ''} {source} peak"))
+        ev_label = _event_label(sig.visual, start, end)
+        if ev_label and f.get("game_event", 0) >= 0.5:
+            reason += f"; on-screen event: {ev_label}"
         if dead_air:
             reason += f"; penalised for {f['silence_fraction']:.0%} dead air"
         pk = peak if peak is not None else (_peak_sentence(group, loud).start if group else start)
@@ -236,9 +309,13 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
             title = _title(group, loud)
         elif group:
             title = _title(group, loud)
+        elif ev_label and f.get("game_event", 0) >= 0.5:
+            title = f"{ev_label.title()} at {_fmt(pk)}"
         else:
-            title = f"Loud moment at {_fmt(pk)} (no speech)"
+            title = f"{'Chat spike' if source == 'chat' else 'Loud moment'} at {_fmt(pk)} (no speech)"
         cat = _category(text, f) if group else ("action" if f["audio_spike"] >= 0.5 else "commentary")
+        if f.get("game_event", 0) >= 0.75 and cat == "commentary":
+            cat = "action"
         cid = "c-" + hashlib.sha1(f"{start:.2f}-{end:.2f}".encode()).hexdigest()[:6]
         raw.append(Candidate(
             id=cid, rank=0, start=round(start, 3), end=round(end, 3), duration=round(dur, 3),
@@ -270,9 +347,19 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
                 start, end = start - before, end + after
             make(start, end, "speech")
 
-    # 2) audio-peak windows
-    for pk in _audio_peaks(loud):
+    # 2) peak windows: loud audio, on-screen events, chat spikes
+    seeds = [(pk, "audio") for pk in _audio_peaks(loud)]
+    if sig.visual is not None:
+        seeds += [(e.start, "on-screen event") for e in sig.visual.events if EVENT_WEIGHT[e.kind] * e.strength >= 0.4]
+    if sig.has_chat:
+        from clipstudio.chat.replay import chat_peaks
+        seeds += [(t, "chat") for t in chat_peaks(sig.chat_rate, sig.chat_window)]
+    for pk, src in seeds:
         start = pk - 0.4 * cfg.target_duration
+        # a scene cut in the pre-roll is a natural start: the shot that leads into the moment
+        pre = [c for c in cuts if start <= c <= pk - 1.0]
+        if pre:
+            start = pre[-1]
         end = start + cfg.target_duration
         for snt in sents:  # never cut a sentence at either edge
             if snt.start < start < snt.end:
@@ -283,7 +370,7 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
             end, start = end - start, 0.0
         if end > media_duration:
             start, end = max(0.0, start - (end - media_duration)), media_duration
-        make(start, end, "audio", peak=pk)
+        make(start, end, src, peak=pk)
 
     raw.sort(key=lambda c: -c.score)
     chosen: list[Candidate] = []

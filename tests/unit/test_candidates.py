@@ -39,7 +39,7 @@ def test_hype_section_ranks_first_and_bounds_hold():
     assert top.category == "reaction"
     for c in cs.candidates:
         assert cfg.minimum_duration <= c.duration <= cfg.maximum_duration + 1e-6
-        assert set(c.contributions) == set(cfg.weights.model_dump())
+        assert set(c.contributions) == set(cs.weights)  # only signals this source has
         assert c.reason and c.transcript
     assert cs.candidates[0].score > cs.candidates[-1].score
 

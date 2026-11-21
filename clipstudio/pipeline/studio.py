@@ -34,8 +34,8 @@ from clipstudio.transcription.base import get_backend, resolve_device
 log = get_logger("studio")
 
 # bump a stage's version when its logic changes so caches invalidate
-STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 1, "transcribe": 2, "loudness": 1, "candidates": 5,
-                  "facecam": 1, "track": 1, "plan": 2, "captions": 3, "render": 3, "qc": 3}
+STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 1, "transcribe": 2, "loudness": 1, "candidates": 6,
+                  "facecam": 1, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 3, "render": 3, "qc": 3}
 
 
 @dataclass
@@ -54,7 +54,9 @@ class Project:
             "speech": self.analysis / "speech.wav", "preview": self.analysis / "preview.mp4",
             "transcript": self.analysis / "transcript.json", "loudness": self.analysis / "loudness.json",
             "candidates": self.root / "candidates.json", "edits": self.root / "edits.json",
-            "facecam": self.analysis / "facecam.json",
+            "candidates_raw": self.analysis / "candidates_heuristic.json",
+            "facecam": self.analysis / "facecam.json", "visual": self.analysis / "visual.json",
+            "chat": self.analysis / "chat.json",
         }[name]
 
     def clip_dir(self, cid: str) -> Path:
@@ -121,7 +123,8 @@ class Studio:
         add_file_log(p.root / "project.log.jsonl")
         return p
 
-    def open_or_create(self, input_path: Path | None = None, url: str | None = None) -> Project:
+    def open_or_create(self, input_path: Path | None = None, url: str | None = None,
+                       chat: Path | None = None) -> Project:
         if (input_path is None) == (url is None):
             raise ClipStudioError("give exactly one of --input or --url")
         if input_path is not None:
@@ -136,6 +139,11 @@ class Studio:
         root = self.projects_dir / pid
         state = StateFile(root / "project.json", {"id": pid, "created": time.time(), "version": __version__})
         state.data["source"] = source
+        if chat is not None:
+            chat = Path(chat).expanduser().resolve()
+            if not chat.is_file():
+                raise ClipStudioError(f"chat file not found: {chat}")
+            state.data["chat_path"] = str(chat)
         state.data["config"] = self.cfg.model_dump(mode="json")
         state.save()
         log.info("project %s (%s)", pid, src.name)
@@ -205,13 +213,104 @@ class Studio:
                   lambda: analyze_loudness(p.p("audio"), cfg.audio_analysis.window_seconds).save(p.p("loudness")),
                   resume=resume, force=force)
 
-        k_c = key_of("candidates", STAGE_VERSIONS["candidates"], k_tr, k_ld, cfg.section_hash("highlights"))
-        run_stage(p.state, "candidates", k_c, [p.p("candidates")],
-                  lambda: generate_candidates(Transcript.load(p.p("transcript")), LoudnessTrack.load(p.p("loudness")),
-                                              cfg.highlights, media.duration).save(p.p("candidates")),
-                  resume=resume, force=force)
+        k_vis = self._visual(p, media, resume, force)
+        k_chat = self._chat(p, media, resume, force)
+        k_c = key_of("candidates", STAGE_VERSIONS["candidates"], k_tr, k_ld, cfg.section_hash("highlights"),
+                     k_vis, k_chat, cfg.chat.window_seconds, cfg.visual.snap_to_cuts)
+
+        def do_candidates() -> None:
+            generate_candidates(Transcript.load(p.p("transcript")), LoudnessTrack.load(p.p("loudness")),
+                                cfg.highlights, media.duration, self.signals(p)).save(p.p("candidates_raw"))
+
+        run_stage(p.state, "candidates", k_c, [p.p("candidates_raw")], do_candidates, resume=resume, force=force)
+
+        # optional LLM re-rank; without it (or if every provider fails) the heuristic order is used
+        k_r = key_of("rank", STAGE_VERSIONS["rank"], k_c, cfg.section_hash("llm") if cfg.llm.enabled else None)
+
+        def do_rank() -> None:
+            cs = CandidateSet.load(p.p("candidates_raw"))
+            if cfg.llm.enabled:
+                from clipstudio.highlights.llm import ProviderError, rerank
+                try:
+                    cs, note = rerank(cs, cfg.llm, cfg.highlights.minimum_score)
+                    log.info("rank: %s", note)
+                    p.state.data["rank_note"] = note
+                except ProviderError as e:
+                    log.warning("LLM re-rank skipped, keeping the heuristic ranking: %s", e)
+                    p.state.data["rank_note"] = f"heuristic only ({e})"
+            else:
+                p.state.data["rank_note"] = "heuristic only (llm.enabled is false)"
+            cs.save(p.p("candidates"))
+
+        run_stage(p.state, "rank", k_r, [p.p("candidates")], do_rank, resume=resume, force=force)
         self.detect_facecam(p, force=force)
         return self.candidates(p)
+
+    # ------------------------------------------------------------------ extra signals
+    def _visual(self, p: Project, media: MediaInfo, resume: bool, force: bool) -> str | None:
+        """Analysis stage: whole-video visual signals. Optional: a failure is logged and skipped."""
+        v = self.cfg.visual
+        if not v.enabled or media.width <= 0:
+            return None
+        from clipstudio.visual_analysis.signals import analyze_visual, ocr_available
+        k = key_of("visual", STAGE_VERSIONS["visual"], p.state.stage("metadata").key, self.cfg.section_hash("visual"),
+                   v.ocr != "off" and ocr_available())
+
+        def do() -> None:
+            def prog(f: float) -> None:
+                self.progress("visual", f)
+                events.publish("progress", stage="visual", progress=round(f, 3))
+            tr = analyze_visual(p.source_path(), media, v, prog)
+            log.info("visual: %s", "; ".join(tr.notes))
+            tr.save(p.p("visual"))
+
+        try:
+            run_stage(p.state, "visual", k, [p.p("visual")], do, resume=resume, force=force)
+        except StageFailed as e:
+            log.warning("visual analysis failed, continuing without it: %s", e)
+            return None
+        return k
+
+    def chat_source(self, p: Project) -> Path | None:
+        if p.state.data.get("chat_path"):
+            return Path(p.state.data["chat_path"])
+        from clipstudio.chat.replay import find_sidecar
+        return find_sidecar(p.source_path())
+
+    def _chat(self, p: Project, media: MediaInfo, resume: bool, force: bool) -> str | None:
+        if not self.cfg.chat.enabled:
+            return None
+        src = self.chat_source(p)
+        if src is None or not src.exists():
+            return None
+        from clipstudio.chat.replay import load_chat
+        st = src.stat()
+        k = key_of("chat", STAGE_VERSIONS["chat"], str(src), st.st_size, int(st.st_mtime))
+
+        def do() -> None:
+            ch = load_chat(src)
+            log.info("chat: %d messages (%s) from %s", len(ch.messages), ch.format, src.name)
+            ch.save(p.p("chat"))
+
+        try:
+            run_stage(p.state, "chat", k, [p.p("chat")], do, resume=resume, force=force)
+        except StageFailed as e:
+            log.warning("chat replay could not be read, continuing without it: %s", e)
+            return None
+        return k
+
+    def signals(self, p: Project):
+        from clipstudio.highlights.candidates import Signals
+        from clipstudio.core.models import ChatTrack, VisualTrack
+        sig = Signals(chat_window=self.cfg.chat.window_seconds, snap_to_cuts=self.cfg.visual.snap_to_cuts)
+        if self.cfg.visual.enabled and p.p("visual").exists() and p.state.stage("visual").status == "done":
+            sig.visual = VisualTrack.load(p.p("visual"))
+        if (self.cfg.chat.enabled and self.chat_source(p) is not None and p.p("chat").exists()
+                and p.state.stage("chat").status == "done"):
+            from clipstudio.chat.replay import activity
+            media = MediaInfo.load(p.p("media"))
+            sig.chat_rate, sig.chat_hype = activity(ChatTrack.load(p.p("chat")), media.duration, self.cfg.chat.keywords)
+        return sig
 
     # ------------------------------------------------------------------ vision
     def face_detector(self):

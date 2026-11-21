@@ -56,3 +56,14 @@ def sample_face(tmp_path_factory) -> Path:
     subprocess.run([sys.executable, str(ROOT / "scripts" / "make_sample_video.py"), str(out), "--short",
                     "--face", str(ROOT / "tests" / "fixtures" / "face_nasa_public_domain.jpg")], check=True)
     return out
+
+
+@pytest.fixture(scope="session")
+def sample_events(tmp_path_factory) -> Path:
+    """Short synthetic stream with a scene cut, a flash and a desaturated WASTED screen at the big moment."""
+    if not (shutil.which("espeak-ng") or shutil.which("espeak")):
+        pytest.skip("espeak-ng not installed; cannot synthesise the sample video")
+    out = tmp_path_factory.mktemp("media") / "sample_events.mp4"
+    subprocess.run([sys.executable, str(ROOT / "scripts" / "make_sample_video.py"), str(out), "--short", "--events"],
+                   check=True)
+    return out

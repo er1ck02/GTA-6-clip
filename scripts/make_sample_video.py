@@ -8,6 +8,8 @@ calm stretches and loud reaction moments over a low game-ambience bed.
 
 With --face, the facecam panel shows that (public-domain) photo, gently moving,
 so face detection and facecam auto-detection can be tested end to end.
+With --events, the reaction moment gets a scene cut before it, a white flash and
+a desaturated "WASTED" screen, to exercise the visual highlight signals.
 
 Requires ffmpeg and espeak-ng (or espeak) on PATH.
 """
@@ -56,6 +58,7 @@ def main() -> int:
     ap.add_argument("--short", action="store_true", help="30 s version for fast tests")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--face", type=Path, help="image shown inside the facecam panel")
+    ap.add_argument("--events", action="store_true", help="add a scene cut, flash and WASTED screen at the big moment")
     a = ap.parse_args()
     tts = shutil.which("espeak-ng") or shutil.which("espeak")
     if not tts:
@@ -94,6 +97,16 @@ def main() -> int:
             f"box=1:boxcolor=black@0.5:boxborderw=8,"
             f"drawtext=text='%{{pts\\:hms}}':x=w-tw-40:y=40:fontsize=36:fontcolor=white:box=1:boxcolor=black@0.5[v]"
         )
+        if a.events:
+            cut, f0, d0 = (6.5, 9.0, 9.5) if a.short else (46.0, 53.0, 53.5)
+            vf = vf.replace("[0:v]hue=s=0.6,eq=brightness=-0.05[bg];",
+                            f"[0:v]hue=s=0.6,eq=brightness=-0.05,hue=h=150:enable='gte(t,{cut})'[bg];")
+            vf = vf.replace("[g2]drawtext=text='SYNTHETIC SAMPLE",
+                            f"[g2]drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='between(t,{f0},{f0 + 0.4})',"
+                            f"hue=s=0:enable='between(t,{d0},{d0 + 3})',"
+                            f"drawtext=text='WASTED':fontsize=150:fontcolor=0xC81E1E:borderw=5:bordercolor=black:"
+                            f"x=(w-tw)/2:y=(h-th)/2:enable='between(t,{d0},{d0 + 3})',"
+                            f"drawtext=text='SYNTHETIC SAMPLE")
         extra = []
         if a.face:
             # photo (cover-scaled into the 480x300 panel, drifting slightly) instead of the drawn 'head'

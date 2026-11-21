@@ -299,3 +299,50 @@ into the camera panel. In split and PiP layouts the gameplay crop is shifted
 off the facecam overlay (plus a 1 % margin for its border) when that costs at
 most `reframing.avoid_facecam_shift` (12 % of the width); otherwise it is left
 and the overlap is accepted.
+
+
+## TD-19 · Visual highlight signals from one cheap pass, OCR only at events
+
+**Decision.** Decode the whole source once at 4 fps, 128 px wide (streamed, never
+held in memory) and compute brightness, saturation, motion and a 48-bin colour
+histogram change per sample. Scene cuts are histogram jumps ≥ 0.35 and 3x the
+local median; flashes are brief brightness jumps; "desaturation" is colour
+draining to < 45 % of the minute's median for ≥ 1.2 s. Tesseract OCR (optional)
+runs only at those event moments, on the centre band, using a saturation mask
+so coloured HUD text on a grey death screen is legible.
+
+**Why.** GTA's WASTED/BUSTED and most games' death or kill-cam screens drain
+colour; explosions flash. These statistics need no model, no game-specific
+templates (GTA 6's exact HUD is unknown to us) and cost one decode. OCR on every
+frame would be far too slow; at events it is a handful of calls. FFmpeg's
+`scdet` and PySceneDetect were considered; computing cuts in the same pass
+avoids a second decode of multi-hour files.
+
+## TD-20 · Chat replay as a signal, imported not downloaded
+
+**Decision.** Read chat exports the user already has (TwitchDownloader JSON,
+chat-downloader JSON, yt-dlp YouTube live chat, CSV), found automatically next
+to the video. Score = lift of the busiest 5 s of chat over the stream's median
+rate (looking 4 s past the clip end because chat lags), plus the share of hype
+keywords. Chat spikes also seed candidate windows, shifted 4 s earlier.
+
+**Why.** Chat is the strongest crowd signal for Twitch VODs, but downloading it
+means platform APIs and terms the user should control. Importing files keeps
+the studio offline and lets any tool produce them.
+
+## TD-21 · LLM as an optional re-ranker with a provider chain
+
+**Decision.** The heuristic stays the default and defines clip boundaries. When
+`llm.enabled`, the top-k candidates (transcript, timing, signal summary) go to
+the first provider in `llm.providers` that returns a valid answer: Claude via
+the official `anthropic` SDK (JSON-schema structured output, server-side refusal
+fallback), any OpenAI-compatible endpoint, or local Ollama. Answers are
+validated with pydantic; unknown ids are ignored, unjudged candidates keep
+their score; final = (1 - w) heuristic + w LLM. Any failure falls back to the
+heuristic order with the reason logged.
+
+**Why.** The reference projects found LLM-only picking worse than heuristics on
+long videos (clipper) and valued provider fallbacks (PeakCut). Re-ranking the
+shortlist uses the model where it adds the most (context, humour, "does this
+make sense alone") at a bounded cost, and keeps the studio fully usable
+offline.

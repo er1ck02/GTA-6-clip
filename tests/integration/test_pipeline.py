@@ -100,6 +100,34 @@ def test_auto_facecam_split_and_tracking(tmp_path, sample_face):
     assert checks["crop_speed"].status == "pass" and checks["crop_jitter"].status == "pass"
 
 
+@needs_whisper
+def test_visual_and_chat_signals_drive_candidates(tmp_path, sample_events):
+    import json
+    import shutil as sh
+    vid = tmp_path / "vod.mp4"
+    sh.copy(sample_events, vid)
+    # chat replay next to the video: steady trickle, then a burst right after the WASTED screen
+    comments = [{"content_offset_seconds": float(t), "commenter": {"display_name": "u"}, "message": {"body": "hi"}}
+                for t in range(0, 30, 4)]
+    comments += [{"content_offset_seconds": 10.5 + i * 0.05, "commenter": {"display_name": f"u{i}"},
+                  "message": {"body": "KEKW no way"}} for i in range(40)]
+    (tmp_path / "vod.chat.json").write_text(json.dumps({"comments": comments}))
+    st = Studio(_cfg(tmp_path))
+    p = st.open_or_create(input_path=vid)
+    cs = st.analyze(p)
+    assert p.state.stage("visual").status == "done" and p.state.stage("chat").status == "done"
+    assert {"game_event", "chat_activity", "visual_action"} <= set(cs.weights)
+    top = cs.candidates[0]
+    assert top.start <= 9.6 <= top.end
+    assert top.features["game_event"] >= 0.8 and top.features["chat_activity"] >= 0.5
+    from clipstudio.core.models import VisualTrack
+    vt = VisualTrack.load(p.p("visual"))
+    assert 6.5 in vt.scene_cuts
+    from clipstudio.visual_analysis.signals import ocr_available
+    if ocr_available():
+        assert any(e.label == "WASTED" for e in vt.events)
+
+
 def test_qc_flags_broken_output(tmp_path):
     """QC must fail a black, silent, wrong-size file instead of calling it done."""
     from clipstudio.core.models import CropKeyframe, CropPlan, Panel, PixelRect

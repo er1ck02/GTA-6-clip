@@ -109,7 +109,7 @@ class MediaPipeFaces(FaceDetector):
         self._det = vision.FaceDetector.create_from_options(vision.FaceDetectorOptions(
             base_options=BaseOptions(model_asset_path=str(model)), min_detection_confidence=min_conf))
         # close before interpreter teardown; MediaPipe's own __del__ fails noisily at exit otherwise
-        atexit.register(self.close)
+        atexit.register(self._close_at_exit)
 
     def _detect_one(self, rgb: np.ndarray) -> list[FaceBox]:
         h, w = rgb.shape[:2]
@@ -120,6 +120,13 @@ class MediaPipeFaces(FaceDetector):
             out.append(FaceBox(bb.origin_x / w, bb.origin_y / h, bb.width / w, bb.height / h,
                                float(d.categories[0].score) if d.categories else 0.5))
         return out
+
+    def _close_at_exit(self) -> None:
+        det = getattr(self, "_det", None)
+        self.close()
+        if det is not None:
+            # the closed object would try to close again from __del__ during teardown
+            type(det).__del__ = lambda _self: None
 
     def close(self) -> None:
         det, self._det = getattr(self, "_det", None), None

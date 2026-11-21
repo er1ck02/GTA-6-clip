@@ -40,6 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--input", type=Path)
     src.add_argument("--url")
+    p.add_argument("--chat", type=Path, help="chat replay file (TwitchDownloader / chat-downloader JSON, "
+                   "YouTube .live_chat.json, CSV). A <video>.chat.json next to the video is found automatically")
     p.add_argument("--min-duration", type=float)
     p.add_argument("--max-duration", type=float)
     p.add_argument("--target-duration", type=float)
@@ -142,7 +144,7 @@ def cmd_process(a) -> int:
     cfg = _cfg(a)
     st = Studio(cfg)
     log.info("device: %s | profile: %s | whisper: %s", st.device, cfg.processing.profile, cfg.transcription.model)
-    p = st.open_or_create(input_path=a.input, url=a.url)
+    p = st.open_or_create(input_path=a.input, url=a.url, chat=a.chat)
     cs = st.analyze(p, force=a.force)
     _print_candidates(cs)
     top = cfg.export.auto_render_top if a.top is None else a.top

@@ -1,6 +1,6 @@
 # Development status
 
-_Last updated: 2026-11-21 · version 0.3.0_
+_Last updated: 2026-11-21 · version 0.4.0_
 
 ## Milestones
 
@@ -8,7 +8,7 @@ _Last updated: 2026-11-21 · version 0.3.0_
 |---|---|
 | 1. Environment and architecture | **Done.** Environment doctor, architecture, tool evaluation, project structure, typed interfaces. |
 | 2. First working pipeline | **Done.** Local video → metadata → transcription → ranked candidates → selection/adjustment → 9:16 crop → word-timed captions → MP4 → QC. |
-| 3. Intelligent highlight detection | Not started. Transcript + loudness signals exist; scene, HUD, chat and LLM signals are next. |
+| 3. Intelligent highlight detection | **Done (first version).** Visual pass (scene cuts, motion, flashes, desaturated death screens, optional Tesseract OCR of HUD words), chat replay (4 formats, rate + hype keywords), scene-cut snapping, event and chat seeded windows, optional LLM re-ranker (Claude / OpenAI-compatible / Ollama, validated JSON, provider fallbacks), chunked resumable transcription. |
 | 4. Advanced tracking | **Done (first version).** Facecam auto-detection (MediaPipe BlazeFace / OpenCV Haar + persistent-border search), motion-based gameplay tracking with smoothed keyframes, animated crops in the renderer, `auto` and `facecam_pip` layouts, real tracking QC, live boxes and moving crop in the workstation. |
 | 5. Audio and visual enhancements | Partial: two-pass loudness normalisation and optional light voice EQ/compression. Nothing else. |
 | 6. User interface | **First version working.** Local workstation wired to the real API: Program/Source with live crop + facecam boxes, Media Bin, Inspector, live 9:16 Output with render + QC, multitrack timeline, live Clipping Desk. |
@@ -29,6 +29,9 @@ _Last updated: 2026-11-21 · version 0.3.0_
 - Facecam auto-detection once per source (stage `facecam`): synthetic stream with a real face in a bordered panel found at confidence 0.98 with both MediaPipe and OpenCV; the user's Valorant and Overwatch recordings (no webcam) correctly produce no facecam (a gloved first-person hand is held at 0.50, below the 0.6 threshold).
 - Gameplay tracking per clip (stage `track`): crop follows the moving subject on the synthetic stream (verified in the rendered pixels: a 203 px pan at the planned time), holds centre under frame-wide motion. QC checks pan speed, direction reversals and that a face is visible in the rendered facecam panel.
 - Captions: font-measured wrapping, active-word highlight with scale pop, 4 presets + custom presets, safe margins, avoidance of the facecam panel, profanity masking, ASS + SRT export, hand-edited tracks preserved.
+- Visual signals verified on a synthetic stream with a hard cut, white flash and a desaturated red WASTED screen: cut found at the exact second, flash and colour drain found, OCR reads WASTED (Tesseract 5.3). With a chat replay next to the video, the top candidate covers the event with game_event 1.0 and chat_activity above 0.5.
+- Chunked transcription: interrupted multi-chunk runs resume with only the unfinished chunk re-transcribed (unit-tested with a fake model; the real model path is exercised whenever audio exceeds `transcription.chunk_seconds`).
+- LLM re-ranking: provider fallback chain, JSON-schema validation, refusal handling and score blending tested against local fake Ollama/OpenAI servers and a mocked Anthropic client. Not run against a real provider.
 - Render: one FFmpeg pass (trim, composite, captions, two-pass loudnorm), libx264 or NVENC with automatic fallback.
 - QC per clip: file, full decode, resolution, aspect, duration, black frames, flat frames, audio presence, A/V stream sync, integrated loudness, true peak, sample-peak clipping, long silence, caption overlap/timeline/word coverage/sync, **caption pixels rendered by libass vs safe area and protected regions**, crop bounds and jumps. Unimplemented checks report `skip`, never `pass`.
 - Resumable stages with cache keys; Ctrl+C marks the stage `interrupted`; `resume` continues; caption-only changes don't re-plan or re-transcribe.
@@ -68,7 +71,7 @@ Dev: pytest, httpx, espeak-ng (sample video synthesis).
 ## Next tasks
 
 1. Run on real GTA streams on the user's PC (doctor + `process` + `ui`), calibrate weights and `minimum_score` from the results.
-2. Phase 3: scene cuts (PySceneDetect or FFmpeg `scdet`) for boundary snapping; GTA HUD detection (WASTED/BUSTED) on sampled frames; Twitch chat replay ingestion + spike signal; LLM re-ranker with provider abstraction (Ollama, OpenAI-compatible, Anthropic) and validated JSON output; chunked resumable transcription.
+2. Phase 3 follow-ups: calibrate visual/chat weights on real GTA 6 streams; one real LLM provider run; chat download helpers (the user exports chat themselves today).
 3. Phase 4 follow-ups: test facecam detection on real webcam streams; per-segment layouts inside one clip; optional YOLO object path as an alternative tracker input.
 4. UI: split/move segments, effects track, batch export, platform presets with per-platform encodes.
 5. `--json` output on every CLI command so agents can drive the studio.

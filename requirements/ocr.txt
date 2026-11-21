@@ -1,0 +1,3 @@
+# Optional: read on-screen HUD words (WASTED, MISSION PASSED...). Also install the Tesseract program:
+#   Windows: winget install UB-Mannheim.TesseractOCR   macOS: brew install tesseract   Linux: apt install tesseract-ocr
+pytesseract>=0.3.10

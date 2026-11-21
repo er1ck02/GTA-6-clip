@@ -32,6 +32,20 @@ highlights:
     speech_energy: 0.10
     opening_hook: 0.15
     completeness: 0.10
+    visual_action: 0.10    # these three count only when the signal exists for the source
+    game_event: 0.20
+    chat_activity: 0.20
+
+visual:                    # one low-res pass over the whole video
+  enabled: true
+  sample_fps: 4
+  snap_to_cuts: true
+  ocr: auto                # auto: use Tesseract if installed | on | off
+  ocr_words: [WASTED, BUSTED, MISSION PASSED, MISSION FAILED, ELIMINATED, VICTORY, DEFEAT, KNOCKED]
+
+chat:                      # used when a chat replay file sits next to the video, or with --chat
+  enabled: true
+  window_seconds: 5
 
 reframing:
   mode: auto               # auto | gameplay | fit_blur | facecam_split | facecam_pip
