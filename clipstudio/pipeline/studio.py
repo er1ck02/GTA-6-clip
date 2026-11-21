@@ -21,13 +21,15 @@ from clipstudio.core import events
 from clipstudio.core.errors import ClipStudioError, MediaError, StageFailed
 from clipstudio.core.logging import add_file_log, get_logger
 from clipstudio.core.models import (ActionTrack, Candidate, CandidateSet, CaptionTrack, CropPlan, FacecamDetection,
-                                    LoudnessTrack, MediaInfo, QCReport, Transcript, VisualTrack)
+                                    LoudnessTrack, MediaInfo, QCReport, Transcript, VisualTrack, normalize_cuts,
+                                    remap_words)
 from clipstudio.highlights.candidates import generate_candidates
 from clipstudio.ingestion.sources import download_url, file_fingerprint, job_id_for_file, job_id_for_url, validate_local
 from clipstudio.media.ffmpeg import extract_audio_wav, pick_speech_track, probe
 from clipstudio.pipeline.project import ClipEdit, Edits, StateFile, key_of, run_stage
 from clipstudio.quality_control.checks import run_qc
 from clipstudio.reframing.layout import plan_layout, resolve_facecam
+from clipstudio.rendering.platforms import export_platforms
 from clipstudio.rendering.render import punch_times, render_clip
 from clipstudio.transcription.base import get_backend, resolve_device
 
@@ -35,7 +37,7 @@ log = get_logger("studio")
 
 # bump a stage's version when its logic changes so caches invalidate
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 1, "transcribe": 2, "loudness": 1, "candidates": 6,
-                  "facecam": 1, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 4, "qc": 4}
+                  "facecam": 1, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 4, "qc": 4, "platforms": 1}
 
 
 @dataclass
@@ -82,6 +84,13 @@ class ClipResult:
     qc: QCReport
     seconds: float
     cached_stages: list[str] = field(default_factory=list)
+    platforms: list[dict] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {"clip_id": self.clip_id, "output": str(self.output), "qc_passed": self.qc.passed,
+                "qc_summary": self.qc.summary(), "seconds": self.seconds, "cached_stages": self.cached_stages,
+                "platforms": self.platforms,
+                "failed_checks": [{"name": c.name, "detail": c.detail} for c in self.qc.checks if c.status == "fail"]}
 
 
 class Studio:
@@ -429,6 +438,7 @@ class Studio:
         """Generated candidates with the user's edits applied on top."""
         cs = CandidateSet.load(p.p("candidates"))
         edits = p.edits()
+        cs.candidates += [Candidate(**d) for d in edits.added.values()]
         for c in cs.candidates:
             e = edits.clips.get(c.id)
             if not e:
@@ -439,6 +449,9 @@ class Studio:
                 c.start = e.start if e.start is not None else c.start
                 c.end = e.end if e.end is not None else c.end
                 c.duration = round(c.end - c.start, 3)
+                c.user_adjusted = True
+            if e.cuts:
+                c.cuts = normalize_cuts(e.cuts, c.start, c.end)
                 c.user_adjusted = True
         return cs
 
@@ -472,15 +485,47 @@ class Studio:
                         self.cfg.highlights.minimum_duration)
         if e.facecam_region is not None:
             Rect(**e.facecam_region)  # validate
+        if e.cuts is not None:
+            e.cuts = normalize_cuts(e.cuts, start, end) or None
+            if e.cuts and end - start - sum(b - a for a, b in e.cuts) < 1.0:
+                raise ClipStudioError("cuts would leave less than 1 s of clip")
         edits.clips[c.id] = e
         p.save_edits(edits)
         self._shift_edited_captions(p, c.id, old_start, start, end)
         return self.candidates(p).get(c.id)
 
+    def split_clip(self, p: Project, cid: str, at: float) -> tuple[Candidate, Candidate]:
+        """Split a clip in two at source time ``at``: the clip keeps the first part, a new clip gets the rest."""
+        cs = self.candidates(p)
+        c = cs.get(cid)
+        if not (c.start + 1.0 <= at <= c.end - 1.0):
+            raise ClipStudioError(f"split point {at:.2f}s must be at least 1 s inside the clip ({c.start:.2f}-{c.end:.2f}s)")
+        at = round(at, 3)
+        ids = {x.id for x in cs.candidates}
+        n = 2
+        while f"{c.id}-{n}" in ids:
+            n += 1
+        new = c.model_copy(update={
+            "id": f"{c.id}-{n}", "rank": max(x.rank for x in cs.candidates) + 1, "start": at, "end": c.end,
+            "duration": round(c.end - at, 3), "peak_time": min(max(c.peak_time, at), c.end),
+            "title": f"{c.title} (part {n})", "status": "pending", "user_adjusted": True,
+            "cuts": normalize_cuts(c.cuts, at, c.end)})
+        edits = p.edits()
+        edits.added[new.id] = new.model_dump(mode="json")
+        e = edits.clips.get(c.id, ClipEdit())
+        e.end = at
+        e.cuts = normalize_cuts(c.cuts, c.start, at) or None
+        edits.clips[c.id] = e
+        p.save_edits(edits)
+        self._shift_edited_captions(p, c.id, c.start, c.start, at)  # drop hand-edited captions past the split
+        log.info("split %s at %.2fs -> %s", c.id, at, new.id)
+        out = self.candidates(p)
+        return out.get(c.id), out.get(new.id)
+
     def _shift_edited_captions(self, p: Project, cid: str, old_start: float, new_start: float, new_end: float) -> None:
         """Keep hand-edited captions on the same source moment when the clip is trimmed."""
         f = p.clip_dir(cid) / "captions.json"
-        if abs(old_start - new_start) < 1e-6 or not f.exists():
+        if not f.exists():
             return
         track = CaptionTrack.load(f)
         if not track.edited:
@@ -516,7 +561,8 @@ class Studio:
                 cfg.captions.resolved_style()
         return cfg
 
-    def render(self, p: Project, clip_ids: list[str], force: bool = False) -> list[ClipResult]:
+    def render(self, p: Project, clip_ids: list[str], force: bool = False,
+               platforms: list[str] | None = None) -> list[ClipResult]:
         self.verify_source(p)
         results = []
         requested = set(p.state.data.get("requested_clips", []))
@@ -525,10 +571,10 @@ class Studio:
         p.state.data["requested_clips"] = sorted(requested | set(ids))
         p.state.save()
         for cid in ids:
-            results.append(self.render_one(p, cid, force=force))
+            results.append(self.render_one(p, cid, force=force, platforms=platforms))
         return results
 
-    def render_one(self, p: Project, cid: str, force: bool = False) -> ClipResult:
+    def render_one(self, p: Project, cid: str, force: bool = False, platforms: list[str] | None = None) -> ClipResult:
         t0 = time.perf_counter()
         resume = self.cfg.processing.resume_enabled and self.cfg.processing.cache_enabled
         c = self.candidates(p).get(cid)
@@ -560,7 +606,7 @@ class Studio:
         caps_on = cfg.captions.enabled
         hook = c.title if cfg.enhance.hook_title else None
         k_cap = key_of("captions", STAGE_VERSIONS["captions"], tr_key, k_plan, c.start, c.end, cfg.section_hash("captions"),
-                       hook, cfg.enhance.hook_title_seconds if hook else None)
+                       hook, cfg.enhance.hook_title_seconds if hook else None, c.cuts)
 
         def do_captions() -> None:
             # a hand-corrected caption track is preserved; only its ASS/SRT are regenerated
@@ -568,8 +614,8 @@ class Studio:
                 track = CaptionTrack.load(f_caps)
                 log.info("    using hand-edited captions")
             else:
-                words = Transcript.load(p.p("transcript")).words_between(c.start, c.end)
-                track = build_caption_track(words, c.start, c.end, cfg.captions, plan)
+                words = remap_words(Transcript.load(p.p("transcript")).words_between(c.start, c.end), c.cuts)
+                track = build_caption_track(words, c.start, c.start + c.output_duration, cfg.captions, plan)
                 track.save(f_caps)
             write_ass(track, cfg.captions.resolved_style(), plan, f_ass, hook, cfg.enhance.hook_title_seconds)
             if cfg.captions.export_srt:
@@ -583,12 +629,13 @@ class Studio:
         punches = self.punches(p, c, cfg)
         k_r = key_of("render", STAGE_VERSIONS["render"], k_plan, k_cap if caps_on else None, c.start, c.end,
                      p.state.data["source"]["fingerprint"], cfg.section_hash("video", "audio", "export", "enhance"),
-                     f_ass.read_text() if caps_on else None, voice, punches)
+                     f_ass.read_text() if caps_on else None, voice, punches, c.cuts)
         state.data["punches"] = punches
         r = run_stage(state, "render", k_r, [f_out],
                       lambda: render_clip(media, plan, c.start, c.end, f_ass if caps_on else None, f_out,
                                           cfg.video, cfg.audio, cfg.export, self.device,
-                                          voice_track=voice, enhance=cfg.enhance, punches=punches),
+                                          voice_track=voice, enhance=cfg.enhance, punches=punches,
+                                          cuts=c.rel_cuts()),
                       resume=resume, force=force, retries=1)
         cached += [r.name] if r.cached else []
 
@@ -596,7 +643,7 @@ class Studio:
 
         def do_qc() -> None:
             track = CaptionTrack.load(f_caps) if caps_on else None
-            run_qc(c.id, f_out, c.end - c.start, plan, track, f_ass if caps_on else None, cfg.quality,
+            run_qc(c.id, f_out, c.output_duration, plan, track, f_ass if caps_on else None, cfg.quality,
                    cfg.captions, expect_audio=media.has_audio, face_detector=self.face_detector()).save(f_qc)
 
         r = run_stage(state, "qc", k_q, [f_qc], do_qc, resume=resume, force=force)
@@ -611,7 +658,27 @@ class Studio:
             for ch in qc.checks:
                 if ch.status == "fail":
                     log.error("      fail: %s: %s", ch.name, ch.detail)
-        return ClipResult(c.id, f_out, qc, round(time.perf_counter() - t0, 2), cached)
+        plats = self._platforms(state, c, cfg, f_out, qc, platforms, resume, force, k_r)
+        return ClipResult(c.id, f_out, qc, round(time.perf_counter() - t0, 2), cached, plats)
+
+    def _platforms(self, state: StateFile, c: Candidate, cfg: Config, f_out: Path, qc: QCReport,
+                   platforms: list[str] | None, resume: bool, force: bool, k_r: str) -> list[dict]:
+        """Per-platform copies of a clip that passed QC."""
+        names = cfg.export.platforms if platforms is None else platforms
+        if not names:
+            return []
+        if not qc.passed:
+            log.error("    platform copies skipped: QC failed")
+            return []
+        presets = {n: cfg.export.platform_presets[n].model_dump() for n in names if n in cfg.export.platform_presets}
+        k_pl = key_of("platforms", STAGE_VERSIONS["platforms"], k_r, presets, sorted(names), c.title, c.description,
+                      cfg.export.crf, cfg.export.preset)
+        d = f_out.parent / "platforms"
+        outs = [d / f"{f_out.stem}.{n}.mp4" for n in names]
+        run_stage(state, "platforms", k_pl, outs + [d / "platforms.json"],
+                  lambda: export_platforms(f_out, d, cfg.export, c.title, c.description, names),
+                  resume=resume, force=force)
+        return json.loads((d / "platforms.json").read_text())
 
     @staticmethod
     def voice_track(media: MediaInfo, cfg: Config) -> int | None:
@@ -631,6 +698,8 @@ class Studio:
             vt = VisualTrack.load(p.p("visual"))
             evs = sorted((ev for ev in vt.events if c.start <= ev.start < c.end), key=lambda ev: -ev.strength)
             pts += [ev.start - c.start for ev in evs]
+        rc = c.rel_cuts()
+        pts = [t for t in pts if not any(a - 0.2 <= t < b for a, b in rc)]
         return punch_times(pts, c.end - c.start, e.punch_max)
 
     def preview(self, p: Project, cid: str) -> tuple[Candidate, CropPlan, CaptionTrack | None]:
@@ -651,14 +720,14 @@ class Studio:
             if f_caps.exists() and CaptionTrack.load(f_caps).edited:
                 track = CaptionTrack.load(f_caps)
             else:
-                words = Transcript.load(p.p("transcript")).words_between(c.start, c.end)
-                track = build_caption_track(words, c.start, c.end, cfg.captions, plan)
+                words = remap_words(Transcript.load(p.p("transcript")).words_between(c.start, c.end), c.cuts)
+                track = build_caption_track(words, c.start, c.start + c.output_duration, cfg.captions, plan)
         return c, plan, track
 
     def save_captions(self, p: Project, cid: str, track: CaptionTrack) -> CaptionTrack:
         """Store a hand-corrected caption track; it is preserved across re-renders."""
         c = self.candidates(p).get(cid)
-        dur = c.end - c.start
+        dur = c.output_duration
         chunks = sorted(track.chunks, key=lambda ch: ch.start)
         for i, ch in enumerate(chunks):
             if not (0 <= ch.start < ch.end <= dur + 0.05):

@@ -1,11 +1,13 @@
 // Multitrack sequence for the selected clip: source thumbs + trim, captions (retime), face, audio, crop keyframes, effects.
-import { S, $, h, on, cand, P, api, fmtT, clamp, round, chunkText, activeChunk, layoutOf, hasFacePanel } from './core.js';
-import { video, patchClip, saveCaptions } from './actions.js';
+import { S, $, h, on, cand, P, api, fmtT, clamp, round, chunkText, activeChunk, layoutOf, hasFacePanel, toast, outT, srcT, outDur, relCuts } from './core.js';
+import { video, patchClip, saveCaptions, setCuts, splitAtPlayhead } from './actions.js';
 import { selectChunk, onChunkSelect } from './inspector.js';
 
 let area, win = null, winKey = '', wave = null, waveKey = '', tip;
 let trim = null;     // {which, start, end} while dragging a trim handle
 let capDrag = null;  // {i, edge, track}
+let cutDrag = null;  // {a, b} while shift-dragging a new cut
+let moveMode = false, moveDrag = null;  // MOVE tool: drag the clip range to slide it
 const MIN_CLIP = 1.0, MIN_CHUNK = 0.15;
 
 export function initTimeline() {
@@ -17,10 +19,19 @@ export function initTimeline() {
   on('preview', render);
   on('project', render);
   onChunkSelect(() => { const c = cand(); if (c && S.preview) renderCaptions(c, S.preview); });
+  $('#btnSplit').onclick = splitAtPlayhead;
+  $('#btnMove').onclick = () => { moveMode = !moveMode; render(); };
+  document.addEventListener('keydown', e => {
+    if (e.target.matches('input, textarea, select') || e.metaKey || e.ctrlKey) return;
+    if (e.key === 's' || e.key === 'S') { if (!$('#btnSplit').disabled) splitAtPlayhead(); }
+    else if (e.key === 'm' || e.key === 'M') { if (cand()) { moveMode = !moveMode; render(); } }
+  });
 
   // click / drag anywhere that is not a handle or block = scrub
   area.addEventListener('pointerdown', e => {
-    if (e.target.closest('.trim, .cap-block, .cap-edge') || !win) return;
+    if (e.target.closest('.trim, .cap-block, .cap-edge, .tl-cut-x') || !win) return;
+    if (e.shiftKey && e.target.closest('#trSrc')) { startCut(e); return; }
+    if (moveMode && e.target.closest('.tl-range')) { startMove(e); return; }
     area.setPointerCapture(e.pointerId);
     const v = video(); v.pause();
     const seek = ev => { v.currentTime = clamp(tAt(ev.clientX), 0, S.project?.media?.duration || 1e9); };
@@ -47,6 +58,11 @@ function computeWin(c) {
 function render() {
   const c = cand(), pv = S.preview;
   $('#tlEmpty').hidden = !!(c && pv);
+  const vt = video()?.currentTime ?? 0;
+  $('#btnSplit').disabled = !(c && pv && vt >= c.start + 1 && vt <= c.end - 1);
+  $('#btnMove').disabled = !(c && pv);
+  $('#btnMove').classList.toggle('on', moveMode && !!c);
+  $('#tlArea').classList.toggle('move-mode', moveMode && !!c);
   if (!c || !pv) {
     $('#seqTitle').textContent = 'SEQUENCE';
     $('#tlReadout').textContent = '';
@@ -54,14 +70,36 @@ function render() {
   }
   if (!trim && (!win || c.start < win.w0 || c.end > win.w1)) win = computeWin(c);
   $('#seqTitle').textContent = `SEQUENCE / SHORT_${String(c.rank).padStart(2, '0')} · ${c.title}`;
-  const s = trim ? trim.start : c.start, e = trim ? trim.end : c.end;
+  const s = moveDrag ? moveDrag.start : trim ? trim.start : c.start, e = moveDrag ? moveDrag.end : trim ? trim.end : c.end;
   $('#tlReadout').textContent = `IN ${fmtT(s, 2)} · OUT ${fmtT(e, 2)} · ${(e - s).toFixed(2)}s · WINDOW ${fmtT(win.w0)}–${fmtT(win.w1)}`;
   renderRuler();
   renderSource(s, e);
   renderCaptions(c, pv);
   renderFace(c, pv, s, e);
   renderKf(c, pv);
+  renderFx(c, pv);
   renderWave(s, e);
+}
+
+function renderFx(c, pv) {
+  const fx = pv.effects;
+  const tr = $('#trFx');
+  if (!fx) { tr.replaceChildren(h('span', { class: 'tl-muted' }, 'effects unavailable')); return; }
+  const items = [];
+  if (fx.hook) {
+    const e = c.start + srcT(c, Math.min(fx.hook_seconds, outDur(c)));
+    items.push(h('div', { class: 'fx-bar hook', style: { left: pct(c.start), width: `calc(${pct(e)} - ${pct(c.start)})` },
+      title: `hook title “${fx.hook}” for ${fx.hook_seconds}s` }, `HOOK · ${fx.hook}`));
+  }
+  for (const p of fx.punches) {
+    items.push(h('div', { class: 'fx-bar punch', style: { left: pct(c.start + p - 0.15), width: `calc(${pct(c.start + p + 0.85)} - ${pct(c.start + p - 0.15)})` },
+      title: `punch-in zoom ×${fx.punch_zoom} at ${fmtT(c.start + p, 2)}` }, `ZOOM ×${fx.punch_zoom}`));
+  }
+  const audio = [fx.voice_enhancement !== 'off' ? `voice ${fx.voice_enhancement}` : null,
+    fx.voice_track != null ? `mic = track ${fx.voice_track}${fx.duck_game ? ' · game ducked' : ''}` : null].filter(Boolean).join(' · ');
+  items.push(h('span', { class: 'tl-muted fx-note' }, [
+    fx.punches.length ? null : 'no punch-ins', audio || null, 'shift-drag on SOURCE to cut a section'].filter(Boolean).join(' · ')));
+  tr.replaceChildren(...items);
 }
 
 function renderRuler() {
@@ -97,7 +135,72 @@ function renderSource(s, e) {
   const hs = h('div', { class: `trim ${trim?.which === 'start' ? 'drag' : ''}`, style: { left: pct(s) }, title: 'Drag to trim the clip start', 'data-which': 'start' });
   const he = h('div', { class: `trim ${trim?.which === 'end' ? 'drag' : ''}`, style: { left: pct(e) }, title: 'Drag to trim the clip end', 'data-which': 'end' });
   for (const hd of [hs, he]) hd.addEventListener('pointerdown', startTrim);
-  tr.replaceChildren(thumbs, dimL, dimR, range, hs, he);
+  const c = cand();
+  const cuts = (c?.cuts || []).map(([a, b], i) => {
+    const x = h('button', { class: 'tl-cut-x', title: 'Restore this section' }, '×');
+    x.addEventListener('pointerdown', ev => ev.stopPropagation());
+    x.onclick = () => setCuts(c.cuts.filter((_, j) => j !== i), `Section ${fmtT(a, 1)}–${fmtT(b, 1)} restored`);
+    return h('div', { class: 'tl-cut', style: { left: pct(a), width: `calc(${pct(b)} - ${pct(a)})` },
+      title: `cut ${fmtT(a, 2)}–${fmtT(b, 2)} (${(b - a).toFixed(2)}s removed)` }, x);
+  });
+  if (cutDrag) {
+    const a = Math.min(cutDrag.a, cutDrag.b), b = Math.max(cutDrag.a, cutDrag.b);
+    cuts.push(h('div', { class: 'tl-cut drag', style: { left: pct(a), width: `calc(${pct(b)} - ${pct(a)})` } }));
+  }
+  tr.replaceChildren(thumbs, dimL, dimR, range, ...cuts, hs, he);
+}
+
+function startMove(e) {
+  e.preventDefault();
+  const c = cand(); if (!c) return;
+  const el = window, t0 = tAt(e.clientX), len = c.end - c.start;
+  const dur = S.project?.media?.duration || 1e9;
+  moveDrag = { start: c.start, end: c.end };
+  const mv = ev => {
+    const st = round(clamp(c.start + tAt(ev.clientX) - t0, 0, dur - len), 2);
+    moveDrag = { start: st, end: round(st + len, 2) };
+    showTip(ev, `MOVE ${fmtT(moveDrag.start, 2)} → ${fmtT(moveDrag.end, 2)}`);
+    render();
+  };
+  const up = async () => {
+    el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up);
+    hideTip();
+    const m = moveDrag; moveDrag = null;
+    if (Math.abs(m.start - c.start) < 0.01) { render(); return; }
+    // cuts are tied to source moments; sliding the clip drops the ones that fall outside it
+    const body = { start: m.start, end: m.end };
+    if (c.cuts?.length) {
+      const kept = c.cuts.filter(([a, b]) => a >= m.start && b <= m.end);
+      if (kept.length !== c.cuts.length) body.cuts = kept.length ? kept : null;
+    }
+    await patchClip(body);
+    const v = video(); if (v.currentTime < m.start || v.currentTime > m.end) v.currentTime = m.start;
+  };
+  el.addEventListener('pointermove', mv);
+  el.addEventListener('pointerup', up);
+}
+
+function startCut(e) {
+  e.preventDefault();
+  const c = cand(); if (!c) return;
+  const el = window;
+  const lim = t => round(clamp(t, c.start, c.end), 2);
+  cutDrag = { a: lim(tAt(e.clientX)), b: lim(tAt(e.clientX)) };
+  const mv = ev => {
+    cutDrag.b = lim(tAt(ev.clientX));
+    showTip(ev, `CUT ${fmtT(Math.min(cutDrag.a, cutDrag.b), 2)}–${fmtT(Math.max(cutDrag.a, cutDrag.b), 2)}`);
+    render();
+  };
+  const up = async () => {
+    el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up);
+    hideTip();
+    const a = Math.min(cutDrag.a, cutDrag.b), b = Math.max(cutDrag.a, cutDrag.b);
+    cutDrag = null;
+    if (b - a < 0.2) { render(); return; }
+    await setCuts([...(c.cuts || []), [a, b]], `Cut ${(b - a).toFixed(2)}s at ${fmtT(a, 2)}`);
+  };
+  el.addEventListener('pointermove', mv);
+  el.addEventListener('pointerup', up);
 }
 
 function startTrim(e) {
@@ -137,7 +240,7 @@ function renderCaptions(c, pv) {
   tr.replaceChildren(...track.chunks.map((ch, i) => {
     const b = h('div', {
       class: `cap-block ${i === S.selChunk ? 'sel' : ''}`, 'data-i': i,
-      style: { left: pct(c.start + ch.start), width: `calc(${pct(c.start + ch.end)} - ${pct(c.start + ch.start)})` },
+      style: { left: pct(c.start + srcT(c, ch.start)), width: `calc(${pct(c.start + srcT(c, ch.end))} - ${pct(c.start + srcT(c, ch.start))})` },
       title: `${chunkText(ch).replace(/\n/g, ' ')}  (${ch.start.toFixed(2)}–${ch.end.toFixed(2)}s)`,
     }, chunkText(ch).replace(/\n/g, ' '),
     h('span', { class: 'cap-edge l', 'data-edge': 'start' }), h('span', { class: 'cap-edge r', 'data-edge': 'end' }));
@@ -159,10 +262,10 @@ function startCapDrag(e, i, edge) {
   const el = window;
   const orig = pv.captions.chunks[i];
   capDrag = { i, edge, track: structuredClone(pv.captions), moved: false };
-  const dur = c.end - c.start;
+  const dur = outDur(c);
   const mv = ev => {
     const chs = capDrag.track.chunks, ch = chs[i];
-    const t = round(tAt(ev.clientX) - c.start, 2);
+    const t = round(outT(c, tAt(ev.clientX) - c.start), 2);
     if (edge === 'start') {
       const lo = i > 0 ? chs[i - 1].end : 0;
       ch.start = clamp(t, lo, ch.end - MIN_CHUNK);
@@ -265,6 +368,8 @@ async function renderWave(s, e) {
 let lastCap = -2;
 export function tickTimeline() {
   const ph = $('#tlPlayhead');
+  const c0 = cand(), vt = video().currentTime;
+  if (c0) $('#btnSplit').disabled = !(S.preview && vt >= c0.start + 1 && vt <= c0.end - 1);
   if (!win || !cand()) { ph.hidden = true; return; }
   const t = video().currentTime;
   const inWin = t >= win.w0 && t <= win.w1;
@@ -278,7 +383,7 @@ export function tickTimeline() {
 function markActiveCap() {
   const c = cand(), tr = S.preview?.captions;
   if (!c || !tr) return;
-  const ch = activeChunk(tr, video().currentTime - c.start);
+  const ch = activeChunk(tr, outT(c, video().currentTime - c.start));
   const i = ch ? ch.index : -1;
   if (i === lastCap && !capDrag) return;
   lastCap = i;

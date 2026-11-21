@@ -1,5 +1,5 @@
 // Program / Source monitor: the real source video with the real crop plan drawn on top.
-import { S, $, on, cand, media, timecode, fmtT, clamp, round, activeChunk, chunkText, layoutOf, kfAt, clipT, hasFacePanel } from './core.js';
+import { S, $, on, cand, media, timecode, fmtT, clamp, round, activeChunk, chunkText, layoutOf, kfAt, clipT, hasFacePanel, outT, outDur, relCuts } from './core.js';
 import { video, patchClip, setLocalCropCenter } from './actions.js';
 
 const TEAL = '#2fe0d2', CORAL = '#ff5c7a';
@@ -324,9 +324,14 @@ export function tickProgram() {
   $('#timecode').textContent = timecode(v.currentTime, fps);
   if (c) {
     const rel = v.currentTime - c.start;
-    $('#clipTime').textContent = `CLIP ${fmtT(rel, 2)} / ${fmtT(c.end - c.start, 2)}`;
+    // playback skips cut sections, so what you watch is what renders
+    if (!v.paused && !S.scrubbing) {
+      const cut = relCuts(c).find(([a, b]) => rel >= a && rel < b - 0.02);
+      if (cut) v.currentTime = c.start + cut[1];
+    }
+    $('#clipTime').textContent = `CLIP ${fmtT(outT(c, rel), 2)} / ${fmtT(outDur(c), 2)}${c.cuts?.length ? ' · CUTS' : ''}`;
     if (S.loop && !v.paused && v.currentTime >= c.end) { v.currentTime = c.start; }
-    const ch = activeChunk(S.preview?.captions, rel);
+    const ch = activeChunk(S.preview?.captions, outT(c, rel));
     const key = ch ? `${ch.index}:${chunkText(ch)}` : (S.preview?.captions ? 'none' : 'off');
     if (key !== lastCapKey) {
       lastCapKey = key;

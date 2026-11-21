@@ -1,5 +1,5 @@
 // Everything that talks to the backend and mutates shared state.
-import { S, api, P, C, emit, toast, round } from './core.js';
+import { S, api, P, C, emit, toast, round, platforms } from './core.js';
 
 export const video = () => document.getElementById('video');
 
@@ -173,12 +173,41 @@ export async function startRender() {
   if (!S.pid || !S.cid) return;
   const cid = S.cid;
   try {
-    const job = await api(C(S.pid, cid, '/render'), { method: 'POST' });
+    const job = await api(C(S.pid, cid, '/render'), { method: 'POST', body: { platforms: platforms() } });
     S.render = { cid, job: job.id, status: job.status, stages: {}, error: null };
     emit('render');
     toast('Render queued');
   } catch (e) {
     toast(`Render failed to start: ${e.message}`, 'err');
+  }
+}
+
+export async function splitAtPlayhead() {
+  if (!S.pid || !S.cid) return;
+  const at = round(video().currentTime, 2);
+  try {
+    const r = await api(C(S.pid, S.cid, '/split'), { method: 'POST', body: { at } });
+    await loadCandidates();
+    await refreshPreview();
+    toast(`Split at ${at.toFixed(2)}s → new clip #${r.second.rank} “${r.second.title}”`);
+  } catch (e) {
+    toast(`Split failed: ${e.message}`, 'err', 6000);
+  }
+}
+
+export async function setCuts(cuts, msg) {
+  await patchClip({ cuts: cuts.length ? cuts : null }, { quiet: !!msg });
+  if (msg) toast(msg);
+}
+
+export async function exportAccepted() {
+  if (!S.pid) return;
+  try {
+    const r = await api(P(S.pid, '/render'), { method: 'POST', body: { platforms: platforms() } });
+    toast(`Batch export: ${r.jobs.length} clip(s) queued${platforms().length ? ` · + ${platforms().join(', ')}` : ''}`);
+    for (const j of r.jobs) if (j.clip === S.cid) { S.render = { cid: j.clip, job: j.id, status: j.status, stages: {}, error: null }; emit('render'); }
+  } catch (e) {
+    toast(`Batch export failed: ${e.message}`, 'err');
   }
 }
 

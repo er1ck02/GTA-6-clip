@@ -1,5 +1,6 @@
 """Ducking, voice chain and punch zoom verified on real encodes (measured, not just built)."""
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -81,3 +82,37 @@ def test_punch_zoom_changes_only_the_punch_window(tmp_path, two_track):
     centre = np.asarray(Image.fromarray(a[(h - ch) // 2:(h - ch) // 2 + ch, (w - cw) // 2:(w - cw) // 2 + cw]
                                         .astype(np.uint8)).resize((w, h), Image.BICUBIC), np.float64)
     assert np.abs(centre - b).mean() < 0.5 * during, (np.abs(centre - b).mean(), during)
+
+
+def test_cut_removes_a_section(tmp_path, two_track):
+    media = probe(two_track)
+    cfg = _cfg()
+    plan = plan_layout(media, cfg.reframing, cfg.video, cfg.captions)
+    out = render_clip(media, plan, 0.0, 6.0, None, tmp_path / "cut.mp4", cfg.video, cfg.audio, cfg.export, "cpu",
+                      voice_track=1, enhance=cfg.enhance, cuts=[(1.9, 4.1)])
+    info = probe(out)
+    assert abs(info.duration - 3.8) < 0.15, info.duration
+    # the mic tone (2-4 s in the source) is gone, the game tone continues on both sides of the cut
+    full = render_clip(media, plan, 0.0, 6.0, None, tmp_path / "full.mp4", cfg.video, cfg.audio, cfg.export, "cpu",
+                       voice_track=1, enhance=cfg.enhance)
+    assert _tone_level(out, 1000, 0.2, 3.6) < 0.1 * _tone_level(full, 1000, 2.2, 3.8)
+    assert _tone_level(out, 220, 2.2, 3.6) > 0.5 * _tone_level(out, 220, 0.2, 1.6)
+
+
+def test_platform_copies(tmp_path, two_track):
+    from clipstudio.rendering.platforms import export_platforms
+
+    master = _render(two_track, tmp_path / "master.mp4", _cfg())
+    ecfg = load_config(overrides=["export.preset=ultrafast",
+                                  "export.platform_presets.short={label: Short, max_duration: 3, max_fps: 24}"]).export
+    outs = {o.platform: o for o in export_platforms(master, tmp_path / "pl", ecfg, "Big moment", "desc",
+                                                    ["tiktok", "short"])}
+    assert outs["tiktok"].method == "copy" and not outs["tiktok"].trimmed
+    assert abs(probe(Path(outs["tiktok"].path)).duration - probe(master).duration) < 0.1
+    s = outs["short"]
+    assert s.method == "reencode" and s.trimmed and len(s.reasons) == 2
+    info = probe(Path(s.path))
+    assert abs(info.duration - 3.0) < 0.1 and abs(info.fps - 24) < 0.01 and info.has_audio
+    import json
+    side = json.loads(open(s.sidecar).read())
+    assert side["title"] == "Big moment" and side["file"].endswith(".short.mp4")

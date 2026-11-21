@@ -1,6 +1,6 @@
 // Media bin: ranked moments (highlight candidates), or the analysis progress while there are none yet.
-import { S, $, h, on, P, fmtT } from './core.js';
-import { selectClip, setStatus } from './actions.js';
+import { S, $, h, on, P, fmtT, outDur } from './core.js';
+import { selectClip, setStatus, exportAccepted } from './actions.js';
 
 const ANALYZE = ['metadata', 'extract_audio', 'transcribe', 'loudness', 'candidates'];
 
@@ -9,6 +9,7 @@ export function initBin() {
   on('select', render);
   on('project', render);
   on('stages', render);
+  $('#btnBatch').onclick = exportAccepted;
 }
 
 function render() {
@@ -37,6 +38,9 @@ function render() {
   }
   const acc = S.candidates.filter(c => c.status === 'accepted').length;
   meta.textContent = `${S.candidates.length} · ${acc}✓`;
+  const bb = $('#btnBatch');
+  bb.disabled = !acc;
+  bb.textContent = acc ? `EXPORT ${acc} ✓` : 'EXPORT ✓';
   const clips = S.project.clips || {};
   list.replaceChildren(...S.candidates.map(c => {
     const rendered = clips[c.id]?.output;
@@ -45,7 +49,7 @@ function render() {
         h('div', { class: 'm-thumb' },
           h('img', { src: P(S.pid, `/frame?t=${c.peak_time.toFixed(2)}&w=240`), alt: '', loading: 'lazy' }),
           h('span', { class: 'm-rank' }, `#${c.rank}`),
-          h('span', { class: 'm-dur' }, `${c.duration.toFixed(1)}s`)),
+          h('span', { class: 'm-dur' }, `${outDur(c).toFixed(1)}s`)),
         h('span', { class: 'm-acts' },
           h('button', { class: `m-act acc ${c.status === 'accepted' ? 'on' : ''}`, title: c.status === 'accepted' ? 'Accepted (click to unset)' : 'Accept', 'aria-label': 'Accept',
             onclick: e => { e.stopPropagation(); setStatus(c.id, c.status === 'accepted' ? 'pending' : 'accepted'); } }, '✓'),
@@ -53,7 +57,7 @@ function render() {
             onclick: e => { e.stopPropagation(); setStatus(c.id, c.status === 'rejected' ? 'pending' : 'rejected'); } }, '✕'))),
       h('div', { class: 'm-main' },
         h('div', { class: 'm-title' }, c.title),
-        h('div', { class: 'm-row' }, `${fmtT(c.start)} → ${fmtT(c.end)}`, c.user_adjusted ? h('span', { title: 'Trimmed by you' }, '· trimmed') : null),
+        h('div', { class: 'm-row' }, `${fmtT(c.start)} → ${fmtT(c.end)}`, c.user_adjusted ? h('span', { title: 'Trimmed by you' }, '· trimmed') : null, c.cuts?.length ? h('span', { title: 'Sections cut out' }, `· ${c.cuts.length} cut`) : null),
         h('div', { class: 'm-row' },
           h('span', { class: `cat cat-${c.category}` }, c.category),
           h('div', { class: `m-score ${c.passes_threshold ? '' : 'below'}`, title: c.passes_threshold ? 'passes the minimum score' : 'below the minimum score' },

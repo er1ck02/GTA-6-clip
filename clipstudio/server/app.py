@@ -20,6 +20,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from clipstudio import __version__
 from clipstudio.config import BUILTIN_CAPTION_PRESETS, Config
 from clipstudio.core import events
 from clipstudio.core.errors import ClipStudioError
@@ -115,7 +116,7 @@ def create_app(cfg: Config):
 
     studio = Studio(cfg)
     jobs = JobRunner()
-    app = FastAPI(title="GTA 6 Clip Studio", version="0.2.0")
+    app = FastAPI(title="GTA 6 Clip Studio", version=__version__)
     thumbs = studio.data_dir / "cache" / "thumbs"
 
     @app.exception_handler(ClipStudioError)
@@ -174,8 +175,12 @@ def create_app(cfg: Config):
         clips = {}
         for st in (p.root / "clips").glob("*/state.json"):
             d = json.loads(st.read_text())
+            plj = st.parent / "platforms" / "platforms.json"
             clips[d.get("clip_id")] = {"qc_passed": d.get("qc_passed"), "output": bool(d.get("output")),
-                                       "stages": {k: v.get("status") for k, v in d.get("stages", {}).items()}}
+                                       "stages": {k: v.get("status") for k, v in d.get("stages", {}).items()},
+                                       "platforms": [{k: x[k] for k in ("platform", "method", "duration", "trimmed",
+                                                                         "reasons")}
+                                                     for x in (json.loads(plj.read_text()) if plj.exists() else [])]}
         return {"id": p.id, "source": p.state.data.get("source"), "media": media,
                 "stages": p.state.data.get("stages", {}), "clips": clips, "preview": preview_state(p),
                 "facecam": fc.model_dump() if (fc := studio.facecam(p)) else None,
@@ -251,13 +256,20 @@ def create_app(cfg: Config):
     @app.patch("/api/projects/{pid}/clips/{cid}")
     def edit_clip(pid: str, cid: str, body: dict = Body(...)):
         p = proj(pid)
-        allowed = {"status", "start", "end", "layout", "crop_center_x", "facecam_region", "caption_preset"}
+        allowed = {"status", "start", "end", "layout", "crop_center_x", "facecam_region", "caption_preset", "cuts"}
         bad = set(body) - allowed
         if bad:
             raise HTTPException(400, f"unknown fields: {sorted(bad)}")
         # an explicit null resets that field to automatic
         clear = tuple(k for k, v in body.items() if v is None)
         return studio.edit_clip(p, cid, clear=clear, **{k: v for k, v in body.items() if v is not None}).model_dump()
+
+    @app.post("/api/projects/{pid}/clips/{cid}/split")
+    def split_clip(pid: str, cid: str, body: dict = Body(...)):
+        if not isinstance(body.get("at"), (int, float)):
+            raise HTTPException(400, "body needs a numeric 'at' (source seconds)")
+        a, b = studio.split_clip(proj(pid), cid, float(body["at"]))
+        return {"first": a.model_dump(), "second": b.model_dump()}
 
     @app.get("/api/projects/{pid}/clips/{cid}/preview")
     def preview(pid: str, cid: str):
@@ -271,6 +283,11 @@ def create_app(cfg: Config):
                 "facecam": fc.model_dump() if fc else None,
                 "track": json.loads(f_tr.read_text()) if f_tr.exists() else None,
                 "caption_style": cfg_c.captions.resolved_style().model_dump(),
+                "effects": {"punches": studio.punches(p, c, cfg_c), "punch_zoom": cfg_c.enhance.punch_zoom,
+                            "hook": c.title if cfg_c.enhance.hook_title else None,
+                            "hook_seconds": cfg_c.enhance.hook_title_seconds,
+                            "voice_track": studio.voice_track(MediaInfo.load(p.p("media")), cfg_c),
+                            "duck_game": cfg_c.audio.duck_game, "voice_enhancement": cfg_c.audio.voice_enhancement},
                 "edit": edit.model_dump(exclude_none=True) if edit else {}}
 
     @app.put("/api/projects/{pid}/clips/{cid}/captions")
@@ -287,11 +304,47 @@ def create_app(cfg: Config):
             f.unlink()
         return {"reset": True}
 
+    def _platform_list(body: dict | None) -> list[str] | None:
+        names = (body or {}).get("platforms")
+        if names is None:
+            return None
+        unknown = [n for n in names if n not in cfg.export.platform_presets]
+        if unknown:
+            raise HTTPException(400, f"unknown platforms {unknown}; choose from {sorted(cfg.export.platform_presets)}")
+        return list(names)
+
+    def _render_job(p, cid: str, platforms: list[str] | None) -> dict:
+        return jobs.submit("render", p.id, cid,
+                           lambda: studio.render(studio.load(p.id), [cid], platforms=platforms)[0].qc.passed)
+
     @app.post("/api/projects/{pid}/clips/{cid}/render")
-    def render(pid: str, cid: str):
+    def render(pid: str, cid: str, body: dict | None = Body(None)):
         p = proj(pid)
         c = studio.candidates(p).get(cid)
-        return jobs.submit("render", p.id, c.id, lambda: studio.render(studio.load(p.id), [c.id])[0].qc.passed)
+        return _render_job(p, c.id, _platform_list(body))
+
+    @app.post("/api/projects/{pid}/render")
+    def render_batch(pid: str, body: dict | None = Body(None)):
+        """Batch export: the given clips, or every accepted clip. One queued job per clip."""
+        p = proj(pid)
+        cs = studio.candidates(p)
+        ids = (body or {}).get("clips")
+        ids = [cs.get(c).id for c in ids] if ids else [c.id for c in cs.candidates if c.status == "accepted"]
+        if not ids:
+            raise HTTPException(400, "nothing to export: accept some moments first")
+        plats = _platform_list(body)
+        return {"jobs": [_render_job(p, cid, plats) for cid in ids]}
+
+    @app.get("/api/projects/{pid}/clips/{cid}/platforms/{name}")
+    def clip_platform(pid: str, cid: str, name: str, meta: bool = False):
+        p = proj(pid)
+        c = studio.candidates(p).get(cid)
+        if name not in cfg.export.platform_presets:
+            raise HTTPException(404, f"unknown platform {name!r}")
+        f = p.clip_dir(c.id) / "platforms" / f"{p.id}_{c.id}.{name}.{'json' if meta else 'mp4'}"
+        if not f.exists():
+            raise HTTPException(404, f"no {name} copy yet: export with that platform selected")
+        return FileResponse(f, media_type="application/json" if meta else "video/mp4", filename=f.name)
 
     @app.get("/api/projects/{pid}/clips/{cid}/qc")
     def qc(pid: str, cid: str):

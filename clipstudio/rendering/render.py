@@ -82,8 +82,13 @@ def gameplay_fx(w: int, h: int, enhance: EnhanceCfg | None, punches: list[float]
     return fx
 
 
+def keep_expr(cuts: list[tuple[float, float]]) -> str:
+    """select/aselect expression that drops the clip-relative ``cuts``."""
+    return "'not(" + "+".join(f"between(t,{a:.3f},{b - 1e-3:.3f})" for a, b in cuts) + ")'"
+
+
 def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance: EnhanceCfg | None = None,
-                      punches: list[float] | None = None) -> str:
+                      punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None) -> str:
     kf = plan.keyframes[0]
     W, H = plan.out_width, plan.out_height
     crop = gameplay_crop(plan)
@@ -125,6 +130,10 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
     else:
         raise ValueError(f"unsupported layout mode {plan.mode!r}")
     tail = f"[base]fps={fps:g}"
+    if cuts:
+        # crop keyframes and punches live in uncut clip time, so the cut happens after them;
+        # captions are already in cut time and burn in after it
+        tail += f",select={keep_expr(cuts)},setpts=N/({fps:g}*TB)"
     if ass_name:
         tail += f",ass={ass_name}"
     return graph + ";" + tail + ",format=yuv420p[vout]"
@@ -138,12 +147,20 @@ VOICE_CHAINS = {
 }
 
 
-def build_audio_graph(n_tracks: int, voice: int | None, acfg: AudioCfg) -> str:
-    """Filtergraph from the source's audio streams to ``[amix]``.
+def build_audio_graph(n_tracks: int, voice: int | None, acfg: AudioCfg,
+                      cuts: list[tuple[float, float]] | None = None) -> str:
+    """Filtergraph from the source's audio streams to ``[amix]`` (with ``cuts`` removed).
 
     With a separate voice stream: the voice gets the enhancement chain and (optionally) ducks the game
     audio through sidechain compression. Otherwise every stream is summed and the chain applies to the mix.
     """
+    g = _audio_mix(n_tracks, voice, acfg)
+    if cuts:
+        g = g[: -len("[amix]")] + f"[amix0];[amix0]aselect={keep_expr(cuts)},asetpts=N/SR/TB[amix]"
+    return g
+
+
+def _audio_mix(n_tracks: int, voice: int | None, acfg: AudioCfg) -> str:
     chain = VOICE_CHAINS[acfg.voice_enhancement]
     if n_tracks <= 1:
         return f"[0:a:0]{chain or 'anull'}[amix]"
@@ -191,9 +208,10 @@ def choose_encoder(ecfg: ExportCfg, device: str) -> str:
 def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_path: Path | None,
                 out_path: Path, vcfg: VideoCfg, acfg: AudioCfg, ecfg: ExportCfg, device: str,
                 voice_track: int | None = None, enhance: EnhanceCfg | None = None,
-                punches: list[float] | None = None) -> Path:
+                punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None) -> Path:
     src = Path(media.path)
     dur = end - start
+    out_dur = dur - sum(b - a for a, b in (cuts or []))
     fps = media.fps if vcfg.fps == "source" else float(vcfg.fps)
     if fps <= 0:
         fps = 30.0
@@ -206,9 +224,9 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
         ass_name = ass_path.name
         if ass_path.parent.resolve() != workdir.resolve():
             raise ValueError("captions file must live in the clip output folder")
-    graph = build_video_graph(plan, fps, ass_name, enhance, punches)
+    graph = build_video_graph(plan, fps, ass_name, enhance, punches, cuts)
     n_tracks = max(1, len(media.audio_streams)) if acfg.tracks == "all" else 1
-    agraph = build_audio_graph(n_tracks, voice_track, acfg)
+    agraph = build_audio_graph(n_tracks, voice_track, acfg, cuts)
     afilt = _audio_filters(acfg, src, start, dur, agraph) if media.has_audio else ""
     encoder = choose_encoder(ecfg, device)
     tmp = out_path.with_name(out_path.stem + ".partial.mp4")
@@ -224,7 +242,7 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
             c += ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", str(ecfg.crf), "-b:v", "0"]
         else:
             c += ["-c:v", "libx264", "-preset", ecfg.preset, "-crf", str(ecfg.crf)]
-        c += ["-pix_fmt", "yuv420p", "-profile:v", "high", "-movflags", "+faststart", "-t", f"{dur:.3f}", tmp.name]
+        c += ["-pix_fmt", "yuv420p", "-profile:v", "high", "-movflags", "+faststart", "-t", f"{out_dur:.3f}", tmp.name]
         return c
 
     log.info("rendering %s (%.1fs, %s, %s)", out_path.name, dur, plan.mode, encoder)

@@ -137,16 +137,27 @@ espeak-ng commentary with a loud reaction section). Requires `espeak-ng`.
 
 | Command | What it does |
 |---|---|
-| `doctor [--json]` | Hardware, FFmpeg filters/encoders, Python deps, CUDA, fonts, models; writes `logs/doctor.json`. Exit 1 if something required is missing. |
-| `process --input FILE \| --url URL` | Ingest, analyse, rank and render the top N (`--top`, default `export.auto_render_top`). Options: `--min-duration --max-duration --target-duration --layout --caption-preset --facecam X,Y,W,H --force`. |
-| `review --project P` | Table of candidates plus reasons. `--accept/--reject CLIP...`, `--clip C --start --end --crop-x --layout --caption-preset --facecam`, `--json`. |
-| `export --project P` | Render accepted clips, or `--clips ...`, or `--top N`. `--force` ignores caches. |
+| `doctor` | Hardware, FFmpeg filters/encoders, Python deps, CUDA, fonts, models; writes `logs/doctor.json`. Exit 1 if something required is missing. |
+| `process --input FILE... \| --url URL` | Ingest, analyse, rank and render the top N (`--top`, default `export.auto_render_top`). Several files or a folder = a batch (one project each; a failing file doesn't stop the rest). Options: `--chat FILE --min-duration --max-duration --target-duration --layout --caption-preset --facecam X,Y,W,H --platform NAME... --force`. |
+| `review --project P` | Table of candidates plus reasons. `--accept/--reject CLIP...`, `--clip C --start --end --crop-x --layout --caption-preset --facecam`, `--cut FROM-TO` (repeatable, source seconds) and `--clear-cuts`. |
+| `export --project P` | Render accepted clips, or `--clips ...`, `--top N`, `--all-accepted`. `--platform tiktok youtube_shorts instagram_reels` also writes per-platform copies. `--force` ignores caches. |
 | `resume --project P` | Re-run analysis (cached stages skip) and re-render previously requested clips. |
 | `status [--project P]` | Stage status, timings, errors, QC results. |
 | `ui [--host --port]` | Start the workstation. |
 
 Every command accepts `--config FILE` (repeatable), `--profile fast|balanced|quality`,
-`--set key.path=value` (repeatable) and `-v`.
+`--set key.path=value` (repeatable), `-v`, and `--json`: one JSON document on
+stdout (logs stay on stderr), including errors as `{"error", "exit_code"}`, so
+scripts and agents can drive the studio.
+
+Platform copies (`export.platforms` in config, or `--platform`): each rendered
+clip that passes QC gets `<clip>.<platform>.mp4` plus a `.json` with the title,
+description, hashtags and ready-to-paste post text, under the clip's
+`platforms/` folder. The copy is a stream copy when the master fits the
+platform's limits and a constrained re-encode (fps cap, bitrate cap, trim to the
+maximum length, with a warning) when it doesn't. The built-in limits
+(`export.platform_presets`) are editable because platforms change them; nothing
+is ever uploaded.
 
 ---
 
@@ -228,11 +239,22 @@ true` shows the clip title large at the top for the first seconds.
 `python -m app.cli ui` serves a local editor at http://127.0.0.1:8765 (bound
 to localhost only). Panels: Program/Source preview with the real crop box and
 facecam box over real frames, Media Bin of ranked moments, Inspector (layout,
-crop, trim, caption preset and text, score breakdown), live 9:16 Output preview
-with render, download and QC report, a multitrack timeline (source trims,
-caption timing, face, audio waveform, crop keyframes), and the Clipping Desk:
+crop, trim, cuts, caption preset and text, score breakdown), live 9:16 Output
+preview with render, platform targets, downloads and QC report, a multitrack
+timeline (source trims, cuts, caption timing, face, audio waveform, crop
+keyframes, effects), and the Clipping Desk:
 a live board of each pipeline stage/tool as it runs. Tools that are not
 integrated yet are shown as planned, not as working.
+
+Editing on the timeline: drag the clip edges to trim; **shift-drag** on the
+SOURCE track to cut a section out of the middle (× on the hatched block
+restores it; or MARK IN / MARK OUT / CUT in the Inspector); **✂ SPLIT** (S)
+splits the clip in two at the playhead; **⇄ MOVE** (M) lets you slide the whole
+clip along the source keeping its length. Playback skips cuts so you watch what
+will render. The EFFECTS track shows punch-ins, the hook title and the audio
+setup. **EXPORT ✓** in the Media Bin renders every accepted moment (one queued
+job each, visible on the Clipping Desk), plus the platform copies selected
+under the output preview.
 
 HEVC recordings (common from Medal/NVIDIA) can't be played reliably by browsers,
 so the server builds a 720p H.264 preview proxy for the editor the first time

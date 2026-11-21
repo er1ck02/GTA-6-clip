@@ -11,7 +11,7 @@ _Last updated: 2026-11-21 · version 0.4.0_
 | 3. Intelligent highlight detection | **Done (first version).** Visual pass (scene cuts, motion, flashes, desaturated death screens, optional Tesseract OCR of HUD words), chat replay (4 formats, rate + hype keywords), scene-cut snapping, event and chat seeded windows, optional LLM re-ranker (Claude / OpenAI-compatible / Ollama, validated JSON, provider fallbacks), chunked resumable transcription. |
 | 4. Advanced tracking | **Done (first version).** Facecam auto-detection (MediaPipe BlazeFace / OpenCV Haar + persistent-border search), motion-based gameplay tracking with smoothed keyframes, animated crops in the renderer, `auto` and `facecam_pip` layouts, real tracking QC, live boxes and moving crop in the workstation. |
 | 5. Audio and visual enhancements | **Done (first version).** Voice chain (off/light/strong: high-pass, compression, FFT noise reduction, presence EQ, de-esser), game ducking under a separate mic track (sidechain compression), punch-in zooms on the peak moment and on-screen events, sharpen/contrast/vibrance on the gameplay picture, optional animated hook title, two-pass loudness normalisation. |
-| 6. User interface | **First version working.** Local workstation wired to the real API: Program/Source with live crop + facecam boxes, Media Bin, Inspector, live 9:16 Output with render + QC, multitrack timeline, live Clipping Desk. |
+| 6. User interface | **Done (first version).** Workstation: Program/Source with live crop + facecam boxes, Media Bin with batch export, Inspector with cuts, live 9:16 Output with render, platform targets, downloads and QC, multitrack timeline with trim, cut (shift-drag), split, move and an effects track, live Clipping Desk. CLI: `--json` on every command, folder/multi-file batches, cuts, platform copies. |
 | 7. Production hardening | Not started beyond the test suite and resumability. |
 
 ## What works today (verified against real output files)
@@ -37,6 +37,9 @@ _Last updated: 2026-11-21 · version 0.4.0_
 - QC per clip: file, full decode, resolution, aspect, duration, black frames, flat frames, audio presence, A/V stream sync, integrated loudness, true peak, sample-peak clipping, long silence, caption overlap/timeline/word coverage/sync, **caption pixels rendered by libass vs safe area and protected regions**, crop bounds and jumps. Unimplemented checks report `skip`, never `pass`.
 - Resumable stages with cache keys; Ctrl+C marks the stage `interrupted`; `resume` continues; caption-only changes don't re-plan or re-transcribe.
 - Local HTTP API + SSE event stream, and the workstation UI (`python -m app.cli ui`).
+- Cuts inside a clip: video, audio and captions all drop the section (render measured: a 2.2 s cut gives a 3.8 s file with the cut tone gone); QC checks the shortened duration. Split and move work from the timeline and API.
+- Platform copies (TikTok, YouTube Shorts, Instagram Reels, or custom presets): stream copy when the master fits, constrained re-encode when not (verified: 24 fps cap and 3 s trim), JSON post sidecar; only for clips that passed QC.
+- `--json` on every CLI command, including errors; batches over folders continue past a failing file.
 
 ## Test results
 

@@ -369,3 +369,29 @@ frame; the offset is written out explicitly.
 **Not done.** Noise reduction is FFmpeg's `afftdn`, not a neural model (Demucs
 / RNNoise would need model downloads and measurable CPU budget); zoom targets
 are the frame centre, not the tracked subject.
+
+## TD-23 · Cuts in uncut time, captions in cut time
+
+**Decision.** A clip's cuts are stored as absolute source ranges in the edit
+overlay. The renderer drops them with `select`/`aselect` *after* the crop,
+punch zoom and colour filters (whose keyframes are in uncut clip time) and
+*before* the caption burn-in; caption words are remapped to cut time with one
+monotone function (`cut_time`) shared by Python and the UI. The loudness
+measurement runs on the same cut graph.
+
+**Why.** It keeps tracking, punch-ins and the crop plan independent of editing
+(a cut never forces re-tracking), and gives one place that defines what a time
+means. Audio is cut on frame boundaries (about 20 ms), which is inaudible for
+speech gaps; a crossfade would need re-timing filters per cut.
+
+## TD-24 · Platform copies derive from the QC-passed master
+
+**Decision.** One master render per clip; platform copies are stream copies or
+constrained re-encodes of it, made only after QC passes, with limits kept in
+config rather than code.
+
+**Why.** Platforms share 9:16 H.264/AAC, so a single high-quality master and
+cheap derived copies avoid N full renders. Platform rules change often, so the
+numbers live in `export.platform_presets` and the docs say to check them.
+Uploading is out of scope by design (spec: never publish without explicit
+authorisation).

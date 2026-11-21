@@ -62,3 +62,22 @@ def test_gameplay_fx():
     off = load_config(overrides=["enhance.sharpen=0", "enhance.vibrance=0", "enhance.contrast=0"]).enhance
     assert gameplay_fx(1080, 1920, off, None) == ""
     assert gameplay_fx(1080, 1920, None, [3.0]) == ""
+
+
+def test_cuts_helpers():
+    from clipstudio.core.models import Word, cut_time, normalize_cuts, remap_words
+
+    assert normalize_cuts([(12, 14), (13, 15), (9, 10.5), (19.9, 30), (16, 16.1)], 10, 20) == [(10.0, 10.5), (12.0, 15.0)]
+    cuts = [(12.0, 15.0)]
+    assert cut_time(11, cuts) == 11 and cut_time(13, cuts) == 12 and cut_time(16, cuts) == 13
+    ws = [Word(text="a", start=11.0, end=11.5), Word(text="gone", start=13.0, end=13.4), Word(text="b", start=15.5, end=16.0)]
+    out = remap_words(ws, cuts)
+    assert [w.text for w in out] == ["a", "b"] and (out[1].start, out[1].end) == (12.5, 13.0)
+
+
+def test_cut_graphs():
+    from clipstudio.rendering.render import keep_expr
+
+    assert keep_expr([(1.0, 2.0), (3.0, 4.5)]) == "'not(between(t,1.000,1.999)+between(t,3.000,4.499))'"
+    g = build_audio_graph(1, None, _acfg(), [(1.0, 2.0)])
+    assert g.endswith("aselect='not(between(t,1.000,1.999))',asetpts=N/SR/TB[amix]") and "[amix0]" in g

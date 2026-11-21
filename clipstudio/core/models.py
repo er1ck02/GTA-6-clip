@@ -115,6 +115,20 @@ class Candidate(_M):
     transcript: str
     status: Literal["pending", "accepted", "rejected"] = "pending"
     user_adjusted: bool = False
+    # sections removed from inside the clip (absolute source seconds), e.g. dead air between two moments
+    cuts: list[tuple[float, float]] = Field(default_factory=list)
+
+    @property
+    def cut_seconds(self) -> float:
+        return round(sum(b - a for a, b in self.cuts), 3)
+
+    @property
+    def output_duration(self) -> float:
+        return round(self.end - self.start - self.cut_seconds, 3)
+
+    def rel_cuts(self) -> list[tuple[float, float]]:
+        """Cuts relative to the clip start (what the renderer works in)."""
+        return [(round(a - self.start, 3), round(b - self.start, 3)) for a, b in self.cuts]
 
 
 class CandidateSet(_M):
@@ -291,3 +305,36 @@ class QCReport(_M):
     def summary(self) -> str:
         counts = {s: sum(1 for c in self.checks if c.status == s) for s in ("pass", "warn", "fail", "skip")}
         return ", ".join(f"{v} {k}" for k, v in counts.items() if v)
+
+
+def normalize_cuts(cuts: list, start: float, end: float, min_len: float = 0.2) -> list[tuple[float, float]]:
+    """Clamp cuts to (start, end), drop tiny ones, merge overlaps, sort."""
+    out: list[list[float]] = []
+    for a, b in sorted((float(min(c)), float(max(c))) for c in cuts):
+        a, b = max(a, start), min(b, end)
+        if b - a < min_len:
+            continue
+        if out and a <= out[-1][1] + 0.05:  # touching cuts become one
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return [(round(a, 3), round(b, 3)) for a, b in out]
+
+
+def cut_time(t: float, cuts: list[tuple[float, float]]) -> float:
+    """Map a source time to the time it plays at once ``cuts`` are removed (times inside a cut map to its edge)."""
+    return t - sum(min(max(t - a, 0.0), b - a) for a, b in cuts)
+
+
+def remap_words(words: list[Word], cuts: list[tuple[float, float]]) -> list[Word]:
+    """Drop words inside cut sections and pull later words back, so times match the cut clip."""
+    if not cuts:
+        return words
+    out = []
+    for w in words:
+        mid = (w.start + w.end) / 2
+        if any(a <= mid < b for a, b in cuts):
+            continue
+        s, e = cut_time(w.start, cuts), cut_time(w.end, cuts)
+        out.append(w.model_copy(update={"start": round(s, 3), "end": round(max(s + 0.05, e), 3)}))
+    return out

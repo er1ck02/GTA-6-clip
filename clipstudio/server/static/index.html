@@ -41,7 +41,8 @@
 
     <!-- MEDIA BIN -->
     <section class="panel bin" id="binPanel">
-      <div class="panel-head"><h2>MEDIA BIN / MOMENTS</h2><span class="ph-meta" id="binMeta"></span></div>
+      <div class="panel-head"><h2>MEDIA BIN / MOMENTS</h2><span class="ph-meta" id="binMeta"></span>
+        <button class="btn btn-ghost btn-sm" id="btnBatch" disabled title="Render every accepted moment (and the selected platform copies)">EXPORT ✓</button></div>
       <div class="bin-list" id="binList"></div>
     </section>
 
@@ -100,10 +101,7 @@
         <div class="render-err" id="renderErr" hidden></div>
         <div class="downloads" id="downloads"></div>
         <div class="qc" id="qcBox"></div>
-        <div class="platforms" title="All platform targets use the same master today">
-          <span class="chip">TIKTOK</span><span class="chip">SHORTS</span><span class="chip">REELS</span><span class="chip">X</span>
-          <div class="plat-note">All four: 1080×1920 · H.264 / AAC · same master file</div>
-        </div>
+        <div class="platforms" id="platforms"></div>
       </div>
     </section>
   </main>
@@ -114,8 +112,8 @@
       <h2 id="seqTitle">SEQUENCE</h2>
       <div class="tl-tools">
         <span class="tl-readout" id="tlReadout"></span>
-        <button class="btn btn-ghost btn-sm" disabled title="Split: coming soon">✂ SPLIT</button>
-        <button class="btn btn-ghost btn-sm" disabled title="Move clip: coming soon">⇄ MOVE</button>
+        <button class="btn btn-ghost btn-sm" id="btnSplit" disabled title="Split the clip in two at the playhead (S)">✂ SPLIT</button>
+        <button class="btn btn-ghost btn-sm" id="btnMove" disabled title="Move: drag the clip on the SOURCE track to slide it, keeping its length (M)">⇄ MOVE</button>
       </div>
     </div>
     <div class="tl" id="tl">

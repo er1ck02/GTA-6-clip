@@ -39,7 +39,7 @@
   --tr-face: 18px;
   --tr-aud: 34px;
   --tr-kf: 16px;
-  --tr-fx: 16px;
+  --tr-fx: 22px;
 
   color-scheme: dark;
 }
@@ -426,3 +426,22 @@ button, input, select, textarea { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ---- cuts and effects track */
+.tl-cut { position: absolute; top: 0; bottom: 0; z-index: 3; pointer-events: none;
+  background: repeating-linear-gradient(135deg, rgba(239, 71, 102, .55) 0 6px, rgba(20, 19, 18, .75) 6px 12px);
+  border-left: 2px solid var(--coral-hi); border-right: 2px solid var(--coral-hi); }
+.tl-cut.drag { background: rgba(239, 71, 102, .35); }
+.tl-cut-x { pointer-events: auto; position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; padding: 0;
+  border: 0; border-radius: 3px; background: var(--coral); color: #fff; font: 700 11px/16px var(--mono, monospace); cursor: pointer; }
+.tl-cut-x:hover { background: var(--coral-hi); }
+.fx-bar { position: absolute; top: 3px; bottom: 3px; border-radius: 3px; font: 600 9px/16px "JetBrains Mono", monospace;
+  letter-spacing: .04em; color: #fff; padding: 0 5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fx-bar.punch { background: var(--coral); }
+.fx-bar.hook { background: var(--teal); }
+.fx-note { left: auto; right: 8px; }
+button.chip { background: transparent; cursor: pointer; margin: 0 4px 4px 0; }
+button.chip.on { background: var(--teal); border-color: var(--teal); color: #fff; }
+#binPanel .panel-head .btn { margin-left: 8px; }
+.tl-area.move-mode .tl-range { pointer-events: auto; cursor: grab; outline: 2px dashed var(--teal-hi); outline-offset: -2px; }
+#btnMove.on { background: var(--teal); color: #fff; border-color: var(--teal); }

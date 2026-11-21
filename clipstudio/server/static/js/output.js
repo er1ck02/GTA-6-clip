@@ -1,5 +1,5 @@
 // 9:16 output: live canvas preview through the real crop plan + captions, render/export, QC.
-import { S, $, h, on, cand, C, activeChunk, toast, clamp, kfAt } from './core.js';
+import { S, $, h, on, cand, C, activeChunk, toast, clamp, kfAt, outT, platforms, setPlatforms } from './core.js';
 import { video, startRender } from './actions.js';
 
 let cv, ctx, tab = 'live', fitStage = () => {}, hasFrame = false;
@@ -94,10 +94,31 @@ function renderPanel() {
     dl.replaceChildren(
       h('a', { class: 'btn btn-ghost btn-sm', href: C(S.pid, S.cid, `/video?v=${S.renderedVersion}`), download: `${S.pid}_${S.cid}.mp4` }, '↓ MP4'),
       h('a', { class: 'btn btn-ghost btn-sm', href: C(S.pid, S.cid, '/captions.srt'), download: 'captions.srt' }, '↓ SRT'));
+    for (const pl of S.project?.clips?.[S.cid]?.platforms || []) {
+      const label = S.config?.config?.export?.platform_presets?.[pl.platform]?.label || pl.platform;
+      dl.append(h('a', { class: 'btn btn-ghost btn-sm', href: C(S.pid, S.cid, `/platforms/${pl.platform}?v=${S.renderedVersion}`),
+        download: `${S.pid}_${S.cid}.${pl.platform}.mp4`,
+        title: pl.method === 'copy' ? 'stream copy of the master' : `re-encoded: ${pl.reasons.join('; ')}` }, `↓ ${label}${pl.trimmed ? ' (trimmed)' : ''}`));
+    }
   } else dl.replaceChildren(h('div', { class: 'plat-note' }, 'Not rendered yet: export to get the MP4, SRT and QC report.'));
+  renderPlatforms();
 
   renderQC();
   fitStage();
+}
+
+function renderPlatforms() {
+  const box = $('#platforms');
+  const presets = S.config?.config?.export?.platform_presets || {};
+  const chosen = new Set(platforms());
+  const chips = Object.entries(presets).map(([k, p]) => {
+    const b = h('button', { class: `chip ${chosen.has(k) ? 'on' : ''}`, title: `${p.label}: up to ${p.max_duration}s, ${p.max_fps} fps, ${p.max_video_bitrate}` }, p.label.toUpperCase());
+    b.onclick = () => { chosen.has(k) ? chosen.delete(k) : chosen.add(k); setPlatforms([...chosen]); renderPlatforms(); };
+    return b;
+  });
+  box.replaceChildren(...chips, h('div', { class: 'plat-note' }, chosen.size
+    ? `Export also writes ${[...chosen].map(k => presets[k]?.label || k).join(', ')} copies (stream copy when the master fits, re-encode otherwise) + post text`
+    : 'Master only. Pick platforms to also write per-platform copies.'));
 }
 
 function renderQC() {
@@ -191,7 +212,7 @@ export function drawOutput() {
     }
   }
   if ($('#btnGuides').classList.contains('on')) guides(plan, s);
-  if (pv.captions) drawCaptions(pv.captions, pv.caption_style, v.currentTime - c.start, s);
+  if (pv.captions) drawCaptions(pv.captions, pv.caption_style, outT(c, v.currentTime - c.start), s);
 }
 
 function msg(t) {

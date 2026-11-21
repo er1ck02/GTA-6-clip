@@ -74,6 +74,7 @@ export const S = {
   progress: {},           // stage -> 0..1
   liveStages: {},         // stage -> status (from SSE, current project)
   loop: true,
+  platforms: null,        // platform copies to write on export (null = config default)
   dirty: true,            // overlay / output need redraw
 };
 
@@ -141,3 +142,32 @@ export function kfAt(plan, t) {
 }
 export const clipT = () => (document.getElementById('video')?.currentTime || 0) - (cand()?.start || 0);
 export const hasFacePanel = mode => mode === 'facecam_split' || mode === 'facecam_pip';
+
+// ---- cuts: sections removed from inside a clip. Captions live in cut ("output") time; the video plays source time.
+export const relCuts = c => (c?.cuts || []).map(([a, b]) => [a - c.start, b - c.start]);
+/** source-relative clip time -> output time (times inside a cut map to its start) */
+export function outT(c, t) {
+  let o = t;
+  for (const [a, b] of relCuts(c)) o -= Math.min(Math.max(t - a, 0), b - a);
+  return o;
+}
+/** output time -> source-relative clip time */
+export function srcT(c, o) {
+  let t = o;
+  for (const [a, b] of relCuts(c)) if (t >= a) t += b - a;
+  return t;
+}
+export const outDur = c => (c ? c.end - c.start - (c.cuts || []).reduce((s, [a, b]) => s + b - a, 0) : 0);
+/** caption time at the playhead */
+export const capT = () => outT(cand(), clipT());
+
+// ---- platform targets chosen in the output panel (remembered per browser; config default otherwise)
+export function platforms() {
+  if (S.platforms) return S.platforms;
+  try { const v = JSON.parse(localStorage.getItem('cs.platforms') || 'null'); if (Array.isArray(v)) return (S.platforms = v); } catch { /* storage off */ }
+  return (S.platforms = [...(S.config?.config?.export?.platforms || [])]);
+}
+export function setPlatforms(list) {
+  S.platforms = list;
+  try { localStorage.setItem('cs.platforms', JSON.stringify(list)); } catch { /* storage off */ }
+}

@@ -1,6 +1,6 @@
 // Inspector / live edit: layout, crop, trim, captions, score breakdown, audio settings, keyframes.
-import { S, $, h, on, cand, fmtT, round, clamp, pretty, chunkText, activeChunk, layoutOf, kfAt, clipT, hasFacePanel } from './core.js';
-import { video, patchClip, saveCaptions, resetCaptions, setLocalCropCenter } from './actions.js';
+import { S, $, h, on, cand, fmtT, round, clamp, pretty, chunkText, activeChunk, layoutOf, kfAt, clipT, hasFacePanel, capT, srcT, outDur, relCuts } from './core.js';
+import { video, patchClip, saveCaptions, resetCaptions, setLocalCropCenter, setCuts } from './actions.js';
 
 const LAYOUTS = [
   ['auto', 'auto · split if a facecam is found'],
@@ -52,8 +52,26 @@ function render() {
     h('div', { class: 'i-title' }, c.title),
     row('START', startIn, h('span', { class: 'i-unit' }, `s · ${fmtT(c.start, 2)}`)),
     row('END', endIn, h('span', { class: 'i-unit' }, `s · ${fmtT(c.end, 2)}`)),
-    h('div', { class: 'i-meta' }, `DURATION ${c.duration.toFixed(2)}s · SOURCE ${md ? md.duration.toFixed(1) + 's' : '--'}${c.user_adjusted ? ' · TRIMMED BY YOU' : ''}`),
+    h('div', { class: 'i-meta' }, `DURATION ${outDur(c).toFixed(2)}s · SOURCE ${md ? md.duration.toFixed(1) + 's' : '--'}${c.user_adjusted ? ' · TRIMMED BY YOU' : ''}`),
     pv.captions?.edited && c.user_adjusted ? h('div', { class: 'i-note' }, 'Hand-edited captions keep their clip-relative timing when you trim; check them after changing the start.') : null);
+
+  // ---- cuts (sections removed from inside the clip)
+  const cutsSec = sec('CUTS', c.cuts?.length ? `${c.cuts.length} · −${(c.end - c.start - outDur(c)).toFixed(2)}s` : 'none',
+    ...(c.cuts || []).map(([a, b], i) => h('div', { class: 'i-row cut-row' },
+      h('span', { class: 'i-meta' }, `${fmtT(a, 2)} → ${fmtT(b, 2)} · ${(b - a).toFixed(2)}s`),
+      h('button', { class: 'btn btn-ghost btn-sm', onclick: () => setCuts(c.cuts.filter((_, j) => j !== i), 'Section restored') }, 'RESTORE'))),
+    h('div', { class: 'i-row' },
+      h('button', { class: 'btn btn-ghost btn-sm', id: 'btnMarkIn', onclick: () => { S.markIn = video().currentTime; render(); } },
+        S.markIn != null ? `IN ${fmtT(S.markIn, 2)}` : 'MARK IN'),
+      h('button', { class: 'btn btn-ghost btn-sm', id: 'btnMarkOut', onclick: () => { S.markOut = video().currentTime; render(); } },
+        S.markOut != null ? `OUT ${fmtT(S.markOut, 2)}` : 'MARK OUT'),
+      h('button', { class: 'btn btn-accent btn-sm', id: 'btnCut', disabled: !(S.markIn != null && S.markOut != null && Math.abs(S.markOut - S.markIn) >= 0.2),
+        onclick: async () => {
+          const a = round(Math.max(c.start, Math.min(S.markIn, S.markOut)), 2), b = round(Math.min(c.end, Math.max(S.markIn, S.markOut)), 2);
+          S.markIn = S.markOut = null;
+          await setCuts([...(c.cuts || []), [a, b]], `Cut ${(b - a).toFixed(2)}s`);
+        } }, 'CUT')),
+    h('div', { class: 'i-note' }, 'Remove dead air between two moments: mark in/out at the playhead and CUT, or shift-drag on the SOURCE track. Playback skips cuts; captions close the gap.'));
 
   // ---- reframe
   const laySel = h('select', { id: 'selLayout' }, LAYOUTS.map(([v, l]) => h('option', { value: v, selected: v === layout }, l)));
@@ -132,7 +150,7 @@ function render() {
       ? 'Crop follows the action; the render interpolates linearly between keyframes. Dragging the crop pins it by hand.'
       : 'Static plan: one keyframe (tracking off, crop placed by hand, or no dominant subject).'));
 
-  body.replaceChildren(clipSec, reframe, captions, score, audio, kfs);
+  body.replaceChildren(clipSec, cutsSec, reframe, captions, score, audio, kfs);
   renderChunks(); renderEditor();
   body.scrollTop = scrollTop;
 }
@@ -150,7 +168,7 @@ let lastActive = -2;
 export function tickInspector() {
   const pv = S.preview, c = cand();
   if (!pv?.captions || !c) return;
-  const ch = activeChunk(pv.captions, video().currentTime - c.start);
+  const ch = activeChunk(pv.captions, capT());
   const idx = ch ? ch.index : -1;
   if (idx !== lastActive) {
     lastActive = idx;
@@ -178,7 +196,7 @@ function renderChunks() {
 export function selectChunk(i, seek) {
   S.selChunk = i;
   const c = cand(), ch = S.preview?.captions?.chunks[i];
-  if (seek && c && ch) { const v = video(); v.pause(); v.currentTime = c.start + ch.start + 0.01; }
+  if (seek && c && ch) { const v = video(); v.pause(); v.currentTime = c.start + srcT(c, ch.start + 0.01); }
   for (const fn of chunkListeners) fn();
   renderChunks(); renderEditor();
 }

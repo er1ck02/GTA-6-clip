@@ -323,6 +323,24 @@ class EnhanceCfg(_Strict):
     hook_title_seconds: float = Field(2.5, gt=0, le=10)
 
 
+class PlatformPreset(_Strict):
+    """Upload target. Limits are editable because platforms change them; check current limits before relying on one."""
+    label: str
+    max_duration: float = Field(gt=0)
+    max_fps: int = Field(60, ge=24, le=120)
+    max_video_bitrate: str = "16M"   # re-encode above this (FFmpeg -maxrate syntax)
+    hashtags: list[str] = Field(default_factory=list)
+
+
+DEFAULT_PLATFORMS = {
+    "tiktok": {"label": "TikTok", "max_duration": 600, "max_video_bitrate": "16M", "hashtags": ["gta6", "gaming"]},
+    "youtube_shorts": {"label": "YouTube Shorts", "max_duration": 180, "max_video_bitrate": "20M",
+                       "hashtags": ["shorts", "gta6"]},
+    "instagram_reels": {"label": "Instagram Reels", "max_duration": 180, "max_fps": 60, "max_video_bitrate": "12M",
+                        "hashtags": ["reels", "gta6", "gaming"]},
+}
+
+
 class ExportCfg(_Strict):
     format: Literal["mp4"] = "mp4"
     video_codec: Literal["h264"] = "h264"
@@ -332,6 +350,29 @@ class ExportCfg(_Strict):
     crf: int = Field(19, ge=10, le=35)
     preset: str = "medium"
     auto_render_top: int = Field(3, ge=0, le=50)
+    # per-platform copies written next to each rendered clip ([] = master file only)
+    platforms: list[str] = Field(default_factory=list)
+    platform_presets: dict[str, PlatformPreset] = Field(
+        default_factory=lambda: {k: PlatformPreset(**v) for k, v in DEFAULT_PLATFORMS.items()})
+
+    @field_validator("platform_presets", mode="before")
+    @classmethod
+    def _merge_presets(cls, v):  # partial overrides of a built-in preset keep its other values
+        if not isinstance(v, dict):
+            return v
+        out = {k: dict(d) for k, d in DEFAULT_PLATFORMS.items()}
+        for k, d in v.items():
+            d = d.model_dump() if isinstance(d, BaseModel) else dict(d or {})
+            out[k] = {**out.get(k, {}), **d}
+        return out
+
+    @model_validator(mode="after")
+    def _known_platforms(self):
+        unknown = [p for p in self.platforms if p not in self.platform_presets]
+        if unknown:
+            raise ValueError(f"unknown export platform(s) {unknown}; define them under export.platform_presets "
+                             f"or choose from {sorted(self.platform_presets)}")
+        return self
 
 
 class QualityCfg(_Strict):

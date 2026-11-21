@@ -51,10 +51,13 @@ class ClipEdit(BaseModel):
     crop_center_x: float | None = Field(None, ge=0, le=1)
     facecam_region: dict[str, float] | None = None
     caption_preset: str | None = None
+    cuts: list[tuple[float, float]] | None = None  # removed sections, absolute source seconds
 
 
 class Edits(BaseModel):
     clips: dict[str, ClipEdit] = Field(default_factory=dict)
+    # clips the user created (e.g. by splitting one in two): full candidate records, edits apply on top
+    added: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 def key_of(*parts: Any) -> str:

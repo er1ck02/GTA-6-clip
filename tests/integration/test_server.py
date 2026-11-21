@@ -76,6 +76,42 @@ def test_api_drives_the_pipeline(tmp_path, sample_short):
     pv2 = c.get(f"/api/projects/{pid}/clips/{cid}/preview").json()
     assert abs(pv2["captions"]["chunks"][0]["start"] - (first + 1.0)) < 0.01
 
+    # cuts: validated, reflected in the candidate, removed from the render; batch export writes platform copies
+    c.delete(f"/api/projects/{pid}/clips/{cid}/captions")
+    cand = c.get(f"/api/projects/{pid}/clips/{cid}/preview").json()["candidate"]
+    a = cand["start"] + 2.0
+    assert c.patch(f"/api/projects/{pid}/clips/{cid}", json={"cuts": [[cand["start"] + 0.3, cand["end"] + 50]]}).status_code == 400
+    r = c.patch(f"/api/projects/{pid}/clips/{cid}", json={"cuts": [[a, a + 1.5]], "status": "accepted"}).json()
+    assert r["cuts"] == [[round(a, 3), round(a + 1.5, 3)]]
+    pv3 = c.get(f"/api/projects/{pid}/clips/{cid}/preview").json()
+    assert "punches" in pv3["effects"]
+    assert pv3["captions"]["chunks"][-1]["end"] <= cand["end"] - cand["start"] - 1.5 + 0.01
+    assert c.post(f"/api/projects/{pid}/render", json={"platforms": ["myspace"]}).status_code == 400
+    jobs_ = c.post(f"/api/projects/{pid}/render", json={"platforms": ["tiktok"]}).json()["jobs"]
+    assert [j["clip"] for j in jobs_] == [cid]
+    assert wait(jobs_[0]["id"])["status"] == "done"
+    qc = c.get(f"/api/projects/{pid}/clips/{cid}/qc").json()
+    dur = next(ch for ch in qc["checks"] if ch["name"] == "duration")
+    assert qc["passed"] is True, qc
+    proj = c.get(f"/api/projects/{pid}").json()
+    assert proj["clips"][cid]["platforms"][0]["platform"] == "tiktok"
+    v = c.get(f"/api/projects/{pid}/clips/{cid}/platforms/tiktok")
+    assert v.status_code == 200 and v.content[4:8] == b"ftyp"
+    assert c.get(f"/api/projects/{pid}/clips/{cid}/platforms/tiktok?meta=true").json()["platform"] == "TikTok"
+    assert dur["status"] == "pass"
+    c.patch(f"/api/projects/{pid}/clips/{cid}", json={"cuts": None})
+    assert c.get(f"/api/projects/{pid}/clips/{cid}/preview").json()["candidate"]["cuts"] == []
+
+    # split at a point inside the clip: the clip keeps the first part, a new clip gets the rest
+    cand = c.get(f"/api/projects/{pid}/clips/{cid}/preview").json()["candidate"]
+    assert c.post(f"/api/projects/{pid}/clips/{cid}/split", json={"at": cand["start"] + 0.2}).status_code == 400
+    mid = round((cand["start"] + cand["end"]) / 2, 2)
+    sp = c.post(f"/api/projects/{pid}/clips/{cid}/split", json={"at": mid}).json()
+    assert sp["first"]["end"] == mid and sp["second"]["start"] == mid and sp["second"]["end"] == cand["end"]
+    ids = [x["id"] for x in c.get(f"/api/projects/{pid}/candidates").json()["candidates"]]
+    assert sp["second"]["id"] in ids
+    assert c.get(f"/api/projects/{pid}/clips/{sp['second']['id']}/preview").status_code == 200
+
     # live event stream replays stage history
     with c.stream("GET", "/api/events") as r:
         assert r.status_code == 200
