@@ -25,7 +25,7 @@ from clipstudio.core.models import (ActionTrack, Candidate, CandidateSet, Captio
                                     remap_words)
 from clipstudio.highlights.candidates import generate_candidates
 from clipstudio.ingestion.sources import download_url, file_fingerprint, job_id_for_file, job_id_for_url, validate_local
-from clipstudio.media.ffmpeg import extract_audio_wav, pick_speech_track, probe
+from clipstudio.media.ffmpeg import black_edge_trim, black_segments, extract_audio_wav, pick_speech_track, probe, wav_loudest_dbfs
 from clipstudio.pipeline.project import ClipEdit, Edits, StateFile, key_of, run_stage
 from clipstudio.quality_control.checks import run_qc
 from clipstudio.reframing.layout import plan_layout, resolve_facecam
@@ -36,8 +36,9 @@ from clipstudio.transcription.base import get_backend, resolve_device
 log = get_logger("studio")
 
 # bump a stage's version when its logic changes so caches invalidate
-STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 1, "transcribe": 2, "loudness": 1, "candidates": 6,
-                  "facecam": 1, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 4, "qc": 4, "platforms": 1}
+SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
+STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 6,
+                  "facecam": 1, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 4, "qc": 4, "platforms": 1, "edges": 1}
 
 
 @dataclass
@@ -58,7 +59,7 @@ class Project:
             "candidates": self.root / "candidates.json", "edits": self.root / "edits.json",
             "candidates_raw": self.analysis / "candidates_heuristic.json",
             "facecam": self.analysis / "facecam.json", "visual": self.analysis / "visual.json",
-            "chat": self.analysis / "chat.json",
+            "chat": self.analysis / "chat.json", "speech_tracks": self.analysis / "speech_tracks.json",
         }[name]
 
     def clip_dir(self, cid: str) -> Path:
@@ -191,9 +192,22 @@ class Studio:
             log.info("audio streams: %s; transcribing %s", names, speech_tracks)
         k_sp = key_of("speech_audio", STAGE_VERSIONS["speech_audio"], k_meta, speech_tracks,
                       cfg.transcription.normalize_speech)
-        run_stage(p.state, "speech_audio", k_sp, [p.p("speech")],
-                  lambda: extract_audio_wav(src, p.p("speech"), speech_tracks,
-                                            speech_normalize=cfg.transcription.normalize_speech),
+        def do_speech() -> None:
+            norm = cfg.transcription.normalize_speech
+            extract_audio_wav(src, p.p("speech"), speech_tracks, speech_normalize=norm)
+            used, reason = speech_tracks, None
+            n = len(media.audio_streams)
+            if len(speech_tracks) == 1 and n > 1:
+                level = wav_loudest_dbfs(p.p("speech"))
+                if level < SILENT_TRACK_DBFS:
+                    used = list(range(n))
+                    reason = (f"audio stream {speech_tracks[0]} is silent (loudest moment {level:.0f} dBFS): "
+                              f"transcribing all {n} streams mixed instead")
+                    log.warning("    %s", reason)
+                    extract_audio_wav(src, p.p("speech"), used, speech_normalize=norm)
+            p.p("speech_tracks").write_text(json.dumps({"requested": speech_tracks, "used": used, "reason": reason}))
+
+        run_stage(p.state, "speech_audio", k_sp, [p.p("speech"), p.p("speech_tracks")], do_speech,
                   resume=resume, force=force)
 
         k_tr = key_of("transcribe", STAGE_VERSIONS["transcribe"], k_sp, cfg.section_hash("transcription"))
@@ -586,6 +600,7 @@ class Studio:
         media = MediaInfo.load(p.p("media"))
         tr_key = p.state.stage("transcribe").key
         cached: list[str] = []
+        c = self._trim_black_edges(p, c, e, cfg, state, resume, force)
         log.info("clip %s  #%d  %.2f-%.2fs  \"%s\"", c.id, c.rank, c.start, c.end, c.title)
 
         f_plan, f_caps, f_ass, f_srt = d / "cropplan.json", d / "captions.json", d / "captions.ass", d / "captions.srt"
@@ -625,7 +640,7 @@ class Studio:
             r = run_stage(state, "captions", k_cap, [f_caps, f_ass], do_captions, resume=resume, force=force)
             cached += [r.name] if r.cached else []
 
-        voice = self.voice_track(media, cfg)
+        voice = self.voice_track(media, cfg, self.speech_tracks_used(p))
         punches = self.punches(p, c, cfg)
         k_r = key_of("render", STAGE_VERSIONS["render"], k_plan, k_cap if caps_on else None, c.start, c.end,
                      p.state.data["source"]["fingerprint"], cfg.section_hash("video", "audio", "export", "enhance"),
@@ -680,13 +695,53 @@ class Studio:
                   resume=resume, force=force)
         return json.loads((d / "platforms.json").read_text())
 
+    def _trim_black_edges(self, p: Project, c: Candidate, e: ClipEdit | None, cfg: Config, state: StateFile,
+                          resume: bool, force: bool) -> Candidate:
+        """Move the clip bounds past black frames at its edges. Bounds the user set are never changed."""
+        if not cfg.enhance.trim_black_edges or (e and (e.start is not None or e.end is not None)):
+            return c
+        f = p.clip_dir(c.id) / "edges.json"
+        src = p.source_path()
+        k = key_of("edges", STAGE_VERSIONS["edges"], p.state.data["source"]["fingerprint"], c.start, c.end)
+
+        def do_edges() -> None:
+            segs = black_segments(src, c.start, c.end)
+            lead, trail = black_edge_trim(segs, c.end - c.start)
+            f.write_text(json.dumps({"start": c.start, "end": c.end, "black": segs, "lead": lead, "trail": trail}))
+
+        run_stage(state, "edges", k, [f], do_edges, resume=resume, force=force)
+        d = json.loads(f.read_text())
+        lead, trail = d["lead"], d["trail"]
+        if not (lead or trail):
+            return c
+        start, end = round(c.start + lead, 3), round(c.end - trail, 3)
+        if end - start < max(3.0, 0.5 * (c.end - c.start)):
+            log.warning("    clip %s is mostly black (%.1fs at the start, %.1fs at the end); bounds kept",
+                        c.id, lead, trail)
+            return c
+        log.info("    trimmed black edges: %.2fs at the start, %.2fs at the end", lead, trail)
+        return c.model_copy(update={"start": start, "end": end, "duration": round(end - start, 3),
+                                    "peak_time": min(max(c.peak_time, start), end),
+                                    "cuts": normalize_cuts(c.cuts, start, end) if c.cuts else c.cuts})
+
     @staticmethod
-    def voice_track(media: MediaInfo, cfg: Config) -> int | None:
-        """The microphone stream, when the source has several audio streams and one is clearly the voice."""
+    def voice_track(media: MediaInfo, cfg: Config, used: list[int] | None = None) -> int | None:
+        """The microphone stream, when the source has several audio streams and one is clearly the voice.
+
+        ``used`` is what transcription actually used (see speech_tracks_used): a mic stream that turned out to be
+        silent is not treated as the voice, so the game audio is not ducked under silence."""
         if cfg.audio.tracks != "all" or len(media.audio_streams) < 2:
             return None
-        sp = pick_speech_track(media, cfg.transcription.speech_track)
+        sp = used if used is not None else pick_speech_track(media, cfg.transcription.speech_track)
         return sp[0] if len(sp) == 1 else None
+
+    @staticmethod
+    def speech_tracks_used(p: Project) -> list[int] | None:
+        f = p.p("speech_tracks")
+        try:
+            return list(json.loads(f.read_text())["used"]) if f.exists() else None
+        except (ValueError, KeyError, TypeError):
+            return None
 
     def punches(self, p: Project, c: Candidate, cfg: Config) -> list[float]:
         """Clip-relative punch-in times: the peak moment first, then on-screen events inside the clip."""

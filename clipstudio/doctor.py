@@ -166,20 +166,17 @@ def run_doctor(cfg: Config) -> Report:
         add(Item(f"py:{name}", "ok" if ver else ("missing" if req else "info"),
                  f"{ver} - {why}" if ver else f"not installed - {why}", req))
 
-    # CUDA for CTranslate2
-    cuda_n = 0
-    try:
-        import ctranslate2
+    # CUDA for CTranslate2: a device count alone is not enough (Windows needs the cuBLAS DLLs on the path)
+    from clipstudio.core.compat import cuda_usable
 
-        cuda_n = ctranslate2.get_cuda_device_count()
-    except Exception:
-        pass
-    add(Item("cuda_ctranslate2", "ok" if cuda_n else "info",
-             f"{cuda_n} CUDA device(s) usable by faster-whisper" if cuda_n else "no CUDA device: transcription runs on CPU (int8)"))
+    cuda_ok, cuda_detail = cuda_usable()
+    add(Item("cuda_ctranslate2", "ok" if cuda_ok else "info",
+             f"{cuda_detail}: faster-whisper runs on the GPU" if cuda_ok
+             else f"{cuda_detail}: transcription runs on CPU (int8)"))
 
     # optional CLIs
     for tool, why in [("yt-dlp", "URL ingestion"), ("streamlink", "live capture (not yet integrated)"),
-                      ("node", "Remotion captions (not used; libass chosen)"), ("fc-match", "font resolution for captions")]:
+                      ("node", "Remotion captions (not used; libass chosen)"), ("fc-match", "font lookup (optional: OS font folders are scanned without it)")]:
         p = shutil.which(tool)
         add(Item(f"bin:{tool}", "ok" if p else "info", (p or "not found") + f" - {why}"))
 
@@ -205,9 +202,9 @@ def run_doctor(cfg: Config) -> Report:
 
     # recommendations
     vram = max((g["vram_gb"] or 0 for g in gpus if g["vendor"] == "nvidia"), default=0)
-    if cuda_n and vram >= 8:
+    if cuda_ok and vram >= 8:
         r.recommendations.append(f"GPU with {vram:g} GB VRAM: use profile 'quality' (large-v3-turbo, float16) and NVENC.")
-    elif cuda_n:
+    elif cuda_ok:
         r.recommendations.append("Small GPU: profile 'balanced' (whisper small on CUDA).")
     else:
         cores = os.cpu_count() or 1

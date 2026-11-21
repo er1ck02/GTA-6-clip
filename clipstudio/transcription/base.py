@@ -20,12 +20,14 @@ class TranscriptionBackend(Protocol):
 def resolve_device(requested: str) -> str:
     if requested in ("cpu", "cuda"):
         return requested
-    try:
-        import ctranslate2
+    from clipstudio.core.compat import cuda_usable
 
-        return "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
-    except Exception:  # ctranslate2 missing or broken CUDA install: CPU is always safe
-        return "cpu"
+    ok, detail = cuda_usable()
+    if not ok and "device(s)" in detail:  # a GPU exists but cannot be used: say why instead of failing later
+        from clipstudio.core.logging import get_logger
+
+        get_logger("transcription").warning("GPU not used for transcription: %s", detail)
+    return "cuda" if ok else "cpu"
 
 
 def get_backend(cfg: TranscriptionCfg, device: str, models_dir: Path) -> TranscriptionBackend:

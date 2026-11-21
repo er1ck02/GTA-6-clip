@@ -153,3 +153,24 @@ def test_cli_doctor_runs(tmp_path):
 
     assert main(["doctor", "--set", f"paths.logs_dir={tmp_path}"]) in (0, 1)
     assert (tmp_path / "doctor.json").exists()
+
+
+@needs_whisper
+def test_silent_mic_stream_falls_back_to_the_mix(tmp_path, sample_short):
+    """A recording whose 'Mic' stream is silent (seen on a real Medal recording) must still get a transcript."""
+    src = tmp_path / "silent_mic.mkv"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(sample_short), "-f", "lavfi", "-i",
+                    "anullsrc=r=48000:cl=mono", "-map", "0:v", "-map", "0:a", "-map", "1:a", "-shortest",
+                    "-c:v", "copy", "-c:a", "aac", "-metadata:s:a:0", "title=Game", "-metadata:s:a:1", "title=Mic",
+                    str(src)], check=True)
+    st = Studio(_cfg(tmp_path))
+    p = st.open_or_create(input_path=src)
+    st.analyze(p)
+    import json
+
+    used = json.loads(p.p("speech_tracks").read_text())
+    assert used["requested"] == [1] and used["used"] == [0, 1] and "silent" in used["reason"]
+    from clipstudio.core.models import Transcript
+
+    assert sum(len(s.words) for s in Transcript.load(p.p("transcript")).segments) > 10
+    assert st.voice_track(probe(src), st.cfg, st.speech_tracks_used(p)) is None  # no ducking under a dead mic

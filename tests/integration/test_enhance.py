@@ -116,3 +116,17 @@ def test_platform_copies(tmp_path, two_track):
     import json
     side = json.loads(open(s.sidecar).read())
     assert side["title"] == "Big moment" and side["file"].endswith(".short.mp4")
+
+
+def test_black_edges_detected_on_a_real_encode(tmp_path):
+    from clipstudio.media.ffmpeg import black_edge_trim, black_segments
+
+    src = tmp_path / "fade.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=8",
+                    "-vf", "drawbox=c=black:t=fill:enable='lt(t,0.6)+gt(t,7.5)'", "-c:v", "libx264",
+                    "-preset", "ultrafast", str(src)], check=True)
+    segs = black_segments(src, 0.0, 8.0)
+    lead, trail = black_edge_trim(segs, 8.0)
+    assert 0.55 <= lead <= 0.75 and 0.45 <= trail <= 0.65, segs
+    # a window that starts later sees no leading black
+    assert black_edge_trim(black_segments(src, 2.0, 6.0), 4.0) == (0.0, 0.0)

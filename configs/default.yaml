@@ -96,6 +96,7 @@ enhance:
   punch_max: 3
   hook_title: false        # big clip title at the top for the first seconds
   hook_title_seconds: 2.5
+  trim_black_edges: true      # cut black frames at clip edges (not when you set start/end yourself)
 
 export:
   encoder: auto            # auto | libx264 | h264_nvenc

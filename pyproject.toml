@@ -24,6 +24,8 @@ ui = ["fastapi>=0.110", "uvicorn>=0.29"]
 llm = ["anthropic>=1.0"]
 ocr = ["pytesseract>=0.3.10"]
 dev = ["pytest>=8.0", "httpx>=0.27"]
+# CUDA 12 cuBLAS + cuDNN 9 runtime for faster-whisper on NVIDIA GPUs (about 1.5 GB; Windows and Linux)
+gpu = ["nvidia-cublas-cu12>=12.1", "nvidia-cudnn-cu12>=9,<10"]
 all = ["yt-dlp>=2024.1.0", "mediapipe>=0.10.14", "opencv-contrib-python>=4.8,<5", "fastapi>=0.110",
        "uvicorn>=0.29", "anthropic>=1.0", "pytesseract>=0.3.10"]
 

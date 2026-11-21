@@ -321,6 +321,8 @@ class EnhanceCfg(_Strict):
     # big title at the top for the first seconds (uses the clip title; off by default)
     hook_title: bool = False
     hook_title_seconds: float = Field(2.5, gt=0, le=10)
+    # drop black frames at the very start/end of a clip (loading screens, fades); skipped when you set the bounds
+    trim_black_edges: bool = True
 
 
 class PlatformPreset(_Strict):

@@ -58,9 +58,27 @@ class Run:
         traceback.print_exc()
 
 
+def read_json(path: Path) -> dict:
+    """A JSON file that another process may be rewriting: {} when missing or caught mid-write."""
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _is_json(text: str) -> bool:
+    try:
+        json.loads(text)
+        return True
+    except ValueError:
+        return False
+
+
 def cli(args: list[str], data_dir: Path, extra: list[str], timeout: float = 3600) -> subprocess.CompletedProcess:
     cmd = [sys.executable, "-m", "app.cli", *args, "--set", f"paths.data_dir={data_dir}", *extra]
-    return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}  # Windows pipes default to the ANSI code page
+    return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout, env=env)
 
 
 def qc_check(qc: QCReport, name: str):
@@ -179,18 +197,20 @@ def main() -> int:
         try:
             proc = subprocess.Popen([sys.executable, "-m", "app.cli", "export", "--project", p.id, "--clips", c.id,
                                      "--force", "--set", f"paths.data_dir={data_dir}", *extra],
-                                    cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                                    cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                    # Windows: its own process group, so Ctrl+Break reaches only the child
+                                    creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
             state_f = p.clip_dir(c.id) / "state.json"
             deadline = time.time() + 600
             while time.time() < deadline and proc.poll() is None:
-                s = json.loads(state_f.read_text()) if state_f.exists() else {}
+                s = read_json(state_f)
                 if s.get("stages", {}).get("render", {}).get("status") == "running":
                     break
                 time.sleep(0.2)
             time.sleep(1.0)
             interrupted = proc.poll() is None
             if interrupted:
-                proc.send_signal(signal.SIGINT if os.name != "nt" else signal.CTRL_C_EVENT)
+                proc.send_signal(signal.SIGINT if os.name != "nt" else signal.CTRL_BREAK_EVENT)
             proc.wait(timeout=120)
             s = json.loads(state_f.read_text())
             render_state = s["stages"].get("render", {}).get("status")
@@ -213,6 +233,9 @@ def main() -> int:
                      ["review", "--project", p.id, "--json"]):
             r = cli(args, data_dir, extra)
             outs[" ".join(args[:1] + (["--project"] if "--project" in args else []))] = (r.returncode, r.stdout)
+        bad = [f"{k} (exit {rc}): {o.strip()[:200] or 'no output'}" for k, (rc, o) in outs.items() if not _is_json(o)]
+        if bad:
+            raise RuntimeError("command printed no valid JSON: " + "; ".join(bad))
         parsed = {k: (rc, json.loads(o)) for k, (rc, o) in outs.items()}
         ok = all(rc == 0 for rc, _ in parsed.values()) or (parsed["doctor"][0] == 1 and
                                                             all(rc == 0 for k, (rc, _) in parsed.items() if k != "doctor"))

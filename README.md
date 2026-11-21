@@ -79,12 +79,26 @@ install) and writes `acceptance_report.md`. Example:
 
 ### GPU setup (optional, NVIDIA)
 
-faster-whisper uses CTranslate2, which needs the NVIDIA driver plus CUDA 12 and
-cuDNN 9 libraries. The simplest route is `pip install nvidia-cublas-cu12
-nvidia-cudnn-cu12` inside the venv (Linux), or installing the CUDA toolkit and
-cuDNN on Windows. Then run the doctor: `cuda_ctranslate2` should report a CUDA
-device. With a GPU, `processing.device: auto` picks CUDA and float16, and the
-renderer uses NVENC when FFmpeg has it (falling back to libx264 if NVENC fails).
+faster-whisper uses CTranslate2, which needs the NVIDIA driver plus the CUDA 12
+cuBLAS and cuDNN 9 libraries. The simplest route on Windows and Linux is
+`pip install -e ".[gpu]"` inside the venv (about 1.5 GB; the Windows installer
+offers it when it finds `nvidia-smi`). On Windows those DLLs land in
+`site-packages\nvidia\*\bin`, which Windows does not search; Clip Studio adds
+those folders to the DLL search path at startup, so no PATH editing is needed.
+Then run the doctor: `cuda_ctranslate2` must say that cuBLAS loads (it really
+loads the library instead of only counting GPUs). If cuBLAS is missing, the
+doctor says so and transcription runs on the CPU instead of failing later. With
+a GPU, `processing.device: auto` picks CUDA and float16, and the renderer uses
+NVENC when FFmpeg has it (falling back to libx264 if NVENC fails).
+
+### Windows notes
+
+- Tested on Windows 11 with Python 3.12, FFmpeg 9.1 (`winget install Gyan.FFmpeg`) and an RTX 4080.
+- Captions find fonts in `C:\Windows\Fonts` and your per-user font folder; fontconfig (`fc-match`) is not needed.
+- To stop a run from a script, start it in its own process group and send Ctrl+Break; it is recorded as
+  interrupted and `resume` continues it, exactly like Ctrl+C.
+- Windows PowerShell 5.1 writes UTF-16 when you redirect with `>`, which other tools then fail to read as JSON.
+  Use `clipstudio status --json | Out-File -Encoding utf8 status.json`, or run the command from `cmd.exe`.
 
 ### Models
 

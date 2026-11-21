@@ -286,7 +286,8 @@ def create_app(cfg: Config):
                 "effects": {"punches": studio.punches(p, c, cfg_c), "punch_zoom": cfg_c.enhance.punch_zoom,
                             "hook": c.title if cfg_c.enhance.hook_title else None,
                             "hook_seconds": cfg_c.enhance.hook_title_seconds,
-                            "voice_track": studio.voice_track(MediaInfo.load(p.p("media")), cfg_c),
+                            "voice_track": studio.voice_track(MediaInfo.load(p.p("media")), cfg_c,
+                                                              studio.speech_tracks_used(p)),
                             "duck_game": cfg_c.audio.duck_game, "voice_enhancement": cfg_c.audio.voice_enhancement},
                 "edit": edit.model_dump(exclude_none=True) if edit else {}}
 

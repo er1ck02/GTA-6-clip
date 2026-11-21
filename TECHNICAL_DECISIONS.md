@@ -410,3 +410,18 @@ run peaked at 2.0 GB, mostly the whisper model and decode buffers). A container
 restart killed that run mid-transcription and the rerun reused the finished
 chunks. A script rather than a checklist means the owner can rerun the same
 acceptance on his own PC and footage and get evidence, not claims.
+
+## TD-26 · Platform differences live in one module, and the checks test what is actually used
+
+**Decision.** `clipstudio/core/compat.py` holds the OS-specific pieces: registering pip's NVIDIA DLL folders on
+Windows, a CUDA check that loads cuBLAS instead of counting devices, Ctrl+Break mapped to KeyboardInterrupt, and
+font folders for systems without fontconfig. Two pipeline behaviours came from the same Windows run: a single
+"Mic" stream that is digitally silent is replaced by the mix for transcription (and not used for ducking), and
+black frames at the edges of a clip are trimmed before planning, unless the user set the bounds.
+
+**Why.** Every one of these passed in the Linux sandbox and failed on the owner's PC: the doctor said CUDA was fine
+while the first transcription died on a missing DLL, FFmpeg 9 changed its filter list format, and a real Medal
+recording had a silent mic track. A doctor that checks the thing the pipeline will actually do, and a CPU fallback
+with a reason, are better than a green check followed by a crash. Edge trimming is automatic because a loading
+screen at the start of a highlight is never wanted; QC stays strict for black inside the clip, where cutting
+would change what the clip shows.

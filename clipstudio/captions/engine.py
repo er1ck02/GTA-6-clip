@@ -22,9 +22,48 @@ TERMINAL = re.compile(r"[.!?…]['\")\]]*$")
 
 
 # ------------------------------------------------------------------ fonts
+@lru_cache(maxsize=1)
+def _font_index() -> dict[tuple[str, str], str]:
+    """{(family_lower, style_lower): file} for fonts in the OS font folders (used when fontconfig is absent)."""
+    from clipstudio.core.compat import font_dirs
+
+    try:
+        from PIL import ImageFont
+    except ImportError:  # pragma: no cover - Pillow is a core dependency
+        return {}
+    index: dict[tuple[str, str], str] = {}
+    for d in font_dirs():
+        for f in sorted(d.rglob("*")):
+            if f.suffix.lower() not in (".ttf", ".otf", ".ttc"):
+                continue
+            try:
+                fam, sty = ImageFont.truetype(str(f), 12).getname()
+            except Exception:
+                continue
+            if fam:
+                index.setdefault((fam.lower(), (sty or "regular").lower()), str(f))
+    return index
+
+
+def _scan_font(families: tuple[str, ...], bold: bool) -> tuple[str, str] | None:
+    index = _font_index()
+    want = ("bold", "semibold", "black", "regular") if bold else ("regular", "book", "normal", "medium")
+    for fam in families:
+        styles = {sty: f for (fl, sty), f in index.items() if fl == fam.lower()}
+        if not styles:
+            continue
+        for sty in want:
+            if sty in styles:
+                return fam, styles[sty]
+        return fam, sorted(styles.items())[0][1]
+    return None
+
+
 @lru_cache(maxsize=32)
 def resolve_font(families: tuple[str, ...], bold: bool) -> tuple[str, str | None]:
-    """Return (family, font_file) for the first installed family. Uses fontconfig when present."""
+    """Return (family, font_file) for the first installed family.
+
+    Uses fontconfig when present (Linux), otherwise scans the OS font folders (Windows, macOS)."""
     if shutil.which("fc-list") and shutil.which("fc-match"):
         installed = subprocess.run(["fc-list", ":", "family"], capture_output=True, text=True).stdout.lower()
         names = {n.strip() for line in installed.splitlines() for n in line.split(",")}
@@ -33,6 +72,10 @@ def resolve_font(families: tuple[str, ...], bold: bool) -> tuple[str, str | None
                 pat = f"{fam}:{'bold' if bold else 'regular'}"
                 f = subprocess.run(["fc-match", "-f", "%{file}", pat], capture_output=True, text=True).stdout.strip()
                 return fam, (f or None)
+    found = _scan_font(families, bold)
+    if found:
+        return found
+    log.warning("none of the caption fonts %s is installed; libass will substitute one", list(families))
     return families[-1], None
 
 

@@ -87,10 +87,14 @@ def _q(a: str) -> str:
     return a if re.fullmatch(r"[\w./:=+,-]+", a) else repr(a)
 
 
+def parse_filter_list(out: str) -> set[str]:
+    """Filter names from ``ffmpeg -filters``. FFmpeg <= 8 prints a 3-letter flag column (``TSC``), 9.x prints 2."""
+    return {m.group(1) for m in re.finditer(r"^\s*[.TSCA]{2,3}\s+(\w+)\s", out, re.M)}
+
+
 @lru_cache(maxsize=1)
 def ffmpeg_capabilities() -> dict:
-    out = run([ffmpeg_bin(), "-hide_banner", "-filters"]).stdout.decode(errors="replace")
-    filters = {m.group(1) for m in re.finditer(r"^\s*[.TSC]{3}\s+(\w+)\s", out, re.M)}
+    filters = parse_filter_list(run([ffmpeg_bin(), "-hide_banner", "-filters"]).stdout.decode(errors="replace"))
     enc = run([ffmpeg_bin(), "-hide_banner", "-encoders"]).stdout.decode(errors="replace")
     encoders = {m.group(1) for m in re.finditer(r"^\s*[VAS][.FSXBD]{5}\s+(\S+)\s", enc, re.M)}
     ver = run([ffmpeg_bin(), "-version"]).stdout.decode(errors="replace").splitlines()[0]
@@ -179,6 +183,29 @@ def extract_audio_wav(src: Path, dst: Path, tracks: list[int] | None = None, sam
     return dst
 
 
+def black_segments(src: Path, start: float, end: float, min_dur: float = 0.1,
+                   pix_th: float = 0.08) -> list[tuple[float, float]]:
+    """Black stretches in ``[start, end]`` of the source, relative to ``start`` (same thresholds as QC)."""
+    cp = run([ffmpeg_bin(), "-hide_banner", "-nostats", "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}",
+              "-i", str(src), "-map", "0:v:0", "-vf", f"fps=25,scale=480:-2,blackdetect=d={min_dur}:pix_th={pix_th}",
+              "-an", "-f", "null", "-"])
+    txt = cp.stderr.decode(errors="replace")
+    return [(float(a), float(b)) for a, b in
+            re.findall(r"black_start:\s*([\d.]+)\s+black_end:\s*([\d.]+)", txt)]
+
+
+def black_edge_trim(segments: list[tuple[float, float]], dur: float, tol: float = 0.15,
+                    pad: float = 0.04) -> tuple[float, float]:
+    """(lead, trail): seconds of black to drop at the start and end of a ``dur``-second window."""
+    lead = trail = 0.0
+    for a, b in segments:
+        if a <= tol:
+            lead = max(lead, min(dur, b + pad))
+        if b >= dur - tol:
+            trail = max(trail, dur - a + pad)
+    return round(lead, 3), round(trail, 3)
+
+
 def pick_speech_track(info: MediaInfo, setting: str | int) -> list[int]:
     """Which audio streams to transcribe. 'auto' prefers a stream named like a microphone."""
     n = len(info.audio_streams)
@@ -236,6 +263,14 @@ def window_rms(samples: np.ndarray, win: int, block_windows: int = 8192) -> np.n
         blk = np.asarray(samples[i * win:j * win], dtype=np.float64).reshape(j - i, win) * scale
         out[i:j] = np.sqrt(np.mean(blk * blk, axis=1))
     return out
+
+
+def wav_loudest_dbfs(path: Path, win_seconds: float = 0.5) -> float:
+    """Level of the loudest ``win_seconds`` window of a 16-bit mono WAV, in dBFS (-120 for digital silence)."""
+    samples, sr = wav_memmap(path)
+    rms = window_rms(samples, max(1, int(sr * win_seconds)))
+    peak = float(rms.max()) if len(rms) else 0.0
+    return 20 * float(np.log10(peak)) if peak > 1e-6 else -120.0
 
 
 def read_wav_float(path: Path) -> tuple[np.ndarray, int]:

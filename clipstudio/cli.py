@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from clipstudio.config import load_config
+from clipstudio.core.compat import install_interrupt_handlers, register_cuda_dlls
 from clipstudio.core.errors import Cancelled, ClipStudioError
 from clipstudio.core.logging import get_logger, setup_logging
 
@@ -355,6 +356,8 @@ def cmd_ui(a) -> int:
 def main(argv: list[str] | None = None) -> int:
     a = build_parser().parse_args(argv)
     setup_logging(getattr(a, "verbose", False))
+    install_interrupt_handlers()
+    register_cuda_dlls()
     handlers = {"doctor": cmd_doctor, "process": cmd_process, "review": cmd_review, "export": cmd_export,
                 "resume": cmd_resume, "status": cmd_status, "ui": cmd_ui}
     def fail(code: int, msg: str) -> int:

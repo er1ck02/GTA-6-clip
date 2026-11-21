@@ -15,6 +15,12 @@ if errorlevel 1 echo WARNING: ffmpeg is not on PATH. Install it with:  winget in
 if not exist ".venv\Scripts\python.exe" %PY% -m venv .venv || goto :fail
 ".venv\Scripts\python.exe" -m pip install --upgrade pip || goto :fail
 ".venv\Scripts\python.exe" -m pip install -e ".[ui,vision,ingest,ocr]" || goto :fail
+rem NVIDIA GPU: CUDA libraries for fast transcription (about 1.5 GB, asked first)
+where nvidia-smi >nul 2>nul
+if not errorlevel 1 (
+  choice /M "NVIDIA GPU found. Download the CUDA libraries for GPU transcription (about 1.5 GB)"
+  if not errorlevel 2 ".venv\Scripts\python.exe" -m pip install -e ".[gpu]"
+)
 ".venv\Scripts\python.exe" -m app.cli doctor
 echo.
 echo Setup finished. Start the studio with "Clip Studio.bat".
