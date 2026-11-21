@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clip Studio / VI</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ============================================================ HEADER -->
+  <header class="topbar">
+    <div class="brand" title="GTA 6 Clip Studio">
+      <span class="wm">CLIP STUDIO</span><span class="wm-slash">/ VI</span>
+    </div>
+    <div class="proj-picker">
+      <label for="projectSelect" class="mono-label">PROJECT</label>
+      <select id="projectSelect" aria-label="Project"><option value="">loading…</option></select>
+      <span id="sampleBadge" class="badge badge-sample" hidden title="This project's source is the bundled synthetic sample video, not a real stream">SAMPLE DATA<span class="long"> · SYNTHETIC</span></span>
+    </div>
+    <form id="importForm" class="import" autocomplete="off">
+      <input id="importInput" type="text" spellcheck="false" placeholder="Import a local file path or a VOD URL…" aria-label="Import source">
+      <button type="submit" class="btn btn-dark">IMPORT</button>
+    </form>
+    <div class="sysbadges">
+      <span id="deviceBadge" class="badge badge-dim" title="Processing device / profile from /api/system">…</span>
+      <span id="sseBadge" class="badge badge-dim" title="Live event stream">EVENTS ○</span>
+    </div>
+  </header>
+
+  <!-- status strip: what the pipeline is doing right now -->
+  <div class="statusbar" id="statusbar">
+    <span class="sb-step" id="sbStep">--</span>
+    <span class="sb-text" id="sbText">Connecting…</span>
+    <span class="sb-stages" id="sbStages"></span>
+  </div>
+
+  <!-- ============================================================ WORKSPACE -->
+  <main class="workspace">
+
+    <!-- MEDIA BIN -->
+    <section class="panel bin" id="binPanel">
+      <div class="panel-head"><h2>MEDIA BIN / MOMENTS</h2><span class="ph-meta" id="binMeta"></span></div>
+      <div class="bin-list" id="binList"></div>
+    </section>
+
+    <!-- PROGRAM / SOURCE -->
+    <section class="panel program">
+      <div class="panel-head"><h2>PROGRAM / SOURCE</h2><span class="ph-meta" id="progMeta"></span></div>
+      <div class="viewer" id="viewer">
+        <video id="video" preload="auto" playsinline></video>
+        <canvas id="overlay"></canvas>
+        <div class="viewer-msg" id="viewerMsg">No source loaded</div>
+      </div>
+      <div class="caption-line" id="captionLine" title="Caption chunk at the playhead">&nbsp;</div>
+      <div class="transport">
+        <div class="tp-btns">
+          <button class="ibtn" id="btnToStart" title="Jump to clip start">⏮</button>
+          <button class="ibtn" id="btnStepBack" title="Previous frame (,)">◀▏</button>
+          <button class="ibtn ibtn-play" id="btnPlay" title="Play / pause (space)">▶</button>
+          <button class="ibtn" id="btnStepFwd" title="Next frame (.)">▕▶</button>
+          <button class="ibtn toggle on" id="btnLoop" title="Loop inside the clip range">LOOP</button>
+          <button class="ibtn toggle" id="btnMute" title="Mute">VOL</button>
+        </div>
+        <div class="tp-time">
+          <span class="tc" id="timecode">00:00:00:00</span>
+          <span class="tc-sub" id="clipTime">clip --</span>
+        </div>
+        <div class="tp-tools">
+          <button class="btn btn-ghost btn-sm" id="btnDrawFace" hidden title="Drag on the source to draw the facecam box">FACE BOX</button>
+          <span class="tp-hint" id="progHint">drag the teal crop to reframe</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- INSPECTOR -->
+    <section class="panel inspector" id="inspector">
+      <div class="panel-head"><h2>INSPECTOR / LIVE EDIT</h2><span class="ph-meta accent">KEYFRAMES</span></div>
+      <div class="insp-body" id="inspBody"><div class="empty">Select a moment from the media bin.</div></div>
+    </section>
+
+    <!-- OUTPUT -->
+    <section class="panel output" id="outputPanel">
+      <div class="panel-head"><h2>9:16 / OUTPUT</h2>
+        <div class="out-tabs" role="tablist">
+          <button class="tab on" data-tab="live" id="tabLive" title="Live preview drawn from the source through the current plan">LIVE</button>
+          <button class="tab" data-tab="rendered" id="tabRendered" disabled title="The rendered MP4">MP4</button>
+          <button class="tab" id="btnGuides" title="Show caption band + protected regions">GUIDES</button>
+        </div>
+      </div>
+      <div class="out-body" id="outBody">
+        <div class="out-stage" id="outStage">
+          <canvas id="outCanvas" width="270" height="480"></canvas>
+          <video id="renderVideo" controls playsinline hidden></video>
+        </div>
+        <div class="out-title" id="outTitle"></div>
+        <button class="btn btn-accent btn-block" id="btnRender" disabled>EXPORT / H.264</button>
+        <div class="render-stages" id="renderStages"></div>
+        <div class="render-err" id="renderErr" hidden></div>
+        <div class="downloads" id="downloads"></div>
+        <div class="qc" id="qcBox"></div>
+        <div class="platforms" title="All platform targets use the same master today">
+          <span class="chip">TIKTOK</span><span class="chip">SHORTS</span><span class="chip">REELS</span><span class="chip">X</span>
+          <div class="plat-note">All four: 1080×1920 · H.264 / AAC · same master file</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============================================================ TIMELINE -->
+  <section class="panel timeline" id="timelinePanel">
+    <div class="panel-head">
+      <h2 id="seqTitle">SEQUENCE</h2>
+      <div class="tl-tools">
+        <span class="tl-readout" id="tlReadout"></span>
+        <button class="btn btn-ghost btn-sm" disabled title="Split: coming soon">✂ SPLIT</button>
+        <button class="btn btn-ghost btn-sm" disabled title="Move clip: coming soon">⇄ MOVE</button>
+      </div>
+    </div>
+    <div class="tl" id="tl">
+      <div class="tl-labels">
+        <div class="tl-lab tl-lab-ruler"></div>
+        <div class="tl-lab" style="--h:var(--tr-src)">SOURCE</div>
+        <div class="tl-lab" style="--h:var(--tr-cap)">CAPTIONS</div>
+        <div class="tl-lab" style="--h:var(--tr-face)">FACE</div>
+        <div class="tl-lab" style="--h:var(--tr-aud)">AUDIO</div>
+        <div class="tl-lab" style="--h:var(--tr-kf)">CROP KF</div>
+        <div class="tl-lab" style="--h:var(--tr-fx)">EFFECTS</div>
+      </div>
+      <div class="tl-area" id="tlArea">
+        <div class="tl-ruler" id="tlRuler"></div>
+        <div class="tl-track tr-src" id="trSrc"></div>
+        <div class="tl-track tr-cap" id="trCap"></div>
+        <div class="tl-track tr-face" id="trFace"></div>
+        <div class="tl-track tr-aud" id="trAud"><canvas id="waveCanvas"></canvas></div>
+        <div class="tl-track tr-kf" id="trKf"></div>
+        <div class="tl-track tr-fx" id="trFx"><span class="tl-muted">effects track · not yet available</span></div>
+        <div class="tl-playhead" id="tlPlayhead"><span></span></div>
+        <div class="tl-empty" id="tlEmpty">Select a moment to open its sequence.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ CLIPPING DESK -->
+  <section class="panel desk">
+    <div class="panel-head"><h2>THE CLIPPING DESK / <span id="deskCount">--</span> TOOLS</h2><span class="ph-meta" id="deskMeta">live from /api/events</span></div>
+    <div class="desk-body">
+      <div class="desk-grid" id="deskGrid"></div>
+      <div class="desk-log">
+        <div class="mono-label">EVENT LOG</div>
+        <ol id="eventLog"></ol>
+      </div>
+    </div>
+  </section>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

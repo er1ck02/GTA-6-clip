@@ -28,6 +28,11 @@ from clipstudio.core.models import CaptionTrack, LoudnessTrack, MediaInfo, QCRep
 from clipstudio.media.ffmpeg import ffmpeg_bin, run
 from clipstudio.pipeline.studio import Studio
 
+try:  # module level so FastAPI can resolve string annotations (from __future__ import annotations)
+    from fastapi import Request
+except ImportError:  # UI extras not installed; create_app() reports it clearly
+    Request = Any  # type: ignore[misc,assignment]
+
 log = get_logger("server")
 STATIC = Path(__file__).parent / "static"
 
@@ -100,7 +105,7 @@ class JobRunner:
 
 def create_app(cfg: Config):
     try:
-        from fastapi import Body, FastAPI, HTTPException, Request
+        from fastapi import Body, FastAPI, HTTPException
         from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
         from fastapi.staticfiles import StaticFiles
     except ImportError as e:
@@ -147,13 +152,18 @@ def create_app(cfg: Config):
     def create_project(body: dict = Body(...)):
         path, url = body.get("input_path"), body.get("url")
         p = studio.open_or_create(input_path=Path(path) if path else None, url=url)
-        job = jobs.submit("analyze", p.id, None, lambda: studio.analyze(studio.load(p.id)) and None)
+        job = jobs.submit("analyze", p.id, None, lambda: analyze_and_preview(p.id))
         return {"project": p.id, "job": job}
+
+    def analyze_and_preview(pid: str) -> None:
+        pr = studio.load(pid)
+        studio.analyze(pr)
+        studio.ensure_preview(pr)
 
     @app.post("/api/projects/{pid}/analyze")
     def analyze(pid: str):
         p = proj(pid)
-        return jobs.submit("analyze", p.id, None, lambda: studio.analyze(studio.load(p.id)) and None)
+        return jobs.submit("analyze", p.id, None, lambda: analyze_and_preview(p.id))
 
     @app.get("/api/projects/{pid}")
     def project(pid: str):
@@ -165,7 +175,7 @@ def create_app(cfg: Config):
             clips[d.get("clip_id")] = {"qc_passed": d.get("qc_passed"), "output": bool(d.get("output")),
                                        "stages": {k: v.get("status") for k, v in d.get("stages", {}).items()}}
         return {"id": p.id, "source": p.state.data.get("source"), "media": media,
-                "stages": p.state.data.get("stages", {}), "clips": clips,
+                "stages": p.state.data.get("stages", {}), "clips": clips, "preview": preview_state(p),
                 "sample": "sample" in Path(p.state.data["source"]["path"]).name.lower()}
 
     @app.get("/api/projects/{pid}/candidates")
@@ -200,10 +210,27 @@ def create_app(cfg: Config):
         return {"start": start, "end": end, "bins": out, "median_db": lt.median_db}
 
     # ------------------------------------------------------------ media
+    preview_jobs: dict[str, str] = {}
+
+    def preview_state(p) -> dict:
+        if not has(p, "media") or not studio.preview_needed(p):
+            return {"needed": False, "ready": True}
+        return {"needed": True, "ready": has(p, "preview")}
+
     @app.get("/api/projects/{pid}/source")
     def source(pid: str):
+        """The video the browser plays: the original, or an H.264 proxy when the codec isn't playable (HEVC)."""
         p = proj(pid)
-        return FileResponse(p.source_path())  # Starlette FileResponse supports HTTP Range (seeking)
+        st = preview_state(p)
+        if not st["needed"]:
+            return FileResponse(p.source_path())  # Starlette FileResponse supports HTTP Range (seeking)
+        if st["ready"]:
+            return FileResponse(p.p("preview"), media_type="video/mp4")
+        running = preview_jobs.get(p.id)
+        if not running or next((j for j in jobs.list() if j["id"] == running), {}).get("status") in (None, "failed", "done"):
+            preview_jobs[p.id] = jobs.submit("preview", p.id, None, lambda: studio.ensure_preview(studio.load(p.id)) and None)["id"]
+        return JSONResponse({"error": "building a browser preview of this HEVC source; retry shortly"},
+                            status_code=503, headers={"Retry-After": "5"})
 
     @app.get("/api/projects/{pid}/frame")
     def frame(pid: str, t: float = 0.0, w: int = 640):
@@ -225,7 +252,9 @@ def create_app(cfg: Config):
         bad = set(body) - allowed
         if bad:
             raise HTTPException(400, f"unknown fields: {sorted(bad)}")
-        return studio.edit_clip(p, cid, **body).model_dump()
+        # an explicit null resets that field to automatic
+        clear = tuple(k for k, v in body.items() if v is None)
+        return studio.edit_clip(p, cid, clear=clear, **{k: v for k, v in body.items() if v is not None}).model_dump()
 
     @app.get("/api/projects/{pid}/clips/{cid}/preview")
     def preview(pid: str, cid: str):

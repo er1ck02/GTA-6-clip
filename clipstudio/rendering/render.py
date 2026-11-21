@@ -9,7 +9,7 @@ from clipstudio.config import AudioCfg, ExportCfg, VideoCfg
 from clipstudio.core.errors import MediaError
 from clipstudio.core.logging import get_logger
 from clipstudio.core.models import CropPlan, MediaInfo
-from clipstudio.media.ffmpeg import ffmpeg_bin, ffmpeg_capabilities, run
+from clipstudio.media.ffmpeg import audio_mix_filter, ffmpeg_bin, ffmpeg_capabilities, run
 
 log = get_logger("render")
 
@@ -49,14 +49,16 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None) -> str:
     return graph + ";" + tail + ",format=yuv420p[vout]"
 
 
-def _audio_filters(acfg: AudioCfg, src: Path, start: float, dur: float) -> str:
+def _audio_filters(acfg: AudioCfg, src: Path, start: float, dur: float, mix: str | None = None) -> str:
     pre = "highpass=f=80,acompressor=threshold=-18dB:ratio=2:attack=20:release=250," if acfg.voice_enhancement == "light" else ""
     if not acfg.normalization:
         return pre + "aresample=48000"
     target = f"I={acfg.target_lufs}:TP={acfg.true_peak}:LRA={acfg.loudness_range}"
     # pass 1: measure this exact segment
+    measure = f"{pre}loudnorm={target}:print_format=json"
+    af = ["-filter_complex", f"{mix};[amix]{measure}"] if mix else ["-af", measure]
     cp = run([ffmpeg_bin(), "-hide_banner", "-nostats", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(src),
-              "-vn", "-af", f"{pre}loudnorm={target}:print_format=json", "-f", "null", "-"])
+              "-vn", *af, "-f", "null", "-"])
     m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", cp.stderr.decode(errors="replace"), re.S)
     if not m:
         log.warning("loudness measurement failed; using single-pass loudnorm")
@@ -95,6 +97,9 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
         if ass_path.parent.resolve() != workdir.resolve():
             raise ValueError("captions file must live in the clip output folder")
     graph = build_video_graph(plan, fps, ass_name)
+    n_tracks = len(media.audio_streams) if acfg.tracks == "all" else 1
+    mix = audio_mix_filter(n_tracks)
+    afilt = _audio_filters(acfg, src, start, dur, mix) if media.has_audio else ""
     encoder = choose_encoder(ecfg, device)
     tmp = out_path.with_name(out_path.stem + ".partial.mp4")
 
@@ -103,8 +108,9 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
              "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(src),
              "-filter_complex", graph, "-map", "[vout]"]
         if media.has_audio:
-            c += ["-map", "0:a:0", "-af", _audio_filters(acfg, src, start, dur),
-                  "-c:a", "aac", "-b:a", ecfg.audio_bitrate, "-ar", "48000", "-ac", "2"]
+            c += ["-filter_complex", f"{mix};[amix]{afilt}[aout]", "-map", "[aout]"] if mix else \
+                 ["-map", "0:a:0", "-af", afilt]
+            c += ["-c:a", "aac", "-b:a", ecfg.audio_bitrate, "-ar", "48000", "-ac", "2"]
         if enc == "h264_nvenc":
             c += ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", str(ecfg.crf), "-b:v", "0"]
         else:

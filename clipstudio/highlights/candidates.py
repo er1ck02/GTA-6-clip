@@ -177,11 +177,78 @@ def is_duplicate(a: Candidate, b: Candidate, max_overlap: float) -> bool:
     return (b.start <= a.peak_time <= b.end) or (a.start <= b.peak_time <= a.end)
 
 
+def _audio_peaks(loud: LoudnessTrack, min_rise_db: float = 6.0, radius_s: float = 5.0) -> list[float]:
+    """Times of local loudness maxima that stand clearly above the source's typical level."""
+    db = np.asarray(loud.rms_db)
+    r = max(1, int(radius_s / loud.window))
+    peaks = []
+    for k in range(len(db)):
+        if db[k] < loud.median_db + min_rise_db:
+            continue
+        lo, hi = max(0, k - r), min(len(db), k + r + 1)
+        if db[k] >= db[lo:hi].max() and (not peaks or (k * loud.window - peaks[-1]) > radius_s):
+            peaks.append(k * loud.window)
+    return peaks
+
+
 def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg, media_duration: float) -> CandidateSet:
+    """Two candidate sources, scored the same way and de-duplicated together:
+
+    * sentence windows: whole sentences grouped to the target length (padded with
+      surrounding context when speech is short, e.g. a lone "I'm dead bro");
+    * audio-peak windows: built around loud moments, so gameplay with little or no
+      commentary still produces candidates. Window edges never cut a sentence.
+    """
     weights = cfg.weights.model_dump()
     wsum = sum(weights.values())
     sents = build_sentences(tr)
     raw: list[Candidate] = []
+    span = max(1e-6, cfg.maximum_duration - cfg.minimum_duration)
+
+    def make(start: float, end: float, source: str, peak: float | None = None) -> None:
+        start, end = max(0.0, start), min(media_duration, end)
+        dur = end - start
+        if dur < cfg.minimum_duration - 1e-6 or dur > cfg.maximum_duration + 1e-6:
+            return
+        group = [s for s in sents if s.start >= start - 1e-3 and s.end <= end + 1e-3]
+        prev_end = max((s.end for s in sents if s.end <= start + 1e-3), default=0.0)
+        next_start = min((s.start for s in sents if s.start >= end - 1e-3), default=media_duration)
+        f = compute_features(group, loud, start, end, prev_end, next_start)
+        contrib = {k: round(weights[k] * f[k] / wsum, 4) for k in weights}
+        score = sum(contrib.values())
+        score *= 1.0 - 0.15 * abs(dur - cfg.target_duration) / span
+        dead_air = f["silence_fraction"] > 0.4 and f["audio_intensity"] < 0.3
+        if dead_air:
+            score *= 1.0 - 0.5 * (f["silence_fraction"] - 0.4)
+        if group:
+            agreement = 1.0 - abs(f["audio_intensity"] - f["reaction_language"])
+            confidence = f["mean_word_probability"] * (0.6 + 0.4 * agreement)
+        else:
+            confidence = 0.35 + 0.3 * f["audio_intensity"]  # audio-only evidence is weaker
+        text = " ".join(s.text for s in group)
+        top = sorted(contrib.items(), key=lambda kv: -kv[1])[:3]
+        reason = ("Strongest signals: " + ", ".join(f"{k.replace('_', ' ')} ({f[k]:.2f})" for k, _ in top)
+                  + ("" if source == "speech" else "; found from an audio peak"))
+        if dead_air:
+            reason += f"; penalised for {f['silence_fraction']:.0%} dead air"
+        pk = peak if peak is not None else (_peak_sentence(group, loud).start if group else start)
+        if group and peak is None:
+            title = _title(group, loud)
+        elif group:
+            title = _title(group, loud)
+        else:
+            title = f"Loud moment at {_fmt(pk)} (no speech)"
+        cat = _category(text, f) if group else ("action" if f["audio_spike"] >= 0.5 else "commentary")
+        cid = "c-" + hashlib.sha1(f"{start:.2f}-{end:.2f}".encode()).hexdigest()[:6]
+        raw.append(Candidate(
+            id=cid, rank=0, start=round(start, 3), end=round(end, 3), duration=round(dur, 3),
+            peak_time=round(pk, 3), title=title,
+            description=f"{cat.title()} moment at {_fmt(start)}: " + (group[0].text[:120] if group else "no commentary"),
+            category=cat, score=round(score, 4), passes_threshold=score >= cfg.minimum_score,
+            confidence=round(confidence, 4), features=f, contributions=contrib, reason=reason, transcript=text,
+        ))
+
+    # 1) sentence windows
     for i in range(len(sents)):
         for j in range(i, len(sents)):
             if j > i and sents[j].start - sents[j - 1].end > cfg.max_internal_silence:
@@ -190,33 +257,33 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
             next_start = sents[j + 1].start if j + 1 < len(sents) else media_duration
             start = max(prev_end, sents[i].start - cfg.lead_in, 0.0)
             end = min(next_start, sents[j].end + cfg.tail, media_duration)
-            dur = end - start
-            if dur > cfg.maximum_duration:
+            if end - start > cfg.maximum_duration:
                 break
-            if dur < cfg.minimum_duration:
-                continue
-            group = sents[i:j + 1]
-            f = compute_features(group, loud, start, end, prev_end, next_start)
-            contrib = {k: round(weights[k] * f[k] / wsum, 4) for k in weights}
-            score = sum(contrib.values())
-            span = max(1e-6, cfg.maximum_duration - cfg.minimum_duration)
-            score *= 1.0 - 0.15 * abs(dur - cfg.target_duration) / span
-            if f["silence_fraction"] > 0.4:
-                score *= 1.0 - 0.5 * (f["silence_fraction"] - 0.4)
-            agreement = 1.0 - abs(f["audio_intensity"] - f["reaction_language"])
-            confidence = f["mean_word_probability"] * (0.6 + 0.4 * agreement)
-            text = " ".join(s.text for s in group)
-            top = sorted(contrib.items(), key=lambda kv: -kv[1])[:3]
-            reason = "Strongest signals: " + ", ".join(f"{k.replace('_', ' ')} ({f[k]:.2f})" for k, _ in top)
-            if f["silence_fraction"] > 0.4:
-                reason += f"; penalised for {f['silence_fraction']:.0%} silence"
-            cid = "c-" + hashlib.sha1(f"{start:.2f}-{end:.2f}".encode()).hexdigest()[:6]
-            raw.append(Candidate(
-                id=cid, rank=0, start=round(start, 3), end=round(end, 3), duration=round(dur, 3),
-                peak_time=round(_peak_sentence(group, loud).start, 3), title=_title(group, loud), description=f"{_category(text, f).title()} moment at {_fmt(start)}: {group[0].text[:120]}",
-                category=_category(text, f), score=round(score, 4), passes_threshold=score >= cfg.minimum_score,
-                confidence=round(confidence, 4), features=f, contributions=contrib, reason=reason, transcript=text,
-            ))
+            if end - start < cfg.minimum_duration:
+                if j + 1 < len(sents) and sents[j + 1].start - sents[j].end <= cfg.max_internal_silence:
+                    continue  # the next sentence can still extend this window
+                # pad with surrounding context (setup before, reaction after) without touching other speech
+                need = cfg.minimum_duration - (end - start)
+                room_before, room_after = start - prev_end, next_start - end
+                before = min(room_before, max(need * 0.6, need - room_after))
+                after = min(room_after, need - before)
+                start, end = start - before, end + after
+            make(start, end, "speech")
+
+    # 2) audio-peak windows
+    for pk in _audio_peaks(loud):
+        start = pk - 0.4 * cfg.target_duration
+        end = start + cfg.target_duration
+        for snt in sents:  # never cut a sentence at either edge
+            if snt.start < start < snt.end:
+                start = snt.start - cfg.lead_in
+            if snt.start < end < snt.end:
+                end = snt.end + cfg.tail
+        if start < 0:
+            end, start = end - start, 0.0
+        if end > media_duration:
+            start, end = max(0.0, start - (end - media_duration)), media_duration
+        make(start, end, "audio", peak=pk)
 
     raw.sort(key=lambda c: -c.score)
     chosen: list[Candidate] = []

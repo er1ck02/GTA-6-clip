@@ -209,3 +209,41 @@ CTranslate2 int8 conversion of Whisper small was taken from an npm package
 package's published SHA-256. It is a weights file (no code). End users get
 models the normal way: faster-whisper downloads them from Hugging Face on
 first use, or `transcription.model` can point at any local CT2 model folder.
+
+## TD-13 · Multi-track audio: transcribe the mic, mix everything else
+
+**Decision.** `MediaInfo` lists every audio stream. Transcription reads a
+separate `speech.wav` built from the stream titled Mic/Voice when one exists
+(`transcription.speech_track: auto`), levelled with `dynaudnorm` for
+recognition only. Loudness analysis and the rendered clip use the sum of all
+streams (`audio.tracks: all`).
+
+**Why.** The first test on the user's own Overwatch recording (SteelSeries
+Moments) found nothing: track 0 was game audio and the commentary lived on a
+quiet second "Mic" track. OBS, SteelSeries and Medal all record this way.
+Transcribing the clean mic track also keeps game announcer lines out of the
+transcript.
+
+## TD-14 · Browser preview proxy for non-web codecs
+
+**Decision.** When the source codec is not H.264/VP8/VP9/AV1 (typically HEVC
+from Medal or NVIDIA recorders), the server builds a 720p H.264 proxy
+(`analysis/preview.mp4`, keyframe every 30 frames for scrubbing) after analysis
+or on first request. The workstation plays the proxy and maps crop coordinates
+by the resolution ratio. Rendering and QC always read the original file.
+
+**Why.** Chromium cannot decode HEVC without platform support, so the program
+view was black on the user's Valorant clip. Transcoding the whole source for
+rendering would lose quality; a proxy is only for viewing.
+
+## TD-15 · Candidates from audio peaks as well as speech
+
+**Decision.** Besides sentence windows, every loud local maximum (≥ 6 dB above
+the median, ≥ 5 s apart) seeds a window with the peak at 40 % of the target
+length; edges are moved so they never cut a sentence. Sentence windows shorter
+than the minimum are padded with surrounding context instead of being dropped.
+All candidates go through the same scoring and de-duplication.
+
+**Why.** Real gameplay recordings have long stretches without commentary. A
+speech-only builder produced zero candidates on a 60 s Overwatch clip whose
+best moment was a two-word reaction.

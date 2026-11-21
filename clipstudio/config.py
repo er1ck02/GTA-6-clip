@@ -55,6 +55,10 @@ class TranscriptionCfg(_Strict):
     beam_size: int = Field(5, ge=1, le=10)
     vad_filter: bool = True
     word_timestamps: bool = True
+    # which audio stream(s) to transcribe: "auto" picks a stream titled Mic/Voice if present,
+    # otherwise mixes all; "mix" always mixes; or an audio stream number (0, 1, ...)
+    speech_track: str | int = "auto"
+    normalize_speech: bool = True  # level quiet mic tracks for recognition (output audio untouched)
 
 
 class AudioAnalysisCfg(_Strict):
@@ -206,6 +210,7 @@ class CaptionsCfg(_Strict):
 
 
 class AudioCfg(_Strict):
+    tracks: Literal["all", "first"] = "all"  # mix every audio stream (game + mic) into the clip, or only the first
     normalization: bool = True
     target_lufs: float = Field(-14.0, ge=-30, le=-6)
     true_peak: float = Field(-1.5, ge=-6, le=0)

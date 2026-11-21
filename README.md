@@ -181,6 +181,12 @@ caption timing, face, audio waveform, crop keyframes), and the Clipping Desk:
 a live board of each pipeline stage/tool as it runs. Tools that are not
 integrated yet are shown as planned, not as working.
 
+HEVC recordings (common from Medal/NVIDIA) can't be played reliably by browsers,
+so the server builds a 720p H.264 preview proxy for the editor the first time
+you open the project. Renders always use the original file.
+
+![Workstation](docs/screenshots/workstation.png)
+
 ---
 
 ## 6. Tests
@@ -214,8 +220,12 @@ re-transcribe, and check that QC fails a deliberately broken file.
 
 ## 8. Known limitations
 
-- Highlight detection uses transcript and loudness only. Visual, chat and LLM
-  signals are Phase 3. Silent moments with no speech can't be found yet.
+- Highlight detection uses transcript and loudness only (speech windows plus
+  loud audio peaks). Visual, chat and LLM signals are Phase 3. Score thresholds
+  still need calibration on real streams.
+- Record your mic on its own audio track if you can (OBS, SteelSeries and Medal
+  support this): the mic track is detected by name and transcribed alone.
+  With one shared track, in-game voice lines get transcribed too.
 - No automatic facecam detection or subject tracking yet: crops are static per
   clip (adjustable by hand). The QC report marks these checks `skip`.
 - No speaker diarization; single-language transcription per project.

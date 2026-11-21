@@ -62,3 +62,24 @@ def test_api_drives_the_pipeline(tmp_path, sample_short):
     assert c.get(f"/api/projects/{pid}/frame?t=3&w=200").headers["content-type"] == "image/jpeg"
     assert len(c.get(f"/api/projects/{pid}/waveform?bins=40").json()["bins"]) == 40
     assert c.get("/api/projects/nope").status_code == 404
+
+    # validation and explicit reset of a field
+    assert c.patch(f"/api/projects/{pid}/clips/{cid}", json={"layout": "sideways"}).status_code == 400
+    assert c.patch(f"/api/projects/{pid}/clips/{cid}", json={"crop_center_x": 1.5}).status_code == 400
+    c.patch(f"/api/projects/{pid}/clips/{cid}", json={"crop_center_x": None})
+    assert c.get(f"/api/projects/{pid}/clips/{cid}/preview").json()["edit"].get("crop_center_x") is None
+
+    # trimming the start keeps hand-edited captions on the same source moment
+    pv = c.get(f"/api/projects/{pid}/clips/{cid}/preview").json()
+    first = pv["captions"]["chunks"][0]["start"]
+    c.patch(f"/api/projects/{pid}/clips/{cid}", json={"start": pv["candidate"]["start"] - 1.0})
+    pv2 = c.get(f"/api/projects/{pid}/clips/{cid}/preview").json()
+    assert abs(pv2["captions"]["chunks"][0]["start"] - (first + 1.0)) < 0.01
+
+    # live event stream replays stage history
+    with c.stream("GET", "/api/events") as r:
+        assert r.status_code == 200
+        for line in r.iter_lines():
+            if line.startswith("data:"):
+                assert '"kind"' in line
+                break

@@ -70,3 +70,27 @@ def test_deterministic_ids():
     a = generate_candidates(tr, loud, cfg, tr.duration)
     b = generate_candidates(tr, loud, cfg, tr.duration)
     assert [c.id for c in a.candidates] == [c.id for c in b.candidates]
+
+
+def test_gameplay_without_commentary_still_yields_candidates():
+    """Real recordings often have almost no speech: loud game moments must still surface."""
+    from clipstudio.core.models import Transcript
+
+    tr = Transcript(backend="t", model="t", language="en", language_probability=1, duration=120, segments=[])
+    loud = _loud(120, [(60, 64)])
+    cfg = load_config(overrides=["highlights.minimum_duration=10", "highlights.maximum_duration=30",
+                                 "highlights.target_duration=18"]).highlights
+    cs = generate_candidates(tr, loud, cfg, 120)
+    assert cs.candidates and 58 <= cs.candidates[0].peak_time <= 66
+    assert "no speech" in cs.candidates[0].title
+    assert cs.candidates[0].start <= 60 <= cs.candidates[0].end
+
+
+def test_lone_short_reaction_is_padded_to_minimum():
+    tr = make_transcript([(30.0, "I'm dead bro.")])
+    loud = _loud(tr.duration + 60, [])
+    cfg = load_config(overrides=["highlights.minimum_duration=10", "highlights.maximum_duration=30",
+                                 "highlights.target_duration=18"]).highlights
+    cs = generate_candidates(tr, loud, cfg, 90)
+    c = cs.candidates[0]
+    assert c.duration >= 10 - 1e-6 and c.start < 30 < c.end and "dead" in c.transcript

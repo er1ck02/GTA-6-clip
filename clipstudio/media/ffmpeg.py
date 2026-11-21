@@ -16,7 +16,7 @@ import numpy as np
 
 from clipstudio.core.errors import DependencyMissing, MediaError
 from clipstudio.core.logging import get_logger
-from clipstudio.core.models import MediaInfo
+from clipstudio.core.models import AudioStream, MediaInfo
 
 log = get_logger("ffmpeg")
 
@@ -84,7 +84,8 @@ def probe(path: Path) -> MediaInfo:
     data = json.loads(cp.stdout)
     streams = data.get("streams", [])
     v = next((s for s in streams if s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic")), None)
-    a = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    audios = [s for s in streams if s.get("codec_type") == "audio"]
+    a = audios[0] if audios else None
     if v is None:
         raise MediaError(f"{path.name} has no video stream")
     fmt = data.get("format", {})
@@ -102,6 +103,11 @@ def probe(path: Path) -> MediaInfo:
         audio_codec=a.get("codec_name") if a else None,
         sample_rate=int(a["sample_rate"]) if a and a.get("sample_rate") else None,
         channels=int(a["channels"]) if a and a.get("channels") else None,
+        audio_streams=[
+            AudioStream(order=i, codec=s.get("codec_name", "unknown"), channels=s.get("channels"),
+                        title=(s.get("tags") or {}).get("title") or (s.get("tags") or {}).get("handler_name"))
+            for i, s in enumerate(audios)
+        ],
         size_bytes=int(fmt.get("size") or path.stat().st_size),
         container=fmt.get("format_name", "unknown"),
         title=(fmt.get("tags") or {}).get("title"),
@@ -116,18 +122,53 @@ def _rate(r: str) -> float:
         return 0.0
 
 
-def extract_audio_wav(src: Path, dst: Path, sample_rate: int = 16000) -> Path:
-    """Decode the source's first audio stream once to mono 16 kHz WAV.
+def audio_mix_filter(n_tracks: int, label_out: str = "amix") -> str | None:
+    """Filtergraph that sums all audio tracks (game + mic recordings) without level normalisation."""
+    if n_tracks <= 1:
+        return None
+    ins = "".join(f"[0:a:{i}]" for i in range(n_tracks))
+    return f"{ins}amix=inputs={n_tracks}:normalize=0:duration=longest[{label_out}]"
 
-    Transcription and loudness analysis both read this file, so the long
-    source video is only decoded for audio a single time.
+
+def extract_audio_wav(src: Path, dst: Path, tracks: list[int] | None = None, sample_rate: int = 16000,
+                      speech_normalize: bool = False) -> Path:
+    """Decode audio once to mono 16 kHz WAV.
+
+    ``tracks`` selects audio streams by order; several are summed (e.g. Game + Mic
+    tracks from OBS/SteelSeries/Medal recordings). ``speech_normalize`` evens out
+    quiet microphone tracks for speech recognition only; it never touches the
+    output audio.
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_suffix(".tmp.wav")
-    run([ffmpeg_bin(), "-v", "error", "-y", "-i", str(src), "-vn", "-map", "0:a:0", "-ac", "1",
+    tracks = tracks or [0]
+    post = ",dynaudnorm=f=250:g=15:p=0.9" if speech_normalize else ""
+    if len(tracks) == 1:
+        args = ["-map", f"0:a:{tracks[0]}"] + (["-af", post.lstrip(",")] if post else [])
+    else:
+        ins = "".join(f"[0:a:{i}]" for i in tracks)
+        args = ["-filter_complex", f"{ins}amix=inputs={len(tracks)}:normalize=0:duration=longest{post}[a]", "-map", "[a]"]
+    run([ffmpeg_bin(), "-v", "error", "-y", "-i", str(src), "-vn", *args, "-ac", "1",
          "-ar", str(sample_rate), "-c:a", "pcm_s16le", str(tmp)])
     tmp.replace(dst)
     return dst
+
+
+def pick_speech_track(info: MediaInfo, setting: str | int) -> list[int]:
+    """Which audio streams to transcribe. 'auto' prefers a stream named like a microphone."""
+    n = len(info.audio_streams)
+    if n == 0:
+        return []
+    if isinstance(setting, int) or (isinstance(setting, str) and setting.isdigit()):
+        i = int(setting)
+        if not 0 <= i < n:
+            raise MediaError(f"speech_track {i} does not exist; the source has {n} audio stream(s)")
+        return [i]
+    if setting == "auto":
+        for s in info.audio_streams:
+            if s.title and re.search(r"\b(mic|microphone|voice|commentary)\b", s.title, re.I):
+                return [s.order]
+    return list(range(n))  # 'mix' or nothing recognisable: everything
 
 
 def read_wav_float(path: Path) -> tuple[np.ndarray, int]:

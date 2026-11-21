@@ -28,6 +28,13 @@ class _M(BaseModel):
 
 
 # --------------------------------------------------------------------------- media
+class AudioStream(_M):
+    order: int  # position among audio streams (ffmpeg 0:a:<order>)
+    codec: str
+    channels: int | None = None
+    title: str | None = None  # stream title / handler name, e.g. "Mic", "Game"
+
+
 class MediaInfo(_M):
     path: str
     duration: float
@@ -39,6 +46,7 @@ class MediaInfo(_M):
     audio_codec: str | None = None
     sample_rate: int | None = None
     channels: int | None = None
+    audio_streams: list[AudioStream] = Field(default_factory=list)
     size_bytes: int
     container: str
     title: str | None = None

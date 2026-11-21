@@ -24,7 +24,7 @@ from clipstudio.core.models import (Candidate, CandidateSet, CaptionTrack, CropP
                                     QCReport, Transcript)
 from clipstudio.highlights.candidates import generate_candidates
 from clipstudio.ingestion.sources import download_url, file_fingerprint, job_id_for_file, job_id_for_url, validate_local
-from clipstudio.media.ffmpeg import extract_audio_wav, probe
+from clipstudio.media.ffmpeg import extract_audio_wav, pick_speech_track, probe
 from clipstudio.pipeline.project import ClipEdit, Edits, StateFile, key_of, run_stage
 from clipstudio.quality_control.checks import run_qc
 from clipstudio.reframing.layout import plan_layout
@@ -34,7 +34,7 @@ from clipstudio.transcription.base import get_backend, resolve_device
 log = get_logger("studio")
 
 # bump a stage's version when its logic changes so caches invalidate
-STAGE_VERSIONS = {"metadata": 1, "extract_audio": 1, "transcribe": 1, "loudness": 1, "candidates": 4,
+STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 1, "transcribe": 2, "loudness": 1, "candidates": 5,
                   "plan": 1, "captions": 3, "render": 2, "qc": 2}
 
 
@@ -51,6 +51,7 @@ class Project:
     def p(self, name: str) -> Path:
         return {
             "media": self.analysis / "media.json", "audio": self.analysis / "audio.wav",
+            "speech": self.analysis / "speech.wav", "preview": self.analysis / "preview.mp4",
             "transcript": self.analysis / "transcript.json", "loudness": self.analysis / "loudness.json",
             "candidates": self.root / "candidates.json", "edits": self.root / "edits.json",
         }[name]
@@ -162,10 +163,22 @@ class Studio:
             raise MediaError("source has no audio; Phase 2 highlight detection needs speech")
 
         k_aud = key_of("extract_audio", STAGE_VERSIONS["extract_audio"], k_meta)
-        run_stage(p.state, "extract_audio", k_aud, [p.p("audio")], lambda: extract_audio_wav(src, p.p("audio")),
+        all_tracks = list(range(len(media.audio_streams))) or [0]
+        run_stage(p.state, "extract_audio", k_aud, [p.p("audio")],
+                  lambda: extract_audio_wav(src, p.p("audio"), all_tracks), resume=resume, force=force)
+
+        speech_tracks = pick_speech_track(media, cfg.transcription.speech_track)
+        if len(media.audio_streams) > 1:
+            names = ", ".join(f"{s.order}:{s.title or '?'}" for s in media.audio_streams)
+            log.info("audio streams: %s; transcribing %s", names, speech_tracks)
+        k_sp = key_of("speech_audio", STAGE_VERSIONS["speech_audio"], k_meta, speech_tracks,
+                      cfg.transcription.normalize_speech)
+        run_stage(p.state, "speech_audio", k_sp, [p.p("speech")],
+                  lambda: extract_audio_wav(src, p.p("speech"), speech_tracks,
+                                            speech_normalize=cfg.transcription.normalize_speech),
                   resume=resume, force=force)
 
-        k_tr = key_of("transcribe", STAGE_VERSIONS["transcribe"], k_aud, cfg.section_hash("transcription"))
+        k_tr = key_of("transcribe", STAGE_VERSIONS["transcribe"], k_sp, cfg.section_hash("transcription"))
 
         def do_transcribe() -> None:
             backend = get_backend(cfg.transcription, self.device, self.models_dir)
@@ -178,7 +191,7 @@ class Studio:
                     last[0] = f
                     log.info("    transcribed %d%%", int(f * 100))
 
-            backend.transcribe(p.p("audio"), media.duration, prog).save(p.p("transcript"))
+            backend.transcribe(p.p("speech"), media.duration, prog).save(p.p("transcript"))
 
         run_stage(p.state, "transcribe", k_tr, [p.p("transcript")], do_transcribe, resume=resume, force=force)
 
@@ -193,6 +206,36 @@ class Studio:
                                               cfg.highlights, media.duration).save(p.p("candidates")),
                   resume=resume, force=force)
         return self.candidates(p)
+
+    BROWSER_CODECS = {"h264", "vp8", "vp9", "av1"}
+
+    def preview_needed(self, p: Project) -> bool:
+        return MediaInfo.load(p.p("media")).video_codec not in self.BROWSER_CODECS
+
+    def ensure_preview(self, p: Project) -> Path:
+        """Browser-playable H.264 proxy for the workstation when the source codec (e.g. HEVC) isn't.
+
+        Only the UI uses it; rendering always reads the original source.
+        """
+        media = MediaInfo.load(p.p("media"))
+        if not self.preview_needed(p):
+            return p.source_path()
+        from clipstudio.media.ffmpeg import audio_mix_filter, ffmpeg_bin, run
+
+        def build() -> None:
+            tmp = p.p("preview").with_name("preview.partial.mp4")
+            mix = audio_mix_filter(len(media.audio_streams))
+            audio = (["-filter_complex", mix, "-map", "[amix]"] if mix else ["-map", "0:a:0?"])
+            run([ffmpeg_bin(), "-v", "error", "-y", "-i", str(p.source_path()), "-map", "0:v:0", *audio,
+                 "-vf", "scale=-2:'min(720,ih)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+                 "-g", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+                 "-movflags", "+faststart", str(tmp)])
+            tmp.replace(p.p("preview"))
+
+        key = key_of("preview_proxy", 1, p.state.data["source"]["fingerprint"])
+        log.info("source codec %s is not browser-playable; building a 720p H.264 preview proxy", media.video_codec)
+        run_stage(p.state, "preview_proxy", key, [p.p("preview")], build)
+        return p.p("preview")
 
     def candidates(self, p: Project) -> CandidateSet:
         """Generated candidates with the user's edits applied on top."""
@@ -211,24 +254,63 @@ class Studio:
                 c.user_adjusted = True
         return cs
 
-    def edit_clip(self, p: Project, cid: str, **changes) -> Candidate:
+    def edit_clip(self, p: Project, cid: str, clear: tuple[str, ...] = (), **changes) -> Candidate:
+        """Apply user edits. ``None`` values are ignored; names in ``clear`` reset a field to automatic."""
+        from pydantic import ValidationError
+
         cs = self.candidates(p)
         c = cs.get(cid)
+        old_start = c.start
         media = MediaInfo.load(p.p("media"))
         edits = p.edits()
         e = edits.clips.get(c.id, ClipEdit())
-        for k, v in changes.items():
-            if v is not None:
-                setattr(e, k, v)
+        try:
+            for k in clear:
+                if k not in ClipEdit.model_fields:
+                    raise ClipStudioError(f"unknown field {k!r}")
+                setattr(e, k, None)
+            for k, v in changes.items():
+                if v is not None:
+                    setattr(e, k, v)
+        except ValidationError as ex:
+            raise ClipStudioError("invalid edit: " + "; ".join(
+                f"{'.'.join(map(str, er['loc']))}: {er['msg']}" for er in ex.errors())) from ex
         start = e.start if e.start is not None else c.start
         end = e.end if e.end is not None else c.end
         if not (0 <= start < end <= media.duration + 1e-3):
             raise ClipStudioError(f"invalid clip range {start:.2f}-{end:.2f}s (source is {media.duration:.2f}s)")
+        if end - start < self.cfg.highlights.minimum_duration:
+            log.warning("clip %s is %.1fs, shorter than minimum_duration %.0fs", c.id, end - start,
+                        self.cfg.highlights.minimum_duration)
         if e.facecam_region is not None:
             Rect(**e.facecam_region)  # validate
         edits.clips[c.id] = e
         p.save_edits(edits)
+        self._shift_edited_captions(p, c.id, old_start, start, end)
         return self.candidates(p).get(c.id)
+
+    def _shift_edited_captions(self, p: Project, cid: str, old_start: float, new_start: float, new_end: float) -> None:
+        """Keep hand-edited captions on the same source moment when the clip is trimmed."""
+        f = p.clip_dir(cid) / "captions.json"
+        if abs(old_start - new_start) < 1e-6 or not f.exists():
+            return
+        track = CaptionTrack.load(f)
+        if not track.edited:
+            return
+        delta, dur = old_start - new_start, new_end - new_start
+        kept = []
+        for ch in track.chunks:
+            ch.start, ch.end = round(ch.start + delta, 3), round(ch.end + delta, 3)
+            for ln in ch.lines:
+                for w in ln:
+                    w.start, w.end = round(w.start + delta, 3), round(w.end + delta, 3)
+            if ch.end <= 0 or ch.start >= dur:
+                continue  # trimmed away
+            ch.start, ch.end = max(0.0, ch.start), min(dur, ch.end)
+            kept.append(ch)
+        track.chunks = kept
+        self.save_captions(p, cid, track)
+        log.info("shifted hand-edited captions by %+.2fs to follow the trim", delta)
 
     # ------------------------------------------------------------------ clips
     def _clip_config(self, e: ClipEdit | None) -> Config:

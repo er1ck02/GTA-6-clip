@@ -20,9 +20,9 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from clipstudio.core import events
 from clipstudio.core.errors import Cancelled, ClipStudioError, StageFailed
@@ -42,11 +42,13 @@ class StageRecord(BaseModel):
 
 
 class ClipEdit(BaseModel):
-    status: str | None = None  # accepted | rejected
-    start: float | None = None
-    end: float | None = None
-    layout: str | None = None
-    crop_center_x: float | None = None
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    status: Literal["pending", "accepted", "rejected"] | None = None
+    start: float | None = Field(None, ge=0)
+    end: float | None = Field(None, gt=0)
+    layout: Literal["gameplay", "fit_blur", "facecam_split"] | None = None
+    crop_center_x: float | None = Field(None, ge=0, le=1)
     facecam_region: dict[str, float] | None = None
     caption_preset: str | None = None
 
