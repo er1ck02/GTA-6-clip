@@ -298,7 +298,29 @@ class AudioCfg(_Strict):
     target_lufs: float = Field(-14.0, ge=-30, le=-6)
     true_peak: float = Field(-1.5, ge=-6, le=0)
     loudness_range: float = Field(11.0, ge=1, le=20)
-    voice_enhancement: Literal["off", "light"] = "off"
+    # light: high-pass + gentle compression. strong: adds FFT noise reduction, presence EQ and a de-esser.
+    voice_enhancement: Literal["off", "light", "strong"] = "light"
+    # with a separate mic track: lower the game audio while the streamer talks (sidechain compression)
+    duck_game: bool = True
+    duck_ratio: float = Field(4.0, ge=1, le=20)
+
+    @field_validator("voice_enhancement", mode="before")
+    @classmethod
+    def _yaml_off(cls, v):  # YAML reads a bare `off` as False
+        return "off" if v is False else v
+
+
+class EnhanceCfg(_Strict):
+    """Visual polish applied to the gameplay picture at render time."""
+    sharpen: float = Field(0.35, ge=0, le=1.5)        # unsharp-mask amount after scaling (0 = off)
+    vibrance: float = Field(0.06, ge=0, le=0.5)      # saturation boost (0 = off)
+    contrast: float = Field(0.03, ge=0, le=0.3)
+    # quick zoom on the clip's peak moment and on on-screen events (scale factor, 1.0 = off)
+    punch_zoom: float = Field(1.10, ge=1.0, le=1.5)
+    punch_max: int = Field(3, ge=0, le=10)           # at most this many punches per clip
+    # big title at the top for the first seconds (uses the clip title; off by default)
+    hook_title: bool = False
+    hook_title_seconds: float = Field(2.5, gt=0, le=10)
 
 
 class ExportCfg(_Strict):
@@ -338,6 +360,7 @@ class Config(_Strict):
     video: VideoCfg = VideoCfg()
     captions: CaptionsCfg = CaptionsCfg()
     audio: AudioCfg = AudioCfg()
+    enhance: EnhanceCfg = EnhanceCfg()
     export: ExportCfg = ExportCfg()
     quality: QualityCfg = QualityCfg()
 

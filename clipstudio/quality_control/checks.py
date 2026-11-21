@@ -41,6 +41,29 @@ def _intersects(a: PixelRect, x0: int, y0: int, x1: int, y1: int) -> bool:
     return not (x1 <= a.x or x0 >= a.x + a.w or y1 <= a.y or y0 >= a.y + a.h)
 
 
+def _hook_check(ass_path: Path, lines: list[str], hook_lines: list[str], W: int, H: int, sx: int, sy: int,
+                x_min: int, x_max: int, plan: CropPlan) -> QCCheck:
+    """The hook title must be visible, on screen, inside the side margins and clear of the facecam."""
+    f = ass_path.with_name("_qc_hook.ass")
+    f.write_text("\n".join(ln for ln in lines if not ln.startswith("Dialogue:") or ln in hook_lines) + "\n",
+                 encoding="utf-8")
+    try:
+        frames = _gray_frames(["-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r=10:d=1.0"],
+                              f"ass={f.name}", W // sx, H // sy, cwd=ass_path.parent)
+    finally:
+        f.unlink(missing_ok=True)
+    mask = frames[min(len(frames) - 1, 5)] > 60
+    if not mask.any():
+        return QCCheck(name="hook_title", group="captions", status="fail", detail="hook title produced no visible text")
+    ys, xs = np.nonzero(mask)
+    x0, x1, y0, y1 = xs.min() * sx, (xs.max() + 1) * sx, ys.min() * sy, (ys.max() + 1) * sy
+    covers = any(_intersects(p, x0, y0, x1, y1) for p in plan.protected_regions)
+    ok = x0 >= x_min and x1 <= x_max and y0 >= 0 and y1 <= H and not covers
+    return QCCheck(name="hook_title", group="captions", status="pass" if ok else "fail",
+                   detail=f"hook title at {(int(x0), int(y0), int(x1), int(y1))}"
+                          + ("" if ok else f"; must stay inside x {x_min}-{x_max} and off protected regions"))
+
+
 def run_qc(clip_id: str, output: Path, expected_duration: float, plan: CropPlan, track: CaptionTrack | None,
            ass_path: Path | None, qcfg: QualityCfg, ccfg: CaptionsCfg, expect_audio: bool,
            face_detector=None) -> QCReport:
@@ -236,12 +259,22 @@ def _caption_checks(track: CaptionTrack, duration: float, plan: CropPlan, ass_pa
     fw, fh = W // sx, H // sy
     times = [round((c.start + c.end) / 2, 2) for c in ch]
     dur = max(times) + 0.2
-    frames = _gray_frames(
-        ["-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r=10:d={dur:.2f}"],
-        f"ass={ass_path.name}", fw, fh, cwd=ass_path.parent,
-    )
+    # the optional hook title is checked on its own; the caption checks see caption events only
+    lines = ass_path.read_text(encoding="utf-8").splitlines()
+    hook_lines = [ln for ln in lines if ln.startswith("Dialogue:") and ",Hook,," in ln]
+    caps_only = ass_path.with_name("_qc_captions.ass")
+    caps_only.write_text("\n".join(ln for ln in lines if ln not in hook_lines) + "\n", encoding="utf-8")
+    try:
+        frames = _gray_frames(
+            ["-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r=10:d={dur:.2f}"],
+            f"ass={caps_only.name}", fw, fh, cwd=ass_path.parent,
+        )
+    finally:
+        caps_only.unlink(missing_ok=True)
     tol = int(0.012 * W)
     x_min, x_max = int(ccfg.safe_margin_x * W) - tol, W - int(ccfg.safe_margin_x * W) + tol
+    if hook_lines:
+        out.append(_hook_check(ass_path, lines, hook_lines, W, H, sx, sy, x_min, x_max, plan))
     band_top, band_bottom = plan.caption_band
     missing, out_of_safe, on_protected = [], [], []
     for c, t in zip(ch, times):

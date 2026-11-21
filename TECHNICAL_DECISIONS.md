@@ -346,3 +346,26 @@ long videos (clipper) and valued provider fallbacks (PeakCut). Re-ranking the
 shortlist uses the model where it adds the most (context, humour, "does this
 make sense alone") at a bounded cost, and keeps the studio fully usable
 offline.
+
+## TD-22 · Enhancements inside the single render pass
+
+**Decision.** Phase 5 effects are filters in the existing one-pass FFmpeg
+graph, never extra encodes. Audio: the mic stream (when the source has a
+recognisable one) gets the voice chain and drives `sidechaincompress` on the
+game mix; otherwise the chain applies to the mix. Loudnorm is measured on the
+exact processed graph. Video: punch-ins are a per-frame `scale` (eval=frame)
+followed by a fixed-size `crop` on the gameplay branch only, so the facecam and
+captions never zoom; the zoom envelope is a smoothstep (0.15 s in, 0.5 s hold,
+0.35 s out), at most `enhance.punch_max` per clip, 1.5 s apart, placed at the
+candidate's peak and then the strongest on-screen events. Sharpen/colour are
+`unsharp` and `eq` after scaling.
+
+**Why.** Each extra pass costs a full decode/encode and generation loss.
+Keeping effects as config-hashed filters means changing one only re-renders
+(no re-analysis). A detail found by the pixel test: `crop` keeps its input size
+from configure time, so its default centring is wrong when the input grows per
+frame; the offset is written out explicitly.
+
+**Not done.** Noise reduction is FFmpeg's `afftdn`, not a neural model (Demucs
+/ RNNoise would need model downloads and measurable CPU budget); zoom targets
+are the frame centre, not the tracked subject.

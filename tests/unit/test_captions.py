@@ -78,3 +78,14 @@ def test_caption_baseline_inside_band_for_split_layout():
     track = build_caption_track(tr.words(), 0, 5, cfg.captions, plan)
     top = track.layout.baseline_y - track.layout.line_height_px * cfg.captions.resolved_style().max_lines
     assert top >= plan.caption_band[0]
+
+
+def test_hook_title_event(tmp_path):
+    cfg, plan, track, _ = _track()
+    ass = write_ass(track, cfg.captions.resolved_style(), plan, tmp_path / "h.ass", hook="Car explodes {mid} chase",
+                    hook_seconds=2.0).read_text()
+    assert "Style: Hook," in ass
+    hook = [ln for ln in ass.splitlines() if ",Hook,," in ln]
+    assert len(hook) == 1 and hook[0].startswith("Dialogue: 1,0:00:00.00,0:00:02.00")
+    assert "CAR EXPLODES" in hook[0] and "{mid}" not in hook[0]
+    assert ",Hook,," not in write_ass(track, cfg.captions.resolved_style(), plan, tmp_path / "n.ass").read_text()

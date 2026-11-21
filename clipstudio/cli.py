@@ -95,10 +95,13 @@ def _cfg(a: argparse.Namespace):
         x, y, w, h = (float(v) for v in a.facecam.split(","))
         ov.append(f"reframing.facecam_region={{x: {x}, y: {y}, w: {w}, h: {h}}}")
     # keep target inside an explicitly narrowed min/max range
-    if getattr(a, "target_duration", None) is None and (getattr(a, "min_duration", None) or getattr(a, "max_duration", None)):
-        cfg0 = load_config(a.config, ov, a.profile)
-        h = cfg0.highlights
-        lo, hi = h.minimum_duration, h.maximum_duration
+    lo_f, hi_f = getattr(a, "min_duration", None), getattr(a, "max_duration", None)
+    if getattr(a, "target_duration", None) is None and (lo_f is not None or hi_f is not None):
+        # validate against the base config first: the narrowed range alone may exclude the default target
+        base = [o for o in ov if not o.startswith(("highlights.minimum_duration=", "highlights.maximum_duration="))]
+        h = load_config(a.config, base, a.profile).highlights
+        lo = lo_f if lo_f is not None else h.minimum_duration
+        hi = hi_f if hi_f is not None else h.maximum_duration
         if not lo <= h.target_duration <= hi:
             ov.append(f"highlights.target_duration={round((lo + hi) / 2, 2)}")
     return load_config(a.config, ov, a.profile)

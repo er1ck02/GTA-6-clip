@@ -21,21 +21,21 @@ from clipstudio.core import events
 from clipstudio.core.errors import ClipStudioError, MediaError, StageFailed
 from clipstudio.core.logging import add_file_log, get_logger
 from clipstudio.core.models import (ActionTrack, Candidate, CandidateSet, CaptionTrack, CropPlan, FacecamDetection,
-                                    LoudnessTrack, MediaInfo, QCReport, Transcript)
+                                    LoudnessTrack, MediaInfo, QCReport, Transcript, VisualTrack)
 from clipstudio.highlights.candidates import generate_candidates
 from clipstudio.ingestion.sources import download_url, file_fingerprint, job_id_for_file, job_id_for_url, validate_local
 from clipstudio.media.ffmpeg import extract_audio_wav, pick_speech_track, probe
 from clipstudio.pipeline.project import ClipEdit, Edits, StateFile, key_of, run_stage
 from clipstudio.quality_control.checks import run_qc
 from clipstudio.reframing.layout import plan_layout, resolve_facecam
-from clipstudio.rendering.render import render_clip
+from clipstudio.rendering.render import punch_times, render_clip
 from clipstudio.transcription.base import get_backend, resolve_device
 
 log = get_logger("studio")
 
 # bump a stage's version when its logic changes so caches invalidate
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 1, "transcribe": 2, "loudness": 1, "candidates": 6,
-                  "facecam": 1, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 3, "render": 3, "qc": 3}
+                  "facecam": 1, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 4, "qc": 4}
 
 
 @dataclass
@@ -301,7 +301,7 @@ class Studio:
 
     def signals(self, p: Project):
         from clipstudio.highlights.candidates import Signals
-        from clipstudio.core.models import ChatTrack, VisualTrack
+        from clipstudio.core.models import ChatTrack
         sig = Signals(chat_window=self.cfg.chat.window_seconds, snap_to_cuts=self.cfg.visual.snap_to_cuts)
         if self.cfg.visual.enabled and p.p("visual").exists() and p.state.stage("visual").status == "done":
             sig.visual = VisualTrack.load(p.p("visual"))
@@ -558,7 +558,9 @@ class Studio:
         plan = CropPlan.load(f_plan)
 
         caps_on = cfg.captions.enabled
-        k_cap = key_of("captions", STAGE_VERSIONS["captions"], tr_key, k_plan, c.start, c.end, cfg.section_hash("captions"))
+        hook = c.title if cfg.enhance.hook_title else None
+        k_cap = key_of("captions", STAGE_VERSIONS["captions"], tr_key, k_plan, c.start, c.end, cfg.section_hash("captions"),
+                       hook, cfg.enhance.hook_title_seconds if hook else None)
 
         def do_captions() -> None:
             # a hand-corrected caption track is preserved; only its ASS/SRT are regenerated
@@ -569,7 +571,7 @@ class Studio:
                 words = Transcript.load(p.p("transcript")).words_between(c.start, c.end)
                 track = build_caption_track(words, c.start, c.end, cfg.captions, plan)
                 track.save(f_caps)
-            write_ass(track, cfg.captions.resolved_style(), plan, f_ass)
+            write_ass(track, cfg.captions.resolved_style(), plan, f_ass, hook, cfg.enhance.hook_title_seconds)
             if cfg.captions.export_srt:
                 write_srt(track, f_srt)
 
@@ -577,12 +579,16 @@ class Studio:
             r = run_stage(state, "captions", k_cap, [f_caps, f_ass], do_captions, resume=resume, force=force)
             cached += [r.name] if r.cached else []
 
+        voice = self.voice_track(media, cfg)
+        punches = self.punches(p, c, cfg)
         k_r = key_of("render", STAGE_VERSIONS["render"], k_plan, k_cap if caps_on else None, c.start, c.end,
-                     p.state.data["source"]["fingerprint"], cfg.section_hash("video", "audio", "export"),
-                     f_ass.read_text() if caps_on else None)
+                     p.state.data["source"]["fingerprint"], cfg.section_hash("video", "audio", "export", "enhance"),
+                     f_ass.read_text() if caps_on else None, voice, punches)
+        state.data["punches"] = punches
         r = run_stage(state, "render", k_r, [f_out],
                       lambda: render_clip(media, plan, c.start, c.end, f_ass if caps_on else None, f_out,
-                                          cfg.video, cfg.audio, cfg.export, self.device),
+                                          cfg.video, cfg.audio, cfg.export, self.device,
+                                          voice_track=voice, enhance=cfg.enhance, punches=punches),
                       resume=resume, force=force, retries=1)
         cached += [r.name] if r.cached else []
 
@@ -606,6 +612,26 @@ class Studio:
                 if ch.status == "fail":
                     log.error("      fail: %s: %s", ch.name, ch.detail)
         return ClipResult(c.id, f_out, qc, round(time.perf_counter() - t0, 2), cached)
+
+    @staticmethod
+    def voice_track(media: MediaInfo, cfg: Config) -> int | None:
+        """The microphone stream, when the source has several audio streams and one is clearly the voice."""
+        if cfg.audio.tracks != "all" or len(media.audio_streams) < 2:
+            return None
+        sp = pick_speech_track(media, cfg.transcription.speech_track)
+        return sp[0] if len(sp) == 1 else None
+
+    def punches(self, p: Project, c: Candidate, cfg: Config) -> list[float]:
+        """Clip-relative punch-in times: the peak moment first, then on-screen events inside the clip."""
+        e = cfg.enhance
+        if e.punch_zoom <= 1.0 or e.punch_max <= 0:
+            return []
+        pts = [c.peak_time - c.start]
+        if p.p("visual").exists():
+            vt = VisualTrack.load(p.p("visual"))
+            evs = sorted((ev for ev in vt.events if c.start <= ev.start < c.end), key=lambda ev: -ev.strength)
+            pts += [ev.start - c.start for ev in evs]
+        return punch_times(pts, c.end - c.start, e.punch_max)
 
     def preview(self, p: Project, cid: str) -> tuple[Candidate, CropPlan, CaptionTrack | None]:
         """Plan + caption track for the clip as it would render now (no encoding). Used by the UI."""

@@ -184,7 +184,9 @@ def _merge_orphans(groups: list[list[CaptionWord]], style: CaptionStyle) -> list
 
 
 # ------------------------------------------------------------------ writers
-def write_ass(track: CaptionTrack, style: CaptionStyle, plan: CropPlan, path: Path) -> Path:
+def write_ass(track: CaptionTrack, style: CaptionStyle, plan: CropPlan, path: Path,
+              hook: str | None = None, hook_seconds: float = 2.5) -> Path:
+    """Write the ASS file. ``hook`` adds a large title at the top for the first ``hook_seconds``."""
     L = track.layout
     outline = max(0.0, style.outline * plan.out_height)
     shadow = max(0.0, style.shadow * plan.out_height)
@@ -198,6 +200,7 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Hook,{L.font_family},{int(L.font_size_px * 0.8)},{_ass_color(style.primary_color)},{_ass_color(style.highlight_color)},{_ass_color(style.outline_color)},&HA0000000,-1,0,0,0,100,100,0,0,1,{outline * 1.2:.1f},{shadow:.1f},8,60,60,0,1
 Style: Cap,{L.font_family},{L.font_size_px},{_ass_color(style.primary_color)},{_ass_color(style.highlight_color)},{_ass_color(style.outline_color)},&H80000000,{-1 if style.bold else 0},0,0,0,100,100,0,0,1,{outline:.1f},{shadow:.1f},2,0,0,0,1
 
 [Events]
@@ -232,6 +235,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 parts.append(" ".join(toks))
             pop = "\\fscx82\\fscy82\\t(0,90,\\fscx100\\fscy100)" if style.pop_in and idx == 0 else ""
             events.append(f"Dialogue: 0,{_ts_ass(s)},{_ts_ass(e)},Cap,,0,0,0,,{{{pos}{pop}}}" + "\\N".join(parts))
+    if hook:
+        # top of the gameplay picture, so the title never sits on the facecam panel of a split layout
+        game = next((p.dest for p in plan.panels if p.name == "gameplay"), None)
+        y = (game.y if game else 0) + int(plan.out_height * 0.06)
+        block = int(L.font_size_px * 0.8 * 2.6)  # up to two lines of hook text
+        for pr in plan.protected_regions:  # e.g. a PiP facecam in a top corner: go below it
+            if pr.y < y + block and pr.y + pr.h > y:
+                y = pr.y + pr.h + int(plan.out_height * 0.02)
+        text = _ass_escape(hook.strip().upper())
+        events.insert(0, f"Dialogue: 1,{_ts_ass(0)},{_ts_ass(hook_seconds)},Hook,,0,0,0,,"
+                         f"{{\\an8\\pos({plan.out_width // 2},{y})\\q0\\fscx70\\fscy70\\t(0,140,\\fscx100\\fscy100)"
+                         f"\\fad(0,250)}}{text}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
     return path

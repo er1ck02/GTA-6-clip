@@ -5,11 +5,11 @@ import json
 import re
 from pathlib import Path
 
-from clipstudio.config import AudioCfg, ExportCfg, VideoCfg
+from clipstudio.config import AudioCfg, EnhanceCfg, ExportCfg, VideoCfg
 from clipstudio.core.errors import MediaError
 from clipstudio.core.logging import get_logger
 from clipstudio.core.models import CropPlan, MediaInfo
-from clipstudio.media.ffmpeg import audio_mix_filter, ffmpeg_bin, ffmpeg_capabilities, run
+from clipstudio.media.ffmpeg import ffmpeg_bin, ffmpeg_capabilities, run
 
 log = get_logger("render")
 
@@ -42,12 +42,53 @@ def gameplay_crop(plan: CropPlan) -> str:
     return f"crop={g0.w}:{g0.h}:{x}:{y}"
 
 
-def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None) -> str:
+PUNCH_IN, PUNCH_HOLD, PUNCH_OUT = 0.15, 0.5, 0.35
+
+
+def punch_times(points: list[float], dur: float, limit: int, min_gap: float = 1.5) -> list[float]:
+    """Clip-relative punch-in moments: inside the clip, at least ``min_gap`` apart, at most ``limit``."""
+    out: list[float] = []
+    for t in points:
+        if PUNCH_IN <= t <= dur - PUNCH_HOLD - PUNCH_OUT and all(abs(t - o) >= min_gap for o in out):
+            out.append(round(t, 3))
+        if len(out) >= limit:
+            break
+    return sorted(out)
+
+
+def zoom_expr(punches: list[float], zoom: float) -> str:
+    """Scale factor in ``t``: ramps to ``zoom`` in 0.15 s, holds 0.5 s, eases back in 0.35 s (smoothstep)."""
+    terms = []
+    for p in punches:
+        a, d = p - PUNCH_IN, p + PUNCH_HOLD + PUNCH_OUT
+        e = f"clip((t-{a:.3f})/{PUNCH_IN},0,1)*clip(({d:.3f}-t)/{PUNCH_OUT},0,1)"
+        terms.append(f"({e})*({e})*(3-2*({e}))")
+    return f"(1+{zoom - 1:.4f}*({'+'.join(terms)}))"
+
+
+def gameplay_fx(w: int, h: int, enhance: EnhanceCfg | None, punches: list[float] | None) -> str:
+    """Filters appended to the scaled gameplay picture (``w``x``h``): punch zoom, then sharpen/colour."""
+    fx = ""
+    if enhance and punches and enhance.punch_zoom > 1.0:
+        z = zoom_expr(punches, enhance.punch_zoom)
+        # crop's own in_w/in_h are fixed at configure time, so the centring offset is spelled out
+        fx += (f",scale=w='2*trunc({w}*{z}/2)':h='2*trunc({h}*{z}/2)':eval=frame:flags=bicubic,"
+               f"crop={w}:{h}:'trunc(({w}*{z}-{w})/2)':'trunc(({h}*{z}-{h})/2)',setsar=1")
+    if enhance:
+        if enhance.contrast > 0 or enhance.vibrance > 0:
+            fx += f",eq=contrast={1 + enhance.contrast:.3f}:saturation={1 + enhance.vibrance:.3f}"
+        if enhance.sharpen > 0:
+            fx += f",unsharp=5:5:{enhance.sharpen:.2f}:5:5:0"
+    return fx
+
+
+def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance: EnhanceCfg | None = None,
+                      punches: list[float] | None = None) -> str:
     kf = plan.keyframes[0]
     W, H = plan.out_width, plan.out_height
     crop = gameplay_crop(plan)
     if plan.mode == "gameplay":
-        graph = f"[0:v]{crop},scale={W}:{H}:flags=lanczos,setsar=1[base]"
+        graph = f"[0:v]{crop},scale={W}:{H}:flags=lanczos,setsar=1{gameplay_fx(W, H, enhance, punches)}[base]"
     elif plan.mode == "fit_blur":
         fg = next(p.dest for p in plan.panels if p.name == "gameplay")
         sw, sh = W // 4 - (W // 4) % 2, H // 4 - (H // 4) % 2
@@ -55,7 +96,7 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None) -> str:
             f"[0:v]split=2[bgsrc][fgsrc];"
             f"[bgsrc]scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={sw}:{sh},"
             f"boxblur=10:2,eq=brightness=-0.10:saturation=1.1,scale={W}:{H}:flags=bilinear,setsar=1[bg];"
-            f"[fgsrc]scale={fg.w}:{fg.h}:flags=lanczos,setsar=1[fg];"
+            f"[fgsrc]scale={fg.w}:{fg.h}:flags=lanczos,setsar=1{gameplay_fx(fg.w, fg.h, enhance, punches)}[fg];"
             f"[bg][fg]overlay=0:{fg.y}[base]"
         )
     elif plan.mode == "facecam_split":
@@ -66,7 +107,7 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None) -> str:
         graph = (
             f"[0:v]split=2[fsrc][gsrc];"
             f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},scale={top.w}:{top.h}:flags=lanczos,setsar=1[face];"
-            f"[gsrc]{crop},scale={bot.w}:{bot.h}:flags=lanczos,setsar=1[game];"
+            f"[gsrc]{crop},scale={bot.w}:{bot.h}:flags=lanczos,setsar=1{gameplay_fx(bot.w, bot.h, enhance, punches)}[game];"
             f"[face][game]vstack=inputs=2[base]"
         )
     elif plan.mode == "facecam_pip":
@@ -76,7 +117,7 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None) -> str:
         b = max(2, (W // 180) // 2 * 2)  # border width
         graph = (
             f"[0:v]split=2[fsrc][gsrc];"
-            f"[gsrc]{crop},scale={W}:{H}:flags=lanczos,setsar=1[game];"
+            f"[gsrc]{crop},scale={W}:{H}:flags=lanczos,setsar=1{gameplay_fx(W, H, enhance, punches)}[game];"
             f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},scale={pip.w}:{pip.h}:flags=lanczos,setsar=1,"
             f"pad={pip.w + 2 * b}:{pip.h + 2 * b}:{b}:{b}:color=0xF2E8D5[face];"
             f"[game][face]overlay={pip.x - b}:{pip.y - b}[base]"
@@ -89,25 +130,52 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None) -> str:
     return graph + ";" + tail + ",format=yuv420p[vout]"
 
 
-def _audio_filters(acfg: AudioCfg, src: Path, start: float, dur: float, mix: str | None = None) -> str:
-    pre = "highpass=f=80,acompressor=threshold=-18dB:ratio=2:attack=20:release=250," if acfg.voice_enhancement == "light" else ""
+VOICE_CHAINS = {
+    "off": "",
+    "light": "highpass=f=80,acompressor=threshold=-18dB:ratio=2:attack=20:release=250",
+    "strong": ("highpass=f=90,afftdn=nf=-25,equalizer=f=3000:t=q:w=1.2:g=3,deesser=i=0.4,"
+               "acompressor=threshold=-20dB:ratio=3:attack=10:release=200"),
+}
+
+
+def build_audio_graph(n_tracks: int, voice: int | None, acfg: AudioCfg) -> str:
+    """Filtergraph from the source's audio streams to ``[amix]``.
+
+    With a separate voice stream: the voice gets the enhancement chain and (optionally) ducks the game
+    audio through sidechain compression. Otherwise every stream is summed and the chain applies to the mix.
+    """
+    chain = VOICE_CHAINS[acfg.voice_enhancement]
+    if n_tracks <= 1:
+        return f"[0:a:0]{chain or 'anull'}[amix]"
+    if voice is None or not (0 <= voice < n_tracks):
+        ins = "".join(f"[0:a:{i}]" for i in range(n_tracks))
+        return f"{ins}amix=inputs={n_tracks}:normalize=0:duration=longest" + (f",{chain}" if chain else "") + "[amix]"
+    others = [i for i in range(n_tracks) if i != voice]
+    g = "".join(f"[0:a:{i}]" for i in others)
+    game = f"{g}amix=inputs={len(others)}:normalize=0:duration=longest[game]" if len(others) > 1 else f"{g}anull[game]"
+    if acfg.duck_game:
+        return (f"[0:a:{voice}]{chain + ',' if chain else ''}asplit=2[voice][key];{game};"
+                f"[game][key]sidechaincompress=threshold=0.03:ratio={acfg.duck_ratio:g}:attack=15:release=350:makeup=1[gd];"
+                f"[voice][gd]amix=inputs=2:normalize=0:duration=longest[amix]")
+    return f"[0:a:{voice}]{chain or 'anull'}[voice];{game};[voice][game]amix=inputs=2:normalize=0:duration=longest[amix]"
+
+
+def _audio_filters(acfg: AudioCfg, src: Path, start: float, dur: float, graph: str) -> str:
+    """Loudness chain applied after ``[amix]``: two-pass loudnorm measured on this exact segment."""
     if not acfg.normalization:
-        return pre + "aresample=48000"
+        return "aresample=48000"
     target = f"I={acfg.target_lufs}:TP={acfg.true_peak}:LRA={acfg.loudness_range}"
-    # pass 1: measure this exact segment
-    measure = f"{pre}loudnorm={target}:print_format=json"
-    af = ["-filter_complex", f"{mix};[amix]{measure}"] if mix else ["-af", measure]
     cp = run([ffmpeg_bin(), "-hide_banner", "-nostats", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(src),
-              "-vn", *af, "-f", "null", "-"])
+              "-vn", "-filter_complex", f"{graph};[amix]loudnorm={target}:print_format=json", "-f", "null", "-"])
     m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", cp.stderr.decode(errors="replace"), re.S)
     if not m:
         log.warning("loudness measurement failed; using single-pass loudnorm")
-        return f"{pre}loudnorm={target},aresample=48000"
+        return f"loudnorm={target},aresample=48000"
     meas = json.loads(m.group(0))
     if meas.get("input_i") in ("-inf", None) or float(meas["input_i"]) < -70:
         log.warning("clip audio is effectively silent (%s LUFS); skipping normalisation", meas.get("input_i"))
-        return pre + "aresample=48000"
-    return (f"{pre}loudnorm={target}:measured_I={meas['input_i']}:measured_TP={meas['input_tp']}:"
+        return "aresample=48000"
+    return (f"loudnorm={target}:measured_I={meas['input_i']}:measured_TP={meas['input_tp']}:"
             f"measured_LRA={meas['input_lra']}:measured_thresh={meas['input_thresh']}:"
             f"offset={meas['target_offset']}:linear=true,aresample=48000")
 
@@ -121,7 +189,9 @@ def choose_encoder(ecfg: ExportCfg, device: str) -> str:
 
 
 def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_path: Path | None,
-                out_path: Path, vcfg: VideoCfg, acfg: AudioCfg, ecfg: ExportCfg, device: str) -> Path:
+                out_path: Path, vcfg: VideoCfg, acfg: AudioCfg, ecfg: ExportCfg, device: str,
+                voice_track: int | None = None, enhance: EnhanceCfg | None = None,
+                punches: list[float] | None = None) -> Path:
     src = Path(media.path)
     dur = end - start
     fps = media.fps if vcfg.fps == "source" else float(vcfg.fps)
@@ -136,10 +206,10 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
         ass_name = ass_path.name
         if ass_path.parent.resolve() != workdir.resolve():
             raise ValueError("captions file must live in the clip output folder")
-    graph = build_video_graph(plan, fps, ass_name)
-    n_tracks = len(media.audio_streams) if acfg.tracks == "all" else 1
-    mix = audio_mix_filter(n_tracks)
-    afilt = _audio_filters(acfg, src, start, dur, mix) if media.has_audio else ""
+    graph = build_video_graph(plan, fps, ass_name, enhance, punches)
+    n_tracks = max(1, len(media.audio_streams)) if acfg.tracks == "all" else 1
+    agraph = build_audio_graph(n_tracks, voice_track, acfg)
+    afilt = _audio_filters(acfg, src, start, dur, agraph) if media.has_audio else ""
     encoder = choose_encoder(ecfg, device)
     tmp = out_path.with_name(out_path.stem + ".partial.mp4")
 
@@ -148,8 +218,7 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
              "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(src),
              "-filter_complex", graph, "-map", "[vout]"]
         if media.has_audio:
-            c += ["-filter_complex", f"{mix};[amix]{afilt}[aout]", "-map", "[aout]"] if mix else \
-                 ["-map", "0:a:0", "-af", afilt]
+            c += ["-filter_complex", f"{agraph};[amix]{afilt}[aout]", "-map", "[aout]"]
             c += ["-c:a", "aac", "-b:a", ecfg.audio_bitrate, "-ar", "48000", "-ac", "2"]
         if enc == "h264_nvenc":
             c += ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", str(ecfg.crf), "-b:v", "0"]

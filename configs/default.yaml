@@ -84,7 +84,18 @@ audio:
   normalization: true
   target_lufs: -14
   true_peak: -1.5
-  voice_enhancement: "off" # off | light
+  voice_enhancement: light # off | light | strong (strong adds noise reduction, presence EQ, de-esser)
+  duck_game: true          # with a separate mic track, lower game audio while you talk
+  duck_ratio: 4
+
+enhance:
+  sharpen: 0.35            # unsharp amount after scaling (0 = off)
+  vibrance: 0.06
+  contrast: 0.03
+  punch_zoom: 1.10         # quick zoom on the peak moment and on-screen events (1.0 = off)
+  punch_max: 3
+  hook_title: false        # big clip title at the top for the first seconds
+  hook_title_seconds: 2.5
 
 export:
   encoder: auto            # auto | libx264 | h264_nvenc

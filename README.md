@@ -6,9 +6,10 @@ transcribes the stream, ranks the moments worth clipping, reframes them to
 and checks every output with automated quality control. A local editing
 workstation lets you review moments, move the crop, fix captions and re-render.
 
-> **Status: Phase 1 + 2 (first working pipeline) plus a first version of the
-> workstation UI.** Facecam auto-detection, gameplay tracking, scene/chat/LLM
-> signals and audio/visual enhancements are planned, not built. See
+> **Status: Phases 1-5 working (first versions), plus the workstation UI.**
+> Facecam auto-detection, gameplay tracking, visual/chat/LLM signals and
+> audio/visual enhancements are built and tested on synthetic streams and the
+> owner's own recordings, but not yet on a real GTA 6 stream with a webcam. See
 > [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md) for exactly what works.
 
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -163,7 +164,8 @@ Main sections: `processing` (profile, device, resume/cache), `transcription`
 duplicate overlap, **scoring weights**), `reframing` (layout, crop centre,
 facecam region), `video` (1080x1920, fps), `captions` (preset, style overrides,
 position, safe margins, profanity filter, SRT/ASS export), `audio` (LUFS
-target, true peak, light voice enhancement), `export` (encoder, CRF, preset,
+target, true peak, voice enhancement, game ducking), `enhance` (sharpen,
+colour, punch-in zooms, hook title), `export` (encoder, CRF, preset,
 auto render count), `quality` (QC thresholds). Full schema with defaults:
 `clipstudio/config.py`.
 
@@ -208,6 +210,16 @@ UI) always wins. The gameplay crop follows on-screen motion with a deadzone,
 speed limit and zero-lag smoothing; when the whole frame moves (camera pans in
 shooters and driving) it holds its centre. Dragging the crop by hand pins it
 for that clip.
+
+Enhancements (`audio` and `enhance` sections), all applied in the same single
+render pass: `audio.voice_enhancement` `light` (default: high-pass and gentle
+compression) or `strong` (adds noise reduction, presence EQ and a de-esser).
+With a separate mic track, the game audio is lowered while you talk
+(`audio.duck_game`, `audio.duck_ratio`). The gameplay picture gets a quick
+punch-in zoom on the clip's peak moment and on detected on-screen events
+(`enhance.punch_zoom`, 1.0 turns it off; `enhance.punch_max`), plus light
+sharpening and colour (`sharpen`, `contrast`, `vibrance`). `enhance.hook_title:
+true` shows the clip title large at the top for the first seconds.
 
 ---
 
