@@ -377,6 +377,32 @@ class ExportCfg(_Strict):
         return self
 
 
+class LiveCfg(_Strict):
+    """Live mode: watch a stream with a short rolling buffer and keep only the moments that trigger."""
+    buffer_seconds: float = Field(90, ge=20, le=900)     # footage older than this is deleted unless a moment needs it
+    segment_seconds: float = Field(2.0, ge=1, le=10)
+    pre_seconds: float = Field(35, ge=5)                  # kept before the trigger (the setup)
+    post_seconds: float = Field(15, ge=3)                 # kept after the trigger (the payoff and reaction)
+    threshold: float = Field(1.0, gt=0)                   # trigger score needed to save a moment
+    cooldown_seconds: float = Field(45, ge=0)             # no new moment this soon after the last one's end
+    baseline_seconds: float = Field(180, ge=20)           # how far back "normal" chat and audio levels are measured
+    warmup_seconds: float = Field(20, ge=0)               # no triggers until the baseline has this much data
+    audio_jump_db: float = Field(9.0, gt=0)               # loudness this far above the baseline counts fully
+    chat_lift: float = Field(3.0, gt=1)                   # chat this many times busier than normal counts fully
+    clip_commands: list[str] = Field(default_factory=lambda: ["clip", "clip it", "clip that", "clipit", "!clip"])
+    clip_command_count: int = Field(3, ge=1)              # this many viewers asking for a clip within 10 s triggers
+    weights: dict[str, float] = Field(default_factory=lambda: {"audio": 0.6, "chat": 0.7, "hype": 0.5, "command": 1.0})
+    auto_process: bool = True                             # edit each saved moment right away
+    max_moments: int = Field(0, ge=0)                     # stop after this many moments (0 = no limit)
+
+
+class UploadCfg(_Strict):
+    """Publishing is opt-in per streamer. Nothing is ever uploaded for a channel that is not listed here."""
+    allow_channels: list[str] = Field(default_factory=list)  # streamers who allow clipping (channel names, lower case)
+    platforms: list[str] = Field(default_factory=lambda: ["tiktok", "youtube_shorts", "instagram_reels"])
+    require_qc_pass: bool = True
+
+
 class QualityCfg(_Strict):
     duration_tolerance: float = Field(0.25, gt=0)
     max_black_seconds: float = Field(0.5, ge=0)
@@ -406,6 +432,8 @@ class Config(_Strict):
     enhance: EnhanceCfg = EnhanceCfg()
     export: ExportCfg = ExportCfg()
     quality: QualityCfg = QualityCfg()
+    live: LiveCfg = LiveCfg()
+    upload: UploadCfg = UploadCfg()
 
     def section_hash(self, *sections: str) -> str:
         """Stable hash of the given config sections, used for stage cache keys."""

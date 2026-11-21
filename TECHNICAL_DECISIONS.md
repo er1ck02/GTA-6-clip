@@ -429,3 +429,19 @@ would change what the clip shows.
 Follow-up from the re-run: the remaining black-frames failure was two in-game blackouts inside the clip, present in
 the source at the same times. QC now gets the seconds of source black inside the rendered window (from the edges
 stage) and fails only black the render added; black from the footage is a warning that review still shows.
+
+## TD-27 · Live mode keeps a rolling buffer and judges against the stream's own normal
+
+**Decision.** `clipstudio live` records with FFmpeg's segment muxer (stream copy, 2 s segments) into a ring
+that deletes anything older than `live.buffer_seconds`, except segments a pending moment has pinned. Audio level,
+chat rate, reaction words and "clip" commands are scored per second against the median or mean of the last
+`baseline_seconds`; a crossing waits `PEAK_HOLD` seconds and fires at the strongest second. Saved moments are
+joined without re-encoding and edited by the normal pipeline in a worker thread. The upload decision is a pure
+function of an explicit per-channel allowlist plus QC.
+
+**Why.** The owner wanted to stop downloading whole marathons only to throw most of it away. Stream copy makes
+recording nearly free, so the GPU and CPU stay available for editing the moments. Relative thresholds matter
+because a loud streamer or a busy chat would otherwise trigger constantly, and a quiet one never. Reusing the VOD
+pipeline for each moment means live clips get the same reframing, captions and QC as everything else. The
+allowlist exists because reframing and captions don't change who owns the footage: auto-posting is limited to
+streamers the owner says allow it.

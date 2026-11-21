@@ -40,6 +40,7 @@ _Last updated: 2026-11-21 · version 0.6.0_
 - Cuts inside a clip: video, audio and captions all drop the section (render measured: a 2.2 s cut gives a 3.8 s file with the cut tone gone); QC checks the shortened duration. Split and move work from the timeline and API.
 - Platform copies (TikTok, YouTube Shorts, Instagram Reels, or custom presets): stream copy when the master fits, constrained re-encode when not (verified: 24 fps cap and 3 s trim), JSON post sidecar; only for clips that passed QC.
 - `--json` on every CLI command, including errors; batches over folders continue past a failing file.
+- Live mode (`clipstudio live`): rolling 90 s buffer, triggers on audio jumps, chat spikes, reaction words and "clip" commands, saved moments edited automatically, review/upload queue with a per-streamer allowlist. Verified on real encodes played back in real time (buffer bounded, moment kept, chat carried over); a run on a real live stream is next.
 
 ## Test results
 

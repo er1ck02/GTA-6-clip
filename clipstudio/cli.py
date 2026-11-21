@@ -117,7 +117,59 @@ def build_parser() -> argparse.ArgumentParser:
     _common(p)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8765)
+
+    p = sub.add_parser("live", help="watch a live stream; keep and edit only the moments that pop off")
+    _common(p)
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--url", help="live stream URL (Twitch, YouTube, Kick...)")
+    src.add_argument("--input", type=Path, help="a recorded file played back in real time (dry run / test)")
+    p.add_argument("--chat", help="auto (from the URL, default), none, twitch:<channel>, youtube, or a chat export "
+                                  "file (played back with --input)")
+    p.add_argument("--channel", help="streamer's channel name (for the upload allowlist); found from the URL if omitted")
+    p.add_argument("--out", type=Path, help="where moments and clips go (default <data_dir>/live/<channel>)")
+    p.add_argument("--duration", type=float, default=0, help="stop after this many seconds (0 = until the stream ends)")
+    p.add_argument("--max-moments", type=int, help="stop after this many moments")
+    p.add_argument("--no-process", action="store_true", help="only save the moments; don't edit them")
+    p.add_argument("--fast", action="store_true", help="with --input: read the file as fast as possible, not in real time")
     return ap
+
+
+def cmd_live(a) -> int:
+    import time as _time
+
+    from clipstudio.live.buffer import Recorder
+    from clipstudio.live.chat import channel_from_url, make_chat_source, youtube_channel
+    from clipstudio.live.session import LiveSession
+
+    cfg = _cfg(a)
+    if a.max_moments is not None:
+        cfg.live.max_moments = a.max_moments
+    channel = a.channel
+    if channel is None and a.url:
+        channel = channel_from_url(a.url) or (youtube_channel(a.url) if "youtu" in a.url else None)
+    channel = channel.lower().lstrip("@") if channel else None
+    base = Path(cfg.paths.data_dir).expanduser().resolve() / "live"
+    out = a.out or base / f"{channel or 'stream'}_{_time.strftime('%Y%m%d_%H%M%S')}"
+    rec = Recorder(out / "buffer", cfg.live.segment_seconds, file=a.input, url=a.url, realtime=not a.fast)
+    chat = make_chat_source(a.chat, a.url, out)
+    allowed = channel in {c.lower().lstrip("@") for c in cfg.upload.allow_channels} if channel else False
+    log.info("live: %s | channel %s (%s) | chat %s | buffer %gs | moments %gs before + %gs after",
+             a.url or a.input, channel or "unknown", "on the upload allowlist" if allowed else "review only",
+             chat.name, cfg.live.buffer_seconds, cfg.live.pre_seconds, cfg.live.post_seconds)
+    sess = LiveSession(cfg, rec, chat, out, channel=channel, process=False if a.no_process else None,
+                       max_seconds=a.duration)
+    moments = sess.run()
+    doc = {"out": str(out), "channel": channel, "stopped": sess.stopped_reason,
+           "segments_discarded": sess.ring.deleted, "peak_buffer_mb": round(sess.peak_disk / 1e6, 1),
+           "moments": [m.__dict__ for m in moments]}
+    if a.json:
+        _emit(a, doc)
+    else:
+        for m in moments:
+            print(f"{m.id}  {m.status:10s}  score {m.trigger['score']:.2f}  {', '.join(m.trigger['reasons'])}  "
+                  f"{m.clip or m.path or ''}  [{m.upload}]")
+        print(f"queue: {out / 'queue.json'}")
+    return 0 if all(m.status in ("done", "saved") for m in moments) else 1
 
 
 def _cfg(a: argparse.Namespace):
@@ -359,7 +411,8 @@ def main(argv: list[str] | None = None) -> int:
     install_interrupt_handlers()
     register_cuda_dlls()
     handlers = {"doctor": cmd_doctor, "process": cmd_process, "review": cmd_review, "export": cmd_export,
-                "resume": cmd_resume, "status": cmd_status, "ui": cmd_ui}
+                "resume": cmd_resume, "status": cmd_status, "ui": cmd_ui,
+                "live": cmd_live}
     def fail(code: int, msg: str) -> int:
         log.error(msg)
         if getattr(a, "json", False):
