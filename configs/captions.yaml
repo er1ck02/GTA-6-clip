@@ -1,0 +1,11 @@
+# Custom caption presets. Load with --config configs/captions.yaml, select with --set captions.preset=my_brand
+captions:
+  presets:
+    my_brand:
+      font: ["Montserrat", "Inter", "Arial"]
+      size: 0.05
+      uppercase: true
+      primary_color: "#FFFFFF"
+      highlight_color: "#FF5A6E"
+      outline_color: "#111111"
+      max_words: 3

@@ -1,0 +1,226 @@
+"""Automated quality control. A clip is only 'done' when this report passes.
+
+Every check inspects the real output (or the real caption render), not the
+intent. Checks that are not implemented yet report ``skip`` with a reason,
+never ``pass``.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import numpy as np
+
+from clipstudio.config import CaptionsCfg, QualityCfg
+from clipstudio.core.errors import MediaError
+from clipstudio.core.models import CaptionTrack, CropPlan, PixelRect, QCCheck, QCReport
+from clipstudio.media.ffmpeg import ffmpeg_bin, ffprobe_bin, probe, run
+
+
+def _stream_durations(path: Path) -> dict[str, float]:
+    cp = run([ffprobe_bin(), "-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "csv=p=0", str(path)])
+    out: dict[str, float] = {}
+    for line in cp.stdout.decode().split():
+        kind, _, d = line.partition(",")
+        try:
+            out.setdefault(kind, float(d))
+        except ValueError:
+            pass
+    return out
+
+
+def _gray_frames(args_in: list[str], vf: str, w: int, h: int, cwd: Path | None = None) -> np.ndarray:
+    cp = run([ffmpeg_bin(), "-v", "error", *args_in, "-vf", f"{vf},scale={w}:{h}:flags=area,format=gray",
+              "-f", "rawvideo", "-"], cwd=cwd)
+    buf = np.frombuffer(cp.stdout, dtype=np.uint8)
+    n = buf.size // (w * h)
+    return buf[: n * w * h].reshape(n, h, w)
+
+
+def _intersects(a: PixelRect, x0: int, y0: int, x1: int, y1: int) -> bool:
+    return not (x1 <= a.x or x0 >= a.x + a.w or y1 <= a.y or y0 >= a.y + a.h)
+
+
+def run_qc(clip_id: str, output: Path, expected_duration: float, plan: CropPlan, track: CaptionTrack | None,
+           ass_path: Path | None, qcfg: QualityCfg, ccfg: CaptionsCfg, expect_audio: bool) -> QCReport:
+    checks: list[QCCheck] = []
+
+    # ------------------------------------------------------------ video
+    if not output.exists() or output.stat().st_size == 0:
+        checks.append(QCCheck(name="file_exists", group="video", status="fail", detail=f"{output} missing or empty"))
+        return QCReport(clip_id=clip_id, output=str(output), passed=False, checks=checks)
+    checks.append(QCCheck(name="file_exists", group="video", status="pass", detail=f"{output.stat().st_size/1e6:.1f} MB"))
+
+    try:
+        info = probe(output)
+    except MediaError as e:
+        checks.append(QCCheck(name="playable", group="video", status="fail", detail=str(e)))
+        return QCReport(clip_id=clip_id, output=str(output), passed=False, checks=checks)
+
+    dec = run([ffmpeg_bin(), "-v", "error", "-i", str(output), "-f", "null", "-"], check=False)
+    errs = dec.stderr.decode(errors="replace").strip()
+    checks.append(QCCheck(name="decodes_cleanly", group="video", status="pass" if dec.returncode == 0 and not errs else "fail",
+                          detail="full decode without errors" if not errs else errs[:300]))
+
+    ok_res = (info.width, info.height) == (plan.out_width, plan.out_height)
+    checks.append(QCCheck(name="resolution", group="video", status="pass" if ok_res else "fail",
+                          detail=f"{info.width}x{info.height} (expected {plan.out_width}x{plan.out_height})"))
+    ratio = info.width / info.height
+    checks.append(QCCheck(name="aspect_ratio", group="video", status="pass" if abs(ratio - 9 / 16) < 0.01 else "fail",
+                          detail=f"{ratio:.4f} (9:16 = 0.5625)", value=round(ratio, 4)))
+    dd = abs(info.duration - expected_duration)
+    checks.append(QCCheck(name="duration", group="video", status="pass" if dd <= qcfg.duration_tolerance else "fail",
+                          detail=f"{info.duration:.2f}s vs expected {expected_duration:.2f}s", value=round(info.duration, 3)))
+
+    # one analysis decode: black frames + loudness + peaks + silence
+    filt_v = "blackdetect=d=0.1:pix_th=0.08"
+    a_args: list[str] = []
+    if info.has_audio:
+        a_args = ["-af", f"ebur128=peak=true,astats=metadata=0:measure_perchannel=none,"
+                         f"silencedetect=n=-50dB:d={qcfg.max_silence_seconds}"]
+    an = run([ffmpeg_bin(), "-hide_banner", "-nostats", "-i", str(output), "-vf", filt_v, *a_args, "-f", "null", "-"])
+    log_txt = an.stderr.decode(errors="replace")
+    black = sum(float(m.group(1)) for m in re.finditer(r"black_duration:\s*([\d.]+)", log_txt))
+    checks.append(QCCheck(name="black_frames", group="video", status="pass" if black <= qcfg.max_black_seconds else "fail",
+                          detail=f"{black:.2f}s of black frames", value=round(black, 3)))
+
+    # content sanity: sampled frames must not be flat (catches broken crops / empty composites)
+    frames = _gray_frames(["-i", str(output)], "fps=1", 90, 160)
+    flat = [i for i, f in enumerate(frames) if float(f.std()) < 4.0]
+    checks.append(QCCheck(name="frame_content", group="video",
+                          status="pass" if frames.size and len(flat) <= len(frames) * 0.1 else "fail",
+                          detail=f"{len(flat)}/{len(frames)} sampled frames look flat"))
+
+    # ------------------------------------------------------------ audio
+    if not info.has_audio:
+        checks.append(QCCheck(name="audio_present", group="audio", status="fail" if expect_audio else "skip",
+                              detail="output has no audio stream"))
+    else:
+        checks.append(QCCheck(name="audio_present", group="audio", status="pass", detail=f"{info.audio_codec} {info.sample_rate} Hz"))
+        sd = _stream_durations(output)
+        if "video" in sd and "audio" in sd:
+            diff = abs(sd["video"] - sd["audio"])
+            checks.append(QCCheck(name="av_sync", group="audio", status="pass" if diff <= qcfg.av_sync_tolerance else "fail",
+                                  detail=f"audio/video stream length differ by {diff*1000:.0f} ms", value=round(diff, 3)))
+        summ = log_txt[log_txt.rfind("Summary:"):] if "Summary:" in log_txt else ""
+        mi = re.search(r"I:\s*(-?[\d.]+|-inf)\s*LUFS", summ)
+        mp = re.search(r"Peak:\s*(-?[\d.]+|-inf)\s*dBFS", summ)
+        if mi:
+            lufs = float(mi.group(1)) if mi.group(1) != "-inf" else -99.0
+            st = "pass" if qcfg.lufs_min <= lufs <= qcfg.lufs_max else ("fail" if lufs < -40 else "warn")
+            checks.append(QCCheck(name="loudness", group="audio", status=st,
+                                  detail=f"{lufs:.1f} LUFS integrated (target range {qcfg.lufs_min}..{qcfg.lufs_max})", value=lufs))
+        else:
+            checks.append(QCCheck(name="loudness", group="audio", status="fail", detail="could not measure loudness"))
+        if mp:
+            tp = float(mp.group(1)) if mp.group(1) != "-inf" else -99.0
+            checks.append(QCCheck(name="true_peak", group="audio", status="pass" if tp <= qcfg.max_true_peak else "fail",
+                                  detail=f"{tp:.1f} dBTP (max {qcfg.max_true_peak})", value=tp))
+        pk = re.search(r"Peak level dB:\s*(-?[\d.]+|-inf)", log_txt)
+        if pk:
+            p = float(pk.group(1)) if pk.group(1) != "-inf" else -99.0
+            checks.append(QCCheck(name="no_clipping", group="audio", status="pass" if p < -0.1 else "fail",
+                                  detail=f"sample peak {p:.2f} dBFS", value=p))
+        sil = [float(m.group(1)) for m in re.finditer(r"silence_duration:\s*([\d.]+)", log_txt)]
+        checks.append(QCCheck(name="long_silence", group="audio", status="warn" if sil else "pass",
+                              detail=(f"{len(sil)} silent stretch(es) over {qcfg.max_silence_seconds:g}s (longest {max(sil):.1f}s)"
+                                      if sil else f"no silence over {qcfg.max_silence_seconds:g}s")))
+
+    # ------------------------------------------------------------ captions
+    if track is None:
+        checks.append(QCCheck(name="captions", group="captions", status="skip", detail="captions disabled"))
+    else:
+        checks.extend(_caption_checks(track, info.duration, plan, ass_path, ccfg))
+
+    # ------------------------------------------------------------ tracking / framing
+    bad = []
+    for kf in plan.keyframes:
+        for name, r in (("gameplay", kf.gameplay), ("facecam", kf.facecam)):
+            if r and (r.x < 0 or r.y < 0 or r.x + r.w > plan.source_width or r.y + r.h > plan.source_height):
+                bad.append(f"{name}@{kf.t:.2f}s")
+    checks.append(QCCheck(name="crop_in_bounds", group="tracking", status="fail" if bad else "pass",
+                          detail="crop windows inside source frame" if not bad else "out of bounds: " + ", ".join(bad)))
+    jumps = _max_crop_jump(plan)
+    checks.append(QCCheck(name="crop_jumps", group="tracking", status="pass" if jumps <= 0.15 else "warn",
+                          detail=f"largest keyframe-to-keyframe crop move {jumps:.1%} of source width"
+                          + (" (static plan)" if len(plan.keyframes) == 1 else ""), value=round(jumps, 4)))
+    if plan.mode == "facecam_split":
+        checks.append(QCCheck(name="facecam", group="tracking", status="pass" if plan.source == "manual" else "warn",
+                              detail="facecam panel uses the configured facecam_region (manual; auto-detection is Phase 4)"))
+    else:
+        checks.append(QCCheck(name="facecam", group="tracking", status="skip",
+                              detail=f"layout '{plan.mode}' has no facecam panel; facecam detection arrives in Phase 4"))
+    checks.append(QCCheck(name="subject_tracking", group="tracking", status="skip",
+                          detail="gameplay subject tracking not implemented yet (Phase 4); crop is static"))
+
+    passed = not any(c.status == "fail" for c in checks)
+    return QCReport(clip_id=clip_id, output=str(output), passed=passed, checks=checks)
+
+
+def _max_crop_jump(plan: CropPlan) -> float:
+    m = 0.0
+    for a, b in zip(plan.keyframes, plan.keyframes[1:]):
+        m = max(m, abs((a.gameplay.x + a.gameplay.w / 2) - (b.gameplay.x + b.gameplay.w / 2)) / plan.source_width)
+    return m
+
+
+def _caption_checks(track: CaptionTrack, duration: float, plan: CropPlan, ass_path: Path | None,
+                    ccfg: CaptionsCfg) -> list[QCCheck]:
+    out: list[QCCheck] = []
+    ch = track.chunks
+    overl = [c.index for a, c in zip(ch, ch[1:]) if c.start < a.end - 1e-3]
+    out.append(QCCheck(name="caption_overlap", group="captions", status="fail" if overl else "pass",
+                       detail="no overlapping caption blocks" if not overl else f"chunks overlap: {overl[:5]}"))
+    outside = [c.index for c in ch if c.start < -1e-3 or c.end > duration + 0.05]
+    out.append(QCCheck(name="caption_in_timeline", group="captions", status="fail" if outside else "pass",
+                       detail="all captions inside the clip timeline" if not outside else f"outside clip: {outside[:5]}"))
+    n_words = sum(len(ln) for c in ch for ln in c.lines)
+    out.append(QCCheck(name="caption_words_complete", group="captions",
+                       status="pass" if n_words == track.source_word_count else "fail",
+                       detail=f"{n_words}/{track.source_word_count} transcript words captioned"))
+    desync = [c.index for c in ch for ln in c.lines for w in ln if not (c.start - 1e-3 <= w.start <= c.end + 1e-3)]
+    order = all(w1.start <= w2.start + 1e-3 for c in ch for w1, w2 in zip([w for ln in c.lines for w in ln],
+                                                                          [w for ln in c.lines for w in ln][1:]))
+    out.append(QCCheck(name="caption_sync", group="captions", status="pass" if not desync and order else "fail",
+                       detail="word timings sit inside their caption block, in order" if not desync and order
+                       else f"word timing outside block in chunks {sorted(set(desync))[:5]}"))
+    if ass_path is None or not ch:
+        out.append(QCCheck(name="caption_render_bounds", group="captions", status="skip", detail="no captions to render"))
+        return out
+
+    # Render ONLY the captions (libass, same file as the burn-in) on black and measure real pixels.
+    W, H = plan.out_width, plan.out_height
+    sx, sy = 4, 4
+    fw, fh = W // sx, H // sy
+    times = [round((c.start + c.end) / 2, 2) for c in ch]
+    dur = max(times) + 0.2
+    frames = _gray_frames(
+        ["-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r=10:d={dur:.2f}"],
+        f"ass={ass_path.name}", fw, fh, cwd=ass_path.parent,
+    )
+    tol = int(0.012 * W)
+    x_min, x_max = int(ccfg.safe_margin_x * W) - tol, W - int(ccfg.safe_margin_x * W) + tol
+    band_top, band_bottom = plan.caption_band
+    missing, out_of_safe, on_protected = [], [], []
+    for c, t in zip(ch, times):
+        i = min(len(frames) - 1, int(t * 10))
+        mask = frames[i] > 60
+        if not mask.any():
+            missing.append(c.index)
+            continue
+        ys, xs = np.nonzero(mask)
+        x0, x1, y0, y1 = xs.min() * sx, (xs.max() + 1) * sx, ys.min() * sy, (ys.max() + 1) * sy
+        if x0 < x_min or x1 > x_max or y0 < band_top - tol or y1 > band_bottom + tol or y0 < 0 or y1 > H:
+            out_of_safe.append((c.index, (int(x0), int(y0), int(x1), int(y1))))
+        if any(_intersects(p, x0, y0, x1, y1) for p in plan.protected_regions):
+            on_protected.append(c.index)
+    out.append(QCCheck(name="caption_rendered", group="captions", status="fail" if missing else "pass",
+                       detail="every caption block produced visible text" if not missing
+                       else f"no visible text for chunks {missing[:5]} (font or libass problem?)"))
+    out.append(QCCheck(name="caption_safe_area", group="captions", status="fail" if out_of_safe else "pass",
+                       detail="all rendered caption pixels inside the safe area" if not out_of_safe
+                       else f"outside safe area: {out_of_safe[:3]}"))
+    out.append(QCCheck(name="caption_avoids_face", group="captions", status="fail" if on_protected else "pass",
+                       detail="captions clear of protected regions" if not on_protected
+                       else f"captions cover protected region in chunks {on_protected[:5]}"))
+    return out

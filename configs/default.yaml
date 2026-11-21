@@ -1,0 +1,62 @@
+# GTA 6 Clip Studio - default configuration.
+# Every key is optional; omitted keys use the built-in defaults (clipstudio/config.py).
+# Override per run with:  --config my.yaml   or   --set section.key=value
+
+project:
+  name: GTA 6 Clip Studio
+
+processing:
+  profile: balanced        # fast | balanced | quality (sets whisper model size + encoder speed)
+  device: auto             # auto | cpu | cuda
+  resume_enabled: true
+  cache_enabled: true
+
+transcription:
+  backend: faster_whisper
+  # model: small           # name (tiny/base/small/medium/large-v3/large-v3-turbo) or a local CT2 model dir.
+  language: null           # null = auto-detect, or e.g. "en"
+  vad_filter: true
+
+highlights:
+  minimum_duration: 15
+  maximum_duration: 45
+  target_duration: 25
+  minimum_score: 0.55
+  max_candidates: 10
+  remove_duplicates: true
+  duplicate_overlap: 0.3   # max fraction of the shorter clip two candidates may share
+  weights:                 # relative; only ratios matter
+    audio_intensity: 0.25
+    audio_spike: 0.15
+    reaction_language: 0.25
+    speech_energy: 0.10
+    opening_hook: 0.15
+    completeness: 0.10
+
+reframing:
+  mode: gameplay           # gameplay | fit_blur | facecam_split
+  gameplay_center_x: 0.5
+  # facecam_region: {x: 0.02, y: 0.04, w: 0.24, h: 0.30}   # needed for facecam_split until auto-detect lands
+  facecam_panel_ratio: 0.38
+
+video:
+  width: 1080
+  height: 1920
+  fps: 60                  # or "source"
+
+captions:
+  enabled: true
+  preset: bold_viral       # clean_gaming | bold_viral | minimal | high_energy | <your preset>
+  vertical_position: 0.72
+  profanity_filter: false
+
+audio:
+  normalization: true
+  target_lufs: -14
+  true_peak: -1.5
+  voice_enhancement: "off" # off | light
+
+export:
+  encoder: auto            # auto | libx264 | h264_nvenc
+  crf: 19
+  auto_render_top: 3

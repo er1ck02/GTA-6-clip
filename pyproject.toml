@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gta6-clip-studio"
+version = "0.2.0"
+description = "Local-first automated clipping studio: long gaming streams in, captioned vertical shorts out."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.24",
+    "pydantic>=2.5",
+    "PyYAML>=6.0",
+    "Pillow>=10.0",
+    "faster-whisper>=1.0",
+]
+
+[project.optional-dependencies]
+ingest = ["yt-dlp>=2024.1.0"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+clipstudio = "clipstudio.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["clipstudio*", "app*"]
+
+[tool.setuptools.package-data]
+clipstudio = ["resources/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: end-to-end tests that encode real video files (slower)",
+    "needs_whisper: requires a local faster-whisper model",
+]
