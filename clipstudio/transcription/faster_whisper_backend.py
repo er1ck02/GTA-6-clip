@@ -10,7 +10,7 @@ from clipstudio.config import TranscriptionCfg
 from clipstudio.core.errors import DependencyMissing, StageFailed
 from clipstudio.core.logging import get_logger
 from clipstudio.core.models import Segment, Transcript, Word
-from clipstudio.media.ffmpeg import read_wav_float
+from clipstudio.media.ffmpeg import wav_memmap, window_rms
 from clipstudio.transcription.base import ProgressFn
 
 log = get_logger("transcription")
@@ -71,7 +71,7 @@ class FasterWhisperBackend:
 
     def transcribe(self, wav: Path, duration: float, progress: ProgressFn | None = None,
                    chunk_dir: Path | None = None) -> Transcript:
-        audio, sr = read_wav_float(wav)
+        audio, sr = wav_memmap(wav)  # int16, memory-mapped; each chunk is converted to float on its own
         assert sr == 16000, "extract_audio_wav must produce 16 kHz"
         model = self._load()
         chunks = plan_chunks(audio, sr, self.cfg.chunk_seconds)
@@ -87,7 +87,7 @@ class FasterWhisperBackend:
                 log.info("    chunk %d/%d cached (%.0f-%.0fs)", ci + 1, len(chunks), a / sr, b / sr)
             else:
                 segs = []
-                for info, seg in self._run(model, audio[a:b], a / sr, language):
+                for info, seg in self._run(model, np.asarray(audio[a:b], dtype=np.float32) / 32768.0, a / sr, language):
                     segs.append(seg)
                     if progress and duration > 0:
                         progress(min(1.0, seg.end / duration))
@@ -124,7 +124,7 @@ def plan_chunks(audio: np.ndarray, sr: int, chunk_seconds: int, search_s: float 
         return [(0, n)]
     win = sr // 2
     nwin = n // win
-    rms = np.sqrt(np.mean(audio[: nwin * win].reshape(nwin, win) ** 2, axis=1) + 1e-12)
+    rms = window_rms(audio, win) + 1e-6
     cuts = [0]
     target = chunk_seconds * sr
     while n - cuts[-1] > target * 1.25:

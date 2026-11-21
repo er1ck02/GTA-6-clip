@@ -7,3 +7,5 @@ logs/
 models/
 *.partial.mp4
 node_modules/
+build/
+*.egg-info/

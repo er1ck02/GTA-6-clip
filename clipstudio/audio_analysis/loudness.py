@@ -6,23 +6,22 @@ from pathlib import Path
 import numpy as np
 
 from clipstudio.core.models import LoudnessTrack
-from clipstudio.media.ffmpeg import read_wav_float
+from clipstudio.media.ffmpeg import wav_memmap, window_rms
 
 FLOOR_DB = -90.0
 
 
 def analyze_loudness(wav: Path, window: float) -> LoudnessTrack:
-    audio, sr = read_wav_float(wav)
+    audio, sr = wav_memmap(wav)
     n = max(1, int(round(window * sr)))
     frames = len(audio) // n
     if frames == 0:
         return LoudnessTrack(window=window, rms_db=[], median_db=FLOOR_DB, p90_db=FLOOR_DB)
-    a = audio[: frames * n].reshape(frames, n).astype(np.float64)
-    rms = np.sqrt(np.mean(a * a, axis=1))
+    rms = window_rms(audio, n)
     db = np.maximum(20 * np.log10(np.maximum(rms, 1e-9)), FLOOR_DB)
     # tail remainder as a final window
     if len(audio) > frames * n:
-        tail = audio[frames * n:].astype(np.float64)
+        tail = np.asarray(audio[frames * n:], dtype=np.float64) / 32768.0
         db = np.append(db, max(20 * np.log10(max(np.sqrt(np.mean(tail * tail)), 1e-9)), FLOOR_DB))
     active = db[db > FLOOR_DB + 1]
     ref = active if active.size else db

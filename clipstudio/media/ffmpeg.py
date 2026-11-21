@@ -196,6 +196,48 @@ def pick_speech_track(info: MediaInfo, setting: str | int) -> list[int]:
     return list(range(n))  # 'mix' or nothing recognisable: everything
 
 
+def wav_memmap(path: Path) -> tuple[np.ndarray, int]:
+    """Memory-map the samples of a 16-bit PCM mono WAV (no copy: an 8-hour VOD is ~0.9 GB on disk, 0 in RAM)."""
+    import struct
+
+    with open(path, "rb") as fh:
+        head = fh.read(12)
+        if head[:4] != b"RIFF" or head[8:12] != b"WAVE":
+            raise MediaError(f"{path} is not a WAV file")
+        sr = None
+        while True:
+            hdr = fh.read(8)
+            if len(hdr) < 8:
+                raise MediaError(f"{path}: no data chunk")
+            cid, size = hdr[:4], struct.unpack("<I", hdr[4:])[0]
+            if cid == b"fmt ":
+                fmt = fh.read(size)
+                ch, sr, bits = struct.unpack("<H", fmt[2:4])[0], struct.unpack("<I", fmt[4:8])[0], struct.unpack("<H", fmt[14:16])[0]
+                if ch != 1 or bits != 16:
+                    raise MediaError(f"{path} is not mono 16-bit PCM")
+            elif cid == b"data":
+                offset = fh.tell()
+                break
+            else:
+                fh.seek(size + (size & 1), 1)
+    if sr is None:
+        raise MediaError(f"{path}: fmt chunk missing")
+    n = min(size, path.stat().st_size - offset) // 2  # tolerate a data size of 0xFFFFFFFF from a streamed write
+    return np.memmap(path, dtype=np.int16, mode="r", offset=offset, shape=(n,)), sr
+
+
+def window_rms(samples: np.ndarray, win: int, block_windows: int = 8192) -> np.ndarray:
+    """RMS of consecutive ``win``-sample windows (full-scale 1.0), computed in blocks so memory stays flat."""
+    scale = 1.0 / 32768.0 if samples.dtype == np.int16 else 1.0
+    nwin = len(samples) // win
+    out = np.empty(nwin, dtype=np.float64)
+    for i in range(0, nwin, block_windows):
+        j = min(nwin, i + block_windows)
+        blk = np.asarray(samples[i * win:j * win], dtype=np.float64).reshape(j - i, win) * scale
+        out[i:j] = np.sqrt(np.mean(blk * blk, axis=1))
+    return out
+
+
 def read_wav_float(path: Path) -> tuple[np.ndarray, int]:
     """Read a 16-bit PCM mono WAV written by :func:`extract_audio_wav`."""
     import wave
