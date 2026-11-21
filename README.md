@@ -39,6 +39,16 @@ Check: `ffmpeg -hide_banner -filters | findstr ass` (Windows) or `| grep " ass "
 
 ### Installing the studio
 
+**Quickest:** clone the repo, then on Windows double-click
+`scripts\windows\install.bat` once and `scripts\windows\Clip Studio.bat` to
+start the workstation (it opens http://127.0.0.1:8765). On macOS/Linux run
+`scripts/install.sh`. Both create `.venv`, install the studio with the UI,
+facecam, URL and OCR extras, and run the doctor. (The Windows scripts are
+written for Windows but were only tested in a Linux sandbox; report anything
+odd.)
+
+By hand:
+
 ```bash
 git clone https://github.com/er1ck02/GTA-6-clip.git
 cd GTA-6-clip
@@ -52,7 +62,20 @@ pip install -r requirements/llm.txt             # optional: LLM re-ranking with 
 python -m app.cli doctor
 ```
 
-`pip install -e .` also works and adds a `clipstudio` command equivalent to `python -m app.cli`.
+`pip install -e ".[ui,vision,ingest]"` also works and adds a `clipstudio` command equivalent to
+`python -m app.cli` (extras: `ui`, `vision`, `ingest`, `llm`, `ocr`, `all`, `dev`).
+
+### Checking it on your own footage
+
+```bash
+python scripts/acceptance.py --input "D:/Videos/my_gta_stream.mp4" --check-install
+```
+
+runs the spec's 12 acceptance criteria against that video (import, analysis,
+ranking, an edit, 9:16 reframe, word timing, audio, playback, QC, a real
+interrupted render that is resumed, the documented commands, and a fresh-venv
+install) and writes `acceptance_report.md`. Example:
+[docs/acceptance/valorant_2026-11-21.md](docs/acceptance/valorant_2026-11-21.md).
 
 ### GPU setup (optional, NVIDIA)
 

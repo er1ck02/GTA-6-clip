@@ -158,7 +158,7 @@ def run_doctor(cfg: Config) -> Report:
         ("yt-dlp", "yt_dlp", False, "URL ingestion"), ("fastapi", None, False, "studio UI/API server"),
         ("uvicorn", None, False, "studio UI/API server"),
         ("mediapipe", None, False, "facecam detection, BlazeFace (requirements/vision.txt)"),
-        ("opencv-python-headless", "cv2", False, "facecam detection fallback, Haar cascade (requirements/vision.txt)"),
+        ("opencv-contrib-python", "cv2", False, "facecam detection fallback, Haar cascade (requirements/vision.txt)"),
         ("ultralytics", None, False, "optional object tracking plugin (AGPL; not wired)"),
         ("torch", None, False, "needed only by optional heavy modules (Demucs, SAM 2, WhisperX)"),
     ]:

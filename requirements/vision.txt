@@ -2,4 +2,6 @@
 # The 230 KB BlazeFace model is downloaded once into models/vision/ on first use.
 # OpenCV is pinned below 5: OpenCV 5 wheels no longer bundle the Haar cascade files.
 mediapipe>=0.10.14
-opencv-python-headless>=4.8,<5
+# mediapipe itself requires opencv-contrib-python; installing a headless variant beside it breaks `pip check`
+# and leaves two cv2 builds fighting over one import.
+opencv-contrib-python>=4.8,<5

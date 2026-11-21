@@ -19,12 +19,12 @@ dependencies = [
 
 [project.optional-dependencies]
 ingest = ["yt-dlp>=2024.1.0"]
-vision = ["mediapipe>=0.10.14", "opencv-python-headless>=4.8,<5"]
+vision = ["mediapipe>=0.10.14", "opencv-contrib-python>=4.8,<5"]
 ui = ["fastapi>=0.110", "uvicorn>=0.29"]
 llm = ["anthropic>=1.0"]
 ocr = ["pytesseract>=0.3.10"]
 dev = ["pytest>=8.0", "httpx>=0.27"]
-all = ["yt-dlp>=2024.1.0", "mediapipe>=0.10.14", "opencv-python-headless>=4.8,<5", "fastapi>=0.110",
+all = ["yt-dlp>=2024.1.0", "mediapipe>=0.10.14", "opencv-contrib-python>=4.8,<5", "fastapi>=0.110",
        "uvicorn>=0.29", "anthropic>=1.0", "pytesseract>=0.3.10"]
 
 [project.scripts]

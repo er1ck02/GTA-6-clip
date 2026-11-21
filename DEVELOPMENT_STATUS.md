@@ -1,6 +1,6 @@
 # Development status
 
-_Last updated: 2026-11-21 · version 0.4.0_
+_Last updated: 2026-11-21 · version 0.6.0_
 
 ## Milestones
 
@@ -12,7 +12,7 @@ _Last updated: 2026-11-21 · version 0.4.0_
 | 4. Advanced tracking | **Done (first version).** Facecam auto-detection (MediaPipe BlazeFace / OpenCV Haar + persistent-border search), motion-based gameplay tracking with smoothed keyframes, animated crops in the renderer, `auto` and `facecam_pip` layouts, real tracking QC, live boxes and moving crop in the workstation. |
 | 5. Audio and visual enhancements | **Done (first version).** Voice chain (off/light/strong: high-pass, compression, FFT noise reduction, presence EQ, de-esser), game ducking under a separate mic track (sidechain compression), punch-in zooms on the peak moment and on-screen events, sharpen/contrast/vibrance on the gameplay picture, optional animated hook title, two-pass loudness normalisation. |
 | 6. User interface | **Done (first version).** Workstation: Program/Source with live crop + facecam boxes, Media Bin with batch export, Inspector with cuts, live 9:16 Output with render, platform targets, downloads and QC, multitrack timeline with trim, cut (shift-drag), split, move and an effects track, live Clipping Desk. CLI: `--json` on every command, folder/multi-file batches, cuts, platform copies. |
-| 7. Production hardening | Not started beyond the test suite and resumability. |
+| 7. Production hardening | **Done (first version).** 2-hour VOD processed end to end with flat audio memory (memory-mapped WAV, block RMS), chunked resumable transcription survived a crash and a container restart, batch runs continue past failing files, `--json` errors, installable wheel that ships the UI (fresh-venv verified), Windows/macOS/Linux setup scripts, and `scripts/acceptance.py`: 12/12 spec acceptance criteria pass on the owner's real Valorant recording. |
 
 ## What works today (verified against real output files)
 
@@ -43,23 +43,22 @@ _Last updated: 2026-11-21 · version 0.4.0_
 
 ## Test results
 
-Run on 2026-11-21 in the CPU-only sandbox (4 vCPU), whisper small int8. **91 passed.**
+Run on 2026-11-21 in the CPU-only sandbox (4 vCPU, 15.7 GB RAM), whisper small int8. **159 passed** (`pytest -q`, 4 min 54 s).
 
-- `tests/unit` (85): config validation, caption chunking/timing/ASS/SRT, layouts across 6 source sizes × 3 modes × 3 crop positions, candidate ranking/dedupe/weights, no-speech audio-peak candidates, padding of short reactions, mic-track selection, stage runner cache/failure/interrupt.
-- `tests/integration` (6): full pipeline + interrupted render + resume without re-transcription + caption-only re-render; `fit_blur` and `facecam_split` renders pass QC with captions clear of the face; QC fails a broken black/silent/wrong-size file on 6 checks; doctor CLI; the HTTP API drives analyse → crop edit → caption edit → render → QC (edited caption reaches the burned-in ASS), rejects invalid edits, resets fields, shifts hand-edited captions on trim, and streams SSE events.
-- **Synthetic stream (112 s):** top candidate is the loud "car exploded" reaction (0.77, next 0.39); clips in all three layouts pass QC; frames inspected visually.
-- **Real recordings from the user's PC** (read only, copied into the sandbox):
-  - Overwatch, 60 s, H.264 1080p60, Game + Mic tracks. First run found **no** candidates: the pipeline only read audio track 0 (game) and needed whole sentences to fill 10 s. Fixed (mic-track detection, padding, audio-peak candidates). Now: mic transcribed ("I'm dead bro."), top clip 11-21 s rendered and passed QC 22/22 + 2 skips.
-  - Valorant, 124 s, **HEVC** 1080p60, two identical unnamed tracks. 7 candidates (speech and audio-peak); top clip rendered and passed QC. The browser could not play HEVC in the workstation; fixed with the preview proxy (built in 53 s for 124 s of footage).
-- **Workstation UI:** verified with Playwright at 1600×1000 and 1280×800 (21 scripted checks): crop drag persists and changes both the overlay and the 9:16 canvas, caption text and timing edits persist and show in the preview, trims and facecam edits persist, render shows live stage chips and the QC table, no console errors except the expected 503 while an HEVC preview proxy is being built.
+- `tests/unit` (147): config validation, captions (chunking, timing, ASS/SRT, hook title), layouts across source sizes and modes, candidates and weights, visual/chat signals, LLM provider chain against fakes, facecam and tracking on synthetic frames, chunked transcription resume, audio graph / punch zoom / cut construction, WAV memory-mapping, CLI JSON and batch input handling, stage runner.
+- `tests/integration` (12): full pipeline + interrupt + resume; every layout renders and passes QC; auto facecam split + tracking; visual + chat signals pick the right moment; QC fails a broken file; doctor; the HTTP API (analyse, crop/caption edits, render, cuts, split, batch export with platform copies, SSE); game ducking, punch zoom, cuts and platform copies measured in real encodes.
+- **Acceptance runner on the owner's real recordings** (`scripts/acceptance.py`):
+  - Valorant, 124 s HEVC 1080p60: **12/12** including a real SIGINT during render then `resume`, and a wheel installed into a fresh venv ([report](docs/acceptance/valorant_2026-11-21.md)).
+  - Overwatch, 60 s H.264, Game + Mic tracks: 11/12 on the first run; criterion 12 failed on a real dependency conflict (`mediapipe` needs `opencv-contrib-python`, the project asked for the headless build). Fixed; `pip check` is now clean.
+- **2-hour VOD** (synthetic, 64 concatenated copies of the 112 s sample, 4.2 GB, 1080p30): 25 min wall time on 4 vCPU for analysis + 3 rendered clips. Transcription 15.4 min (12 chunks, 2 reused from cache after the run was killed by a container restart), visual pass 7.3 min, candidates 30 s, each clip about 25 s render + QC. All 3 clips passed QC. Peak RSS 2.0 GB.
+- Earlier verification still stands: synthetic stream, the owner's Overwatch/Valorant recordings, workstation driven with Playwright (cuts, split, move, platform chips, effects track: no console errors).
 
-**Not tested yet:** a real GTA stream with a facecam (none available), multi-hour VODs, URL ingestion (video sites blocked in the sandbox), GPU/NVENC, Windows and macOS runs.
+**Not tested yet:** a real GTA stream with a webcam, a real 2+ hour stream (the long test repeats the same 112 s), URL ingestion (video sites are blocked in the sandbox), GPU/NVENC, and running on Windows or macOS (the Windows scripts are untested there).
 
 ## Known issues
 
 - Opening-hook scoring prefers starting on the punchline over including the setup sentence (the synthetic sample's best clip starts at "Oh my god" rather than "Wait, what is that?"). Phase 3 LLM judging is the planned fix; until then trim in review.
 - In `facecam_split`, the facecam can still appear inside the gameplay crop if it sits near the crop window (no masking yet).
-- Transcription is a single stage; an interruption mid-transcription restarts that stage (chunked, resumable transcription is planned).
 - Category labels are keyword-based and rough.
 - When game and voice share one audio track, game announcer lines (Valorant's "Spike planted", "Last player standing") are transcribed and treated as speech. Use a separate mic track when recording, or set `transcription.speech_track`.
 - Scores on real footage were all below the 0.55 threshold (best 0.53): thresholds were tuned on synthetic speech and need calibration on real streams.
@@ -74,8 +73,8 @@ Dev: pytest, httpx, espeak-ng (sample video synthesis).
 
 ## Next tasks
 
-1. Run on real GTA streams on the user's PC (doctor + `process` + `ui`), calibrate weights and `minimum_score` from the results.
-2. Phase 3 follow-ups: calibrate visual/chat weights on real GTA 6 streams; one real LLM provider run; chat download helpers (the user exports chat themselves today).
-3. Phase 4 follow-ups: test facecam detection on real webcam streams; per-segment layouts inside one clip; optional YOLO object path as an alternative tracker input.
-4. UI: split/move segments, effects track, batch export, platform presets with per-platform encodes.
-5. `--json` output on every CLI command so agents can drive the studio.
+1. Run `scripts/acceptance.py --check-install` and `process` on real GTA streams on the owner's PC, then calibrate weights and `minimum_score` from those results.
+2. Paste a real Twitch/YouTube URL on that PC to verify yt-dlp ingestion; chat download helpers.
+3. Test facecam detection on a real webcam stream; per-segment layouts inside one clip; optional YOLO tracker input.
+4. GPU run (NVENC, whisper large-v3-turbo fp16) and timings for the `quality` profile.
+5. Live 9:16 preview: draw the hook title and the punch zoom (the render has them, the preview does not).

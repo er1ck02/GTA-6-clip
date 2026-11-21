@@ -395,3 +395,18 @@ cheap derived copies avoid N full renders. Platform rules change often, so the
 numbers live in `export.platform_presets` and the docs say to check them.
 Uploading is out of scope by design (spec: never publish without explicit
 authorisation).
+
+## TD-25 · Long VODs: memory-mapped audio, chunk caches, acceptance as a script
+
+**Decision.** The 16 kHz analysis WAV is memory-mapped (`wav_memmap`) and RMS
+is computed in blocks; transcription converts one 10-minute chunk at a time to
+float and caches each chunk's result. Hardening is checked by
+`scripts/acceptance.py`, which exercises the spec's 12 criteria on any real
+video, including a real SIGINT during a render and a fresh-venv install.
+
+**Why.** Loading a full 8-hour track as float64 would need about 3.7 GB just for
+loudness; the memory map makes audio memory independent of length (the 2-hour
+run peaked at 2.0 GB, mostly the whisper model and decode buffers). A container
+restart killed that run mid-transcription and the rerun reused the finished
+chunks. A script rather than a checklist means the owner can rerun the same
+acceptance on his own PC and footage and get evidence, not claims.

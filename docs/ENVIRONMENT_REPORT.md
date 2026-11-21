@@ -26,6 +26,7 @@ machine you will clip on; it adapts its recommendations to what it finds.
 | Render, 1080x1920 @ 60 fps, x264 medium, captions burned | 23.4 s clip | 14.3 s |
 | QC (full decode + analysis + caption pixel check) | 23.4 s clip | ~6 s |
 | Re-render after caption change (analysis cached) | 18.6 s clip | ~18 s total, no re-transcription |
+| Full `process --top 3` on a 2-hour VOD | 7168 s, 1080p30, 4.2 GB | 25 min (transcribe 15.4, visual 7.3, render + QC ~25 s/clip), peak RSS 2.0 GB |
 
 ## What is realistic here, and on a typical gaming PC
 
