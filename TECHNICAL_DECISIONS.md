@@ -1,0 +1,211 @@
+# Technical decisions
+
+Architecture decision log for GTA 6 Clip Studio. Each entry says what was
+decided, why, and what it costs. Newest decisions are appended at the end.
+
+---
+
+## TD-01 · One Python package, thin `app/` entry point
+
+**Decision.** All code lives in the `clipstudio/` package (sub-packages per
+module). `app/cli.py` is a three-line shim so the documented
+`python -m app.cli ...` commands work.
+
+**Why.** The suggested layout put `app/` and `modules/` side by side as two
+top-level packages. A top-level package called `modules` collides easily with
+other installs and makes imports ambiguous. One namespaced package installs
+cleanly (`pip install -e .`), keeps imports explicit, and avoids circular
+dependencies because `pipeline/` is the only package that imports across
+modules.
+
+**Cost.** None beyond the folder name differing from the original sketch.
+
+## TD-02 · FFmpeg is the only media engine
+
+**Decision.** Probing, audio extraction, analysis filters (`ebur128`,
+`blackdetect`, `silencedetect`, `astats`), compositing, caption burn-in
+(libass via the `ass` filter) and encoding all go through FFmpeg. MoviePy,
+Remotion and auto-subtitle are **not** used.
+
+**Why.**
+- One decode/encode path means one place for colour, timing and A/V-sync bugs.
+- libass gives word-level highlight, outline, shadow, scale "pop" and exact
+  pixel positioning, which covers every caption preset in the spec.
+- Remotion would add a Node + Chromium render farm and a second compositor
+  whose frame timing must be reconciled with FFmpeg's. It is only worth it for
+  motion-graphics overlays, which are out of scope until Phase 5. If added
+  later, it must render a transparent overlay that FFmpeg composites, not
+  replace the pipeline.
+- MoviePy re-implements trimming/compositing on top of FFmpeg with slower
+  frame-by-frame Python processing; it adds nothing we need.
+- auto-subtitle is a thin wrapper over openai-whisper + FFmpeg subtitles with
+  no word timing; our caption engine supersedes it.
+
+**Cost.** Filtergraphs are terse. They are generated in one place
+(`rendering/render.py`) from a typed `CropPlan`, and are covered by
+integration tests that decode the real output.
+
+## TD-03 · faster-whisper is the default transcription backend; WhisperX is optional later
+
+**Decision.** `transcription/base.py` defines a backend interface;
+`faster_whisper_backend.py` is the only implementation today.
+
+**Why.** faster-whisper (CTranslate2) runs int8 on CPU and fp16 on CUDA,
+needs no PyTorch, ships its own Silero VAD, and already produces word
+timestamps (cross-attention alignment) that measured within a few tens of
+milliseconds on our tests. WhisperX adds wav2vec2 forced alignment and
+pyannote diarization but pulls in PyTorch (~2 GB) and gated Hugging Face
+models. It stays an optional backend for users who need diarization or
+tighter alignment; it is not a second mandatory stage.
+
+**Notes.**
+- We decode audio once to 16 kHz mono WAV with FFmpeg and hand faster-whisper
+  a NumPy array, instead of letting it decode with PyAV. That avoids a
+  PyAV-version incompatibility we hit (`av` 19 vs faster-whisper 1.2.1) and
+  lets loudness analysis reuse the same WAV.
+- `condition_on_previous_text=False` reduces repetition loops on long, noisy
+  gaming audio.
+
+## TD-04 · Caption line breaking uses real font metrics
+
+**Decision.** The caption engine resolves the configured font with fontconfig
+(the same lookup libass does), measures text with Pillow at the size libass
+will use, and wraps lines to the safe width before writing ASS.
+
+**Why.** "Text must never leave the frame" cannot be guaranteed by character
+counts. QC then *renders the captions alone with libass* and measures the
+bounding box of the actual pixels against the safe area and protected regions
+(e.g. the facecam panel). Both the intent and the result are checked.
+
+**Cost.** Pillow is a dependency. Without fontconfig (stock Windows) widths
+fall back to an estimate and a warning is logged; QC's pixel check still runs.
+
+## TD-05 · Resumability through content-addressed stage keys
+
+**Decision.** Each stage records a cache key = hash(stage version, upstream
+keys, the config sections it reads, relevant inputs). A stage is skipped when
+its key matches and its outputs exist. Job IDs are deterministic
+(`<name>-<content fingerprint>`), so re-running `process` on the same file
+reopens the same project.
+
+**Why.** Changing caption style should re-render a clip in seconds, never
+re-transcribe a 3-hour VOD. Tests assert exactly this: an interrupted render
+resumes without re-transcribing, and a caption-preset change re-runs captions
+and render while reusing the plan.
+
+**Details.** Writes are atomic (temp file + rename). User decisions live in
+`edits.json` as an overlay on generated candidates, so regenerating candidates
+never loses accept/reject/trim decisions. Hand-edited caption tracks are
+marked `edited` and preserved.
+
+## TD-06 · Phase 2 highlight scoring is a transparent heuristic
+
+**Decision.** Candidates are built from whole sentences (never mid-word),
+scored with six named features (audio intensity, audio spike, reaction
+language, speech energy, opening hook, completeness), combined with
+user-configurable weights, then penalised for dead air and distance from the
+target duration. Every candidate stores raw features, per-feature
+contributions, a reason string and a confidence.
+
+**Why.** The spec requires stored reasoning, adjustable weights and no
+cloud dependency for basic clipping. Explainable features are also the right
+input for the Phase 3 LLM pass.
+
+**De-duplication.** Two candidates are duplicates if they overlap by more than
+`duplicate_overlap` of the shorter clip **or** either contains the other's
+peak moment. The second rule was added after the first real run produced two
+clips about the same explosion that overlapped only 30%.
+
+**Known limitation.** The opening-hook feature favours starting on the
+punchline over including the setup line before it. Phase 3's LLM pass is the
+intended fix (it judges "does this make sense without the stream?").
+
+## TD-07 · Reframing produces a `CropPlan`; the renderer only executes plans
+
+**Decision.** Layout logic (`reframing/layout.py`) outputs a typed plan:
+panels (destination rectangles), crop keyframes in source pixels, protected
+regions and the caption band. Rendering, the UI overlay and QC all consume the
+same plan.
+
+**Why.** Tracking (Phase 4) only has to emit more keyframes; rendering, UI and
+QC do not change. Manual overrides (crop centre, facecam rectangle, layout)
+are just edits that produce a different plan, and plans are saved so clips
+re-render without repeating analysis.
+
+**Layouts today.** `gameplay` (full-height 9:16 crop), `fit_blur` (whole frame
+over a blurred fill: never cuts action), `facecam_split` (facecam panel on top,
+gameplay below; needs a facecam rectangle until auto-detection exists).
+
+## TD-08 · Audio: two-pass loudnorm only; Demucs is opt-in later
+
+**Decision.** Each clip is measured, then normalised with linear `loudnorm` to
+-14 LUFS / -1.5 dBTP. Optional "light" voice enhancement is a high-pass plus
+gentle 2:1 compression. No denoising or source separation by default.
+
+**Why.** Two-pass linear loudnorm changes gain without pumping. Aggressive
+denoise and compression produce the robotic voice the spec forbids. Demucs
+costs minutes per clip on CPU and needs PyTorch; it will be offered per clip,
+with the original audio always kept as fallback.
+
+## TD-09 · Local web UI: FastAPI + vanilla JS, served by the CLI
+
+**Decision.** `python -m app.cli ui` starts a FastAPI server on 127.0.0.1 that
+serves a no-build vanilla JS workstation and a JSON API over the same
+`Studio` service the CLI uses. Live stage status streams over Server-Sent
+Events from an in-process event bus.
+
+**Why not Gradio/Streamlit.** The requested workstation (draggable crop box on
+real frames, multitrack timeline with draggable caption blocks, live 9:16
+canvas preview, live "clipping desk") needs custom interaction that Gradio and
+Streamlit fight against. A plain web front end keeps it local-first and
+offline, with no Node build step to install.
+
+**Cost.** The 9:16 live preview is drawn by canvas code, which approximates
+the libass render (same font, size, position and colours). The final render
+and QC remain the source of truth. One reference project (gaming-clip) uses
+the same code for preview and render; we may move to rendering preview frames
+through FFmpeg if drift becomes a problem.
+
+## TD-10 · Heavy and optional tools: evaluation summary
+
+| Tool | Verdict | Reason |
+|---|---|---|
+| yt-dlp | **Use** (optional extra) | Mature, resumable `.part` downloads, metadata JSON. Users are responsible for platform terms. |
+| Streamlink | Later (Phase 3+) | Live capture; integrate as a separate ingest that writes segments. |
+| TwitchDownloader | Later, optional | .NET CLI. Use only for chat replay JSON (chat signal). Not cross-platform friendly; yt-dlp covers the video. |
+| PySceneDetect | Phase 3 | Cheap scene-cut signal and clip boundary snapping. FFmpeg `scdet` is a zero-dependency alternative. |
+| auto-editor | Not used | Silence removal conflicts with "quiet moments matter". We detect silence in scoring and QC instead of cutting it. |
+| FunClip | Not used | ModelScope/FunASR stack (Paraformer, PyTorch), Chinese-first, LLM clipping prompts. Overlaps our transcript + LLM design with a much heavier footprint. |
+| ClipsAI | Not used | Speaker-focused podcast reframing with pyannote; its assumptions don't fit gameplay. Ideas reused, code not. |
+| MediaPipe | Phase 4 | Face detection for facecam localisation and reaction cues. Light, CPU-friendly. |
+| Ultralytics YOLO | Phase 4, optional | Gameplay subject tracking. **AGPL-3.0**: kept as an optional plugin so the core stays MIT. |
+| SAM 2 | Optional, last | Heavy (PyTorch, GPU). Only if box tracking proves insufficient. |
+| WhisperX | Optional backend | See TD-03. |
+| Remotion | Not used now | See TD-02. |
+| MoviePy | Not used | See TD-02. |
+| Demucs | Optional, per clip | See TD-08. |
+| Video2X | Optional, per clip | Only for low-resolution sources; Vulkan binary, large. |
+| Practical-RIFE | Optional, per moment | Slow-motion on selected beats only; PyTorch. |
+| LosslessCut | Not used | A GUI app, not a library. Lossless cuts cannot carry burned-in captions or reframing; FFmpeg stream copy covers raw exports if needed. |
+
+## TD-11 · Licences of reference projects
+
+The user pointed at four reference projects. They were studied for ideas and
+workflows only; **no code was copied**:
+
+- `iyansr/gaming-clip` and `alokbaraii/streamclipper` are AGPL-3.0;
+  copying code would force this project's licence.
+- `Claggeta/clipper` showed no licence file (all rights reserved by default).
+- `haziqahmedqasmi/PeakCut` is MIT.
+
+Ideas adopted are listed in `docs/REFERENCE_REPOS.md`.
+
+## TD-12 · Sandbox model sourcing (development only)
+
+The cloud development sandbox blocks Hugging Face and GitHub downloads, so the
+standard `small` model could not be fetched there. For testing only, a
+CTranslate2 int8 conversion of Whisper small was taken from an npm package
+(`@skillninja/shortmovie-telop-model-*`), reassembled, and checked against the
+package's published SHA-256. It is a weights file (no code). End users get
+models the normal way: faster-whisper downloads them from Hugging Face on
+first use, or `transcription.model` can point at any local CT2 model folder.

@@ -210,11 +210,12 @@ def run_doctor(cfg: Config) -> Report:
     else:
         cores = os.cpu_count() or 1
         r.recommendations.append(
-            f"CPU-only ({cores} cores): profile 'balanced' (whisper small int8) transcribes roughly 3-6x faster than "
-            "real time on a modern 8-core CPU; use 'fast' (base) for multi-hour VODs.")
-    if ram and ram >= 32 and vram >= 12:
+            f"CPU-only ({cores} cores): profile 'balanced' (whisper small int8). Measured on a 4-vCPU cloud VM: "
+            "~6x faster than real time on speech-dense audio (about 10 minutes per hour of VOD); "
+            "use 'fast' (whisper base) for multi-hour VODs.")
+    if ram and ram >= 30 and vram >= 12:
         r.recommendations.append("Local LLM re-ranking (Phase 3) is practical: e.g. an 8B instruct model via Ollama/llama.cpp.")
-    elif ram and ram >= 16:
+    elif ram and ram >= 15:
         r.recommendations.append("Local LLM: a 3-4B quantised model on CPU is possible but slow; prefer an API provider "
                                  "or the built-in heuristic scorer.")
     else:

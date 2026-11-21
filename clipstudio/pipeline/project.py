@@ -24,6 +24,7 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
+from clipstudio.core import events
 from clipstudio.core.errors import Cancelled, ClipStudioError, StageFailed
 from clipstudio.core.logging import get_logger, log_event
 
@@ -96,10 +97,12 @@ def run_stage(state: StateFile, name: str, key: str, outputs: list[Path], fn: Ca
     rec = state.stage(name)
     if resume and not force and rec.status == "done" and rec.key == key and all(p.exists() for p in outputs):
         log_event(log, 20, f"  [cached] {name}", stage=name, key=key, event="stage_cached")
+        events.publish("stage", stage=name, status="cached")
         return StageResult(name, key, True, 0.0)
     rec = StageRecord(status="running", key=key, started=time.time())
     state.set_stage(name, rec)
     log_event(log, 20, f"  [run]    {name} ...", stage=name, key=key, event="stage_start")
+    events.publish("stage", stage=name, status="running")
     attempt = 0
     while True:
         t0 = time.perf_counter()
@@ -113,6 +116,7 @@ def run_stage(state: StateFile, name: str, key: str, outputs: list[Path], fn: Ca
             rec.status, rec.error = "interrupted", "cancelled by user"
             rec.finished = time.time()
             state.set_stage(name, rec)
+            events.publish("stage", stage=name, status="interrupted")
             raise Cancelled(f"cancelled during stage '{name}'; run `resume` to continue")
         except Exception as e:  # recorded, logged with traceback, then re-raised: never swallowed
             if attempt < retries and not isinstance(e, ClipStudioError):
@@ -123,6 +127,7 @@ def run_stage(state: StateFile, name: str, key: str, outputs: list[Path], fn: Ca
             rec.finished = time.time()
             rec.seconds = round(time.perf_counter() - t0, 3)
             state.set_stage(name, rec)
+            events.publish("stage", stage=name, status="failed", error=rec.error)
             log.debug("stage %s failed", name, exc_info=True)
             if isinstance(e, StageFailed):
                 raise
@@ -133,4 +138,5 @@ def run_stage(state: StateFile, name: str, key: str, outputs: list[Path], fn: Ca
     rec.outputs = [str(p) for p in outputs]
     state.set_stage(name, rec)
     log_event(log, 20, f"  [done]   {name} ({rec.seconds:.1f}s)", stage=name, seconds=rec.seconds, event="stage_done")
+    events.publish("stage", stage=name, status="done", seconds=rec.seconds)
     return StageResult(name, key, False, rec.seconds)

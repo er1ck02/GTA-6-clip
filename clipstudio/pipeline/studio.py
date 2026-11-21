@@ -17,6 +17,7 @@ from clipstudio import __version__
 from clipstudio.audio_analysis.loudness import analyze_loudness
 from clipstudio.captions.engine import build_caption_track, write_ass, write_srt
 from clipstudio.config import Config, Rect
+from clipstudio.core import events
 from clipstudio.core.errors import ClipStudioError, MediaError
 from clipstudio.core.logging import add_file_log, get_logger
 from clipstudio.core.models import (Candidate, CandidateSet, CaptionTrack, CropPlan, LoudnessTrack, MediaInfo,
@@ -172,6 +173,7 @@ class Studio:
 
             def prog(f: float) -> None:
                 self.progress("transcribe", f)
+                events.publish("progress", stage="transcribe", progress=round(f, 3))
                 if f - last[0] >= 0.1:
                     last[0] = f
                     log.info("    transcribed %d%%", int(f * 100))
@@ -329,6 +331,46 @@ class Studio:
                 if ch.status == "fail":
                     log.error("      fail: %s: %s", ch.name, ch.detail)
         return ClipResult(c.id, f_out, qc, round(time.perf_counter() - t0, 2), cached)
+
+    def preview(self, p: Project, cid: str) -> tuple[Candidate, CropPlan, CaptionTrack | None]:
+        """Plan + caption track for the clip as it would render now (no encoding). Used by the UI."""
+        c = self.candidates(p).get(cid)
+        cfg = self._clip_config(p.edits().clips.get(c.id))
+        media = MediaInfo.load(p.p("media"))
+        plan = plan_layout(media, cfg.reframing, cfg.video, cfg.captions)
+        f_caps = p.clip_dir(c.id) / "captions.json"
+        track = None
+        if cfg.captions.enabled:
+            if f_caps.exists() and CaptionTrack.load(f_caps).edited:
+                track = CaptionTrack.load(f_caps)
+            else:
+                words = Transcript.load(p.p("transcript")).words_between(c.start, c.end)
+                track = build_caption_track(words, c.start, c.end, cfg.captions, plan)
+        return c, plan, track
+
+    def save_captions(self, p: Project, cid: str, track: CaptionTrack) -> CaptionTrack:
+        """Store a hand-corrected caption track; it is preserved across re-renders."""
+        c = self.candidates(p).get(cid)
+        dur = c.end - c.start
+        chunks = sorted(track.chunks, key=lambda ch: ch.start)
+        for i, ch in enumerate(chunks):
+            if not (0 <= ch.start < ch.end <= dur + 0.05):
+                raise ClipStudioError(f"caption {i} timing {ch.start:.2f}-{ch.end:.2f}s is outside the clip (0-{dur:.2f}s)")
+            if i and ch.start < chunks[i - 1].end - 1e-3:
+                raise ClipStudioError(f"caption {i} overlaps the previous caption")
+            ch.index = i
+        track.chunks = chunks
+        track.edited = True
+        track.source_word_count = sum(len(ln) for ch in chunks for ln in ch.lines)
+        d = p.clip_dir(c.id)
+        d.mkdir(parents=True, exist_ok=True)
+        track.save(d / "captions.json")
+        # invalidate the caption stage so the next render rewrites the ASS file
+        st = StateFile(d / "state.json", {"clip_id": c.id})
+        if "captions" in st.data["stages"]:
+            st.data["stages"]["captions"]["key"] = None
+            st.save()
+        return track
 
     def default_selection(self, p: Project, top: int) -> list[str]:
         cs = self.candidates(p)

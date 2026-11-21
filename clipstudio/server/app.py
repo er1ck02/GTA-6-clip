@@ -1,0 +1,323 @@
+"""Local HTTP API + static workstation UI.  Start with ``python -m app.cli ui``.
+
+Everything the workstation shows comes from here: real source frames, the
+real crop plan, the real transcript/captions, real render + QC results, and a
+live event stream of pipeline stages (the "clipping desk").
+
+The server binds to 127.0.0.1 by default and only reads source files the user
+explicitly imports.
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import queue
+import threading
+import time
+import traceback
+import uuid
+from pathlib import Path
+from typing import Any
+
+from clipstudio.config import BUILTIN_CAPTION_PRESETS, Config
+from clipstudio.core import events
+from clipstudio.core.errors import ClipStudioError
+from clipstudio.core.logging import get_logger
+from clipstudio.core.models import CaptionTrack, LoudnessTrack, MediaInfo, QCReport, Transcript
+from clipstudio.media.ffmpeg import ffmpeg_bin, run
+from clipstudio.pipeline.studio import Studio
+
+log = get_logger("server")
+STATIC = Path(__file__).parent / "static"
+
+# What the clipping desk shows. 'stage' ties a tool to real pipeline events;
+# tools without a stage are listed honestly as not integrated yet.
+TOOLS: list[dict[str, Any]] = [
+    {"id": "ytdlp", "name": "yt-dlp", "role": "URL ingest", "stage": "ingest", "status": "optional"},
+    {"id": "ffprobe", "name": "FFprobe", "role": "metadata", "stage": "metadata", "status": "active"},
+    {"id": "ffmpeg_audio", "name": "FFmpeg", "role": "audio extract", "stage": "extract_audio", "status": "active"},
+    {"id": "faster_whisper", "name": "faster-whisper", "role": "word timestamps", "stage": "transcribe", "status": "active"},
+    {"id": "loudness", "name": "NumPy RMS", "role": "audio energy", "stage": "loudness", "status": "active"},
+    {"id": "scorer", "name": "Highlight scorer", "role": "rank moments", "stage": "candidates", "status": "active"},
+    {"id": "reframe", "name": "Reframe planner", "role": "9:16 layout", "stage": "plan", "status": "active"},
+    {"id": "libass", "name": "libass captions", "role": "word captions", "stage": "captions", "status": "active"},
+    {"id": "x264", "name": "FFmpeg x264", "role": "render 9:16", "stage": "render", "status": "active"},
+    {"id": "qc", "name": "QC suite", "role": "verify output", "stage": "qc", "status": "active"},
+    {"id": "streamlink", "name": "Streamlink", "role": "live capture", "stage": None, "status": "planned"},
+    {"id": "twitchdl", "name": "TwitchDownloader", "role": "chat replay", "stage": None, "status": "planned"},
+    {"id": "scenedetect", "name": "PySceneDetect", "role": "scene cuts", "stage": None, "status": "planned"},
+    {"id": "mediapipe", "name": "MediaPipe", "role": "facecam detect", "stage": None, "status": "planned"},
+    {"id": "yolo", "name": "Ultralytics YOLO", "role": "gameplay tracking", "stage": None, "status": "planned"},
+    {"id": "sam2", "name": "SAM 2", "role": "segmentation", "stage": None, "status": "optional"},
+    {"id": "demucs", "name": "Demucs", "role": "voice/music split", "stage": None, "status": "optional"},
+    {"id": "llm", "name": "LLM re-rank", "role": "context judge", "stage": None, "status": "planned"},
+    {"id": "rife", "name": "Practical-RIFE", "role": "slow motion", "stage": None, "status": "optional"},
+    {"id": "video2x", "name": "Video2X", "role": "upscale", "stage": None, "status": "optional"},
+]
+
+
+class JobRunner:
+    """One background worker: heavy jobs (transcribe/render) run one at a time, never on the request thread."""
+
+    def __init__(self) -> None:
+        self.q: queue.Queue = queue.Queue()
+        self.jobs: dict[str, dict] = {}
+        self.lock = threading.Lock()
+        threading.Thread(target=self._loop, daemon=True, name="clipstudio-jobs").start()
+
+    def submit(self, kind: str, project: str | None, clip: str | None, fn) -> dict:
+        jid = uuid.uuid4().hex[:10]
+        job = {"id": jid, "kind": kind, "project": project, "clip": clip, "status": "queued",
+               "created": time.time(), "error": None, "result": None}
+        with self.lock:
+            self.jobs[jid] = job
+        events.publish("job", job=jid, status="queued", job_kind=kind, project=project, clip=clip)
+        self.q.put((job, fn))
+        return job
+
+    def _loop(self) -> None:
+        while True:
+            job, fn = self.q.get()
+            token = events.context.set({"job": job["id"], "project": job["project"], "clip": job["clip"]})
+            job["status"], job["started"] = "running", time.time()
+            events.publish("job", status="running", job_kind=job["kind"])
+            try:
+                job["result"] = fn()
+                job["status"] = "done"
+            except Exception as e:
+                job["status"], job["error"] = "failed", str(e)
+                log.error("job %s failed: %s", job["id"], e)
+                log.debug(traceback.format_exc())
+            job["finished"] = time.time()
+            events.publish("job", status=job["status"], job_kind=job["kind"], error=job["error"])
+            events.context.reset(token)
+
+    def list(self) -> list[dict]:
+        with self.lock:
+            return sorted(self.jobs.values(), key=lambda j: -j["created"])[:50]
+
+
+def create_app(cfg: Config):
+    try:
+        from fastapi import Body, FastAPI, HTTPException, Request
+        from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+        from fastapi.staticfiles import StaticFiles
+    except ImportError as e:
+        raise ClipStudioError("the UI needs FastAPI + uvicorn: pip install -r requirements/ui.txt") from e
+
+    studio = Studio(cfg)
+    jobs = JobRunner()
+    app = FastAPI(title="GTA 6 Clip Studio", version="0.2.0")
+    thumbs = studio.data_dir / "cache" / "thumbs"
+
+    @app.exception_handler(ClipStudioError)
+    async def _cs_error(_req: Request, exc: ClipStudioError):
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    def proj(pid: str):
+        try:
+            return studio.load(pid)
+        except ClipStudioError as e:
+            raise HTTPException(404, str(e))
+
+    def has(p, name: str) -> bool:
+        return p.p(name).exists()
+
+    # ------------------------------------------------------------ system
+    @app.get("/api/system")
+    def system():
+        from clipstudio.doctor import run_doctor
+
+        r = run_doctor(cfg)
+        return {"doctor": r.to_dict(), "device": studio.device, "profile": cfg.processing.profile,
+                "whisper_model": cfg.transcription.model, "tools": TOOLS}
+
+    @app.get("/api/config")
+    def config():
+        return {"config": cfg.model_dump(mode="json"),
+                "caption_presets": sorted({**BUILTIN_CAPTION_PRESETS, **cfg.captions.presets})}
+
+    # ------------------------------------------------------------ projects
+    @app.get("/api/projects")
+    def projects():
+        return studio.list_projects()
+
+    @app.post("/api/projects")
+    def create_project(body: dict = Body(...)):
+        path, url = body.get("input_path"), body.get("url")
+        p = studio.open_or_create(input_path=Path(path) if path else None, url=url)
+        job = jobs.submit("analyze", p.id, None, lambda: studio.analyze(studio.load(p.id)) and None)
+        return {"project": p.id, "job": job}
+
+    @app.post("/api/projects/{pid}/analyze")
+    def analyze(pid: str):
+        p = proj(pid)
+        return jobs.submit("analyze", p.id, None, lambda: studio.analyze(studio.load(p.id)) and None)
+
+    @app.get("/api/projects/{pid}")
+    def project(pid: str):
+        p = proj(pid)
+        media = MediaInfo.load(p.p("media")).model_dump() if has(p, "media") else None
+        clips = {}
+        for st in (p.root / "clips").glob("*/state.json"):
+            d = json.loads(st.read_text())
+            clips[d.get("clip_id")] = {"qc_passed": d.get("qc_passed"), "output": bool(d.get("output")),
+                                       "stages": {k: v.get("status") for k, v in d.get("stages", {}).items()}}
+        return {"id": p.id, "source": p.state.data.get("source"), "media": media,
+                "stages": p.state.data.get("stages", {}), "clips": clips,
+                "sample": "sample" in Path(p.state.data["source"]["path"]).name.lower()}
+
+    @app.get("/api/projects/{pid}/candidates")
+    def candidates(pid: str):
+        p = proj(pid)
+        if not has(p, "candidates"):
+            return {"weights": {}, "candidates": []}
+        return studio.candidates(p).model_dump()
+
+    @app.get("/api/projects/{pid}/transcript")
+    def transcript(pid: str):
+        p = proj(pid)
+        if not has(p, "transcript"):
+            raise HTTPException(404, "not transcribed yet")
+        return Transcript.load(p.p("transcript")).model_dump()
+
+    @app.get("/api/projects/{pid}/waveform")
+    def waveform(pid: str, start: float = 0.0, end: float | None = None, bins: int = 400):
+        p = proj(pid)
+        if not has(p, "loudness"):
+            raise HTTPException(404, "audio not analysed yet")
+        lt = LoudnessTrack.load(p.p("loudness"))
+        end = end if end is not None else len(lt.rms_db) * lt.window
+        i0, i1 = int(start / lt.window), max(int(start / lt.window) + 1, int(end / lt.window))
+        vals = lt.rms_db[i0:i1] or [-90.0]
+        bins = max(1, min(bins, 4000))
+        out = []
+        for b in range(bins):
+            seg = vals[int(b * len(vals) / bins): max(int(b * len(vals) / bins) + 1, int((b + 1) * len(vals) / bins))]
+            peak = max(seg) if seg else -90.0
+            out.append(round(max(0.0, min(1.0, (peak + 60) / 60)), 3))  # -60..0 dBFS -> 0..1
+        return {"start": start, "end": end, "bins": out, "median_db": lt.median_db}
+
+    # ------------------------------------------------------------ media
+    @app.get("/api/projects/{pid}/source")
+    def source(pid: str):
+        p = proj(pid)
+        return FileResponse(p.source_path())  # Starlette FileResponse supports HTTP Range (seeking)
+
+    @app.get("/api/projects/{pid}/frame")
+    def frame(pid: str, t: float = 0.0, w: int = 640):
+        p = proj(pid)
+        w = max(64, min(w, 1920))
+        key = hashlib.sha1(f"{p.id}:{t:.2f}:{w}".encode()).hexdigest()[:16]
+        f = thumbs / f"{key}.jpg"
+        if not f.exists():
+            f.parent.mkdir(parents=True, exist_ok=True)
+            run([ffmpeg_bin(), "-v", "error", "-y", "-ss", f"{max(0.0, t):.2f}", "-i", str(p.source_path()),
+                 "-frames:v", "1", "-vf", f"scale={w}:-2", "-q:v", "4", str(f)])
+        return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+
+    # ------------------------------------------------------------ clips
+    @app.patch("/api/projects/{pid}/clips/{cid}")
+    def edit_clip(pid: str, cid: str, body: dict = Body(...)):
+        p = proj(pid)
+        allowed = {"status", "start", "end", "layout", "crop_center_x", "facecam_region", "caption_preset"}
+        bad = set(body) - allowed
+        if bad:
+            raise HTTPException(400, f"unknown fields: {sorted(bad)}")
+        return studio.edit_clip(p, cid, **body).model_dump()
+
+    @app.get("/api/projects/{pid}/clips/{cid}/preview")
+    def preview(pid: str, cid: str):
+        p = proj(pid)
+        c, plan, track = studio.preview(p, cid)
+        edit = p.edits().clips.get(c.id)
+        cfg_c = studio._clip_config(edit)
+        return {"candidate": c.model_dump(), "plan": plan.model_dump(), "captions": track.model_dump() if track else None,
+                "caption_style": cfg_c.captions.resolved_style().model_dump(),
+                "edit": edit.model_dump(exclude_none=True) if edit else {}}
+
+    @app.put("/api/projects/{pid}/clips/{cid}/captions")
+    def put_captions(pid: str, cid: str, body: dict = Body(...)):
+        p = proj(pid)
+        return studio.save_captions(p, cid, CaptionTrack.model_validate(body)).model_dump()
+
+    @app.delete("/api/projects/{pid}/clips/{cid}/captions")
+    def reset_captions(pid: str, cid: str):
+        p = proj(pid)
+        c = studio.candidates(p).get(cid)
+        f = p.clip_dir(c.id) / "captions.json"
+        if f.exists():
+            f.unlink()
+        return {"reset": True}
+
+    @app.post("/api/projects/{pid}/clips/{cid}/render")
+    def render(pid: str, cid: str):
+        p = proj(pid)
+        c = studio.candidates(p).get(cid)
+        return jobs.submit("render", p.id, c.id, lambda: studio.render(studio.load(p.id), [c.id])[0].qc.passed)
+
+    @app.get("/api/projects/{pid}/clips/{cid}/qc")
+    def qc(pid: str, cid: str):
+        p = proj(pid)
+        f = p.clip_dir(studio.candidates(p).get(cid).id) / "qc.json"
+        if not f.exists():
+            raise HTTPException(404, "not rendered yet")
+        return QCReport.load(f).model_dump()
+
+    @app.get("/api/projects/{pid}/clips/{cid}/video")
+    def clip_video(pid: str, cid: str):
+        p = proj(pid)
+        c = studio.candidates(p).get(cid)
+        f = p.clip_dir(c.id) / f"{p.id}_{c.id}.mp4"
+        if not f.exists():
+            raise HTTPException(404, "not rendered yet")
+        return FileResponse(f, media_type="video/mp4", filename=f.name)
+
+    @app.get("/api/projects/{pid}/clips/{cid}/captions.srt")
+    def clip_srt(pid: str, cid: str):
+        p = proj(pid)
+        f = p.clip_dir(studio.candidates(p).get(cid).id) / "captions.srt"
+        if not f.exists():
+            raise HTTPException(404, "not rendered yet")
+        return FileResponse(f, media_type="application/x-subrip", filename=f.name)
+
+    # ------------------------------------------------------------ jobs + live events
+    @app.get("/api/jobs")
+    def list_jobs():
+        return jobs.list()
+
+    @app.get("/api/events")
+    async def stream(request: Request, after: int = 0):
+        loop = asyncio.get_running_loop()
+        aq: asyncio.Queue = asyncio.Queue()
+        unsub = events.subscribe(lambda ev: loop.call_soon_threadsafe(aq.put_nowait, ev))
+
+        async def gen():
+            try:
+                for ev in events.history(after):
+                    yield f"id: {ev['seq']}\ndata: {json.dumps(ev, default=str)}\n\n"
+                while not await request.is_disconnected():
+                    try:
+                        ev = await asyncio.wait_for(aq.get(), timeout=15)
+                        yield f"id: {ev['seq']}\ndata: {json.dumps(ev, default=str)}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+            finally:
+                unsub()
+
+        return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    if STATIC.exists():
+        app.mount("/", StaticFiles(directory=str(STATIC), html=True), name="ui")
+    return app
+
+
+def serve(cfg: Config, host: str = "127.0.0.1", port: int = 8765) -> None:
+    try:
+        import uvicorn
+    except ImportError as e:
+        raise ClipStudioError("the UI needs FastAPI + uvicorn: pip install -r requirements/ui.txt") from e
+    app = create_app(cfg)
+    print(f"GTA 6 Clip Studio running at http://{host}:{port}  (Ctrl+C to stop)")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
