@@ -45,6 +45,8 @@ TOOLS: list[dict[str, Any]] = [
     {"id": "faster_whisper", "name": "faster-whisper", "role": "word timestamps", "stage": "transcribe", "status": "active"},
     {"id": "loudness", "name": "NumPy RMS", "role": "audio energy", "stage": "loudness", "status": "active"},
     {"id": "scorer", "name": "Highlight scorer", "role": "rank moments", "stage": "candidates", "status": "active"},
+    {"id": "mediapipe", "name": "MediaPipe BlazeFace", "role": "facecam detect", "stage": "facecam", "status": "active"},
+    {"id": "tracker", "name": "Motion tracker", "role": "follow action", "stage": "track", "status": "active"},
     {"id": "reframe", "name": "Reframe planner", "role": "9:16 layout", "stage": "plan", "status": "active"},
     {"id": "libass", "name": "libass captions", "role": "word captions", "stage": "captions", "status": "active"},
     {"id": "x264", "name": "FFmpeg x264", "role": "render 9:16", "stage": "render", "status": "active"},
@@ -52,8 +54,7 @@ TOOLS: list[dict[str, Any]] = [
     {"id": "streamlink", "name": "Streamlink", "role": "live capture", "stage": None, "status": "planned"},
     {"id": "twitchdl", "name": "TwitchDownloader", "role": "chat replay", "stage": None, "status": "planned"},
     {"id": "scenedetect", "name": "PySceneDetect", "role": "scene cuts", "stage": None, "status": "planned"},
-    {"id": "mediapipe", "name": "MediaPipe", "role": "facecam detect", "stage": None, "status": "planned"},
-    {"id": "yolo", "name": "Ultralytics YOLO", "role": "gameplay tracking", "stage": None, "status": "planned"},
+    {"id": "yolo", "name": "Ultralytics YOLO", "role": "object tracking", "stage": None, "status": "optional"},
     {"id": "sam2", "name": "SAM 2", "role": "segmentation", "stage": None, "status": "optional"},
     {"id": "demucs", "name": "Demucs", "role": "voice/music split", "stage": None, "status": "optional"},
     {"id": "llm", "name": "LLM re-rank", "role": "context judge", "stage": None, "status": "planned"},
@@ -176,6 +177,7 @@ def create_app(cfg: Config):
                                        "stages": {k: v.get("status") for k, v in d.get("stages", {}).items()}}
         return {"id": p.id, "source": p.state.data.get("source"), "media": media,
                 "stages": p.state.data.get("stages", {}), "clips": clips, "preview": preview_state(p),
+                "facecam": fc.model_dump() if (fc := studio.facecam(p)) else None,
                 "sample": "sample" in Path(p.state.data["source"]["path"]).name.lower()}
 
     @app.get("/api/projects/{pid}/candidates")
@@ -262,7 +264,11 @@ def create_app(cfg: Config):
         c, plan, track = studio.preview(p, cid)
         edit = p.edits().clips.get(c.id)
         cfg_c = studio._clip_config(edit)
+        f_tr = p.clip_dir(c.id) / "track.json"
+        fc = studio.facecam(p)
         return {"candidate": c.model_dump(), "plan": plan.model_dump(), "captions": track.model_dump() if track else None,
+                "facecam": fc.model_dump() if fc else None,
+                "track": json.loads(f_tr.read_text()) if f_tr.exists() else None,
                 "caption_style": cfg_c.captions.resolved_style().model_dump(),
                 "edit": edit.model_dump(exclude_none=True) if edit else {}}
 

@@ -59,6 +59,9 @@ class TranscriptionCfg(_Strict):
     # otherwise mixes all; "mix" always mixes; or an audio stream number (0, 1, ...)
     speech_track: str | int = "auto"
     normalize_speech: bool = True  # level quiet mic tracks for recognition (output audio untouched)
+    # long audio is transcribed in chunks cut at quiet moments; each chunk is cached so an
+    # interrupted multi-hour run resumes where it stopped. 0 = never chunk.
+    chunk_seconds: int = Field(600, ge=0)
 
 
 class AudioAnalysisCfg(_Strict):
@@ -122,11 +125,60 @@ class Rect(_Strict):
 class ReframingCfg(_Strict):
     # gameplay:   9:16 crop of the gameplay, full screen.
     # fit_blur:   whole 16:9 frame, letterboxed over a blurred fill (never cuts action).
-    # facecam_split: facecam panel on top, gameplay crop below. Needs facecam_region.
-    mode: Literal["gameplay", "fit_blur", "facecam_split"] = "gameplay"
+    # facecam_split: facecam panel on top, gameplay crop below.
+    # facecam_pip:   gameplay crop full screen with the facecam as a picture-in-picture box.
+    # auto:          facecam_split when a facecam is detected (or configured), else gameplay.
+    mode: Literal["auto", "gameplay", "fit_blur", "facecam_split", "facecam_pip"] = "auto"
     gameplay_center_x: float = Field(0.5, ge=0, le=1)
+    # follow the action with the gameplay crop (needs vision.enabled); off = static crop at gameplay_center_x
+    tracking: bool = True
+    # manual facecam box; overrides automatic detection
     facecam_region: Rect | None = None
     facecam_panel_ratio: float = Field(0.38, ge=0.2, le=0.6)
+    pip_width_ratio: float = Field(0.40, ge=0.2, le=0.6)
+    pip_corner: Literal["top_left", "top_right"] = "top_left"
+    # keep the gameplay crop off the facecam overlay when that costs at most this much horizontal shift
+    avoid_facecam_shift: float = Field(0.12, ge=0, le=0.5)
+
+
+class VisualCfg(_Strict):
+    """Whole-video visual signals for highlight detection (scene cuts, motion, flashes, death screens, HUD text)."""
+    enabled: bool = True
+    sample_fps: float = Field(4.0, gt=0, le=15)
+    width: int = Field(128, ge=32, le=640)
+    cut_threshold: float = Field(0.35, gt=0, le=1)   # histogram change (0..1) that can be a cut
+    flash_rise: float = Field(0.45, gt=0)            # brightness rise over the minute's median
+    desat_ratio: float = Field(0.45, gt=0, lt=1)     # saturation below this fraction of the median
+    min_desat_seconds: float = Field(1.2, gt=0)
+    snap_to_cuts: bool = True                        # move clip edges onto nearby scene cuts
+    # optional OCR of on-screen text at event moments (needs Tesseract + pytesseract)
+    ocr: Literal["auto", "on", "off"] = "auto"
+    ocr_words: list[str] = Field(default_factory=lambda: ["WASTED", "BUSTED", "MISSION PASSED", "MISSION FAILED",
+                                                          "ELIMINATED", "VICTORY", "DEFEAT", "KNOCKED"])
+    max_ocr_frames: int = Field(60, ge=0)
+
+
+class ChatCfg(_Strict):
+    """Chat replay signal. A file next to the video (<name>.chat.json / .live_chat.json / .chat.csv) is used
+    automatically; or pass --chat."""
+    enabled: bool = True
+    window_seconds: float = Field(5.0, gt=0)
+    keywords: list[str] = Field(default_factory=lambda: [
+        "lol", "lmao", "lul", "kekw", "omegalul", "pog", "pogchamp", "poggers", "pogu", "clip", "clip it",
+        "w", "ww", "www", "no way", "wtf", "holy", "insane", "oof", "f", "ez", "gg", "monkas", "pepelaugh"])
+
+
+class VisionCfg(_Strict):
+    enabled: bool = True
+    face_detector: Literal["auto", "mediapipe", "opencv", "none"] = "auto"
+    download_models: bool = True          # fetch the 230 KB BlazeFace model once if missing
+    facecam_auto: bool = True
+    facecam_min_confidence: float = Field(0.6, ge=0, le=1)
+    facecam_samples: int = Field(24, ge=4, le=200)
+    tracking_fps: float = Field(4.0, gt=0, le=15)
+    deadzone: float = Field(0.04, ge=0, le=0.3)       # fraction of source width
+    max_speed: float = Field(0.30, gt=0, le=3)        # fraction of source width per second
+    smoothing_s: float = Field(0.7, ge=0, le=5)
 
 
 class VideoCfg(_Strict):
@@ -237,6 +289,7 @@ class QualityCfg(_Strict):
     max_true_peak: float = -0.5
     max_silence_seconds: float = Field(6.0, gt=0)
     av_sync_tolerance: float = Field(0.1, gt=0)
+    max_crop_speed: float = Field(0.5, gt=0)  # fraction of source width per second
 
 
 class Config(_Strict):
@@ -247,6 +300,9 @@ class Config(_Strict):
     audio_analysis: AudioAnalysisCfg = AudioAnalysisCfg()
     highlights: HighlightsCfg = HighlightsCfg()
     reframing: ReframingCfg = ReframingCfg()
+    vision: VisionCfg = VisionCfg()
+    visual: VisualCfg = VisualCfg()
+    chat: ChatCfg = ChatCfg()
     video: VideoCfg = VideoCfg()
     captions: CaptionsCfg = CaptionsCfg()
     audio: AudioCfg = AudioCfg()

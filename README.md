@@ -45,6 +45,7 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate      macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt                 # core pipeline (CPU or GPU)
 pip install -r requirements/ui.txt              # workstation UI (FastAPI + uvicorn)
+pip install -r requirements/vision.txt          # facecam auto-detection (MediaPipe + OpenCV)
 pip install -r requirements/ingest.txt          # optional: URL ingestion via yt-dlp
 python -m app.cli doctor
 ```
@@ -71,6 +72,10 @@ faster-whisper downloads the chosen Whisper model from Hugging Face into
 | `fast` | base | ~150 MB | multi-hour VODs on CPU |
 | `balanced` (default) | small | ~500 MB | good accuracy, ~6x real time on a 4-core CPU |
 | `quality` | large-v3-turbo | ~1.6 GB | best with an NVIDIA GPU |
+
+Facecam detection uses MediaPipe's BlazeFace model (~230 KB), fetched once from
+storage.googleapis.com into `models/vision/` (set `vision.download_models:
+false` to forbid this; OpenCV's bundled Haar cascade is used instead).
 
 To work offline, point at any local CTranslate2 Whisper folder:
 `--set transcription.model=D:/models/whisper-small-ct2` (or env var
@@ -164,9 +169,22 @@ auto render count), `quality` (QC thresholds). Full schema with defaults:
 Caption presets: `clean_gaming`, `bold_viral` (default), `minimal`,
 `high_energy`, plus your own under `captions.presets`.
 
-Layouts: `gameplay` (9:16 crop of the action), `fit_blur` (whole frame over a
-blurred fill: never cuts anything off), `facecam_split` (facecam on top,
-gameplay below; needs `reframing.facecam_region` until auto-detection lands).
+Layouts: `auto` (default: `facecam_split` when a facecam is found, else
+`gameplay`), `gameplay` (9:16 crop that follows the action), `fit_blur` (whole
+frame over a blurred fill: never cuts anything off), `facecam_split` (facecam
+on top, gameplay below), `facecam_pip` (full-screen gameplay with the facecam in
+a corner box).
+
+Facecam and tracking (`vision` section): the facecam box is found once per
+source from frames sampled across the whole video (a face that stays in one
+place, plus the overlay's straight border). Only detections at or above
+`vision.facecam_min_confidence` (0.6) are applied automatically; a bordered
+panel without a face (a minimap, say) is shown in the UI but never used on its
+own. A manual box (`reframing.facecam_region`, `--facecam`, or FACE BOX in the
+UI) always wins. The gameplay crop follows on-screen motion with a deadzone,
+speed limit and zero-lag smoothing; when the whole frame moves (camera pans in
+shooters and driving) it holds its centre. Dragging the crop by hand pins it
+for that clip.
 
 ---
 
@@ -226,8 +244,13 @@ re-transcribe, and check that QC fails a deliberately broken file.
 - Record your mic on its own audio track if you can (OBS, SteelSeries and Medal
   support this): the mic track is detected by name and transcribed alone.
   With one shared track, in-game voice lines get transcribed too.
-- No automatic facecam detection or subject tracking yet: crops are static per
-  clip (adjustable by hand). The QC report marks these checks `skip`.
+- Facecam detection needs a visible face. A camera that shows only hands, a
+  VTuber avatar or a face turned away most of the time will not be found:
+  draw the box by hand. It is verified on synthetic streams and on two real
+  recordings without a facecam (correctly none found); it has not yet been
+  run on a real stream with a webcam.
+- Tracking follows motion, not objects: it cannot tell a car from an explosion
+  next to it, and in first-person footage it deliberately holds the centre.
 - No speaker diarization; single-language transcription per project.
 - The UI's live 9:16 preview approximates the libass render; the rendered MP4
   and its QC report are authoritative.

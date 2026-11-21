@@ -34,10 +34,26 @@ highlights:
     completeness: 0.10
 
 reframing:
-  mode: gameplay           # gameplay | fit_blur | facecam_split
-  gameplay_center_x: 0.5
-  # facecam_region: {x: 0.02, y: 0.04, w: 0.24, h: 0.30}   # needed for facecam_split until auto-detect lands
+  mode: auto               # auto | gameplay | fit_blur | facecam_split | facecam_pip
+  gameplay_center_x: 0.5   # default crop centre (0..1)
+  tracking: true           # follow the action with smoothed keyframes
+  # facecam_region: {x: 0.02, y: 0.04, w: 0.24, h: 0.30}   # manual override of facecam auto-detection
   facecam_panel_ratio: 0.38
+  pip_width_ratio: 0.40
+  pip_corner: top_left
+  avoid_facecam_shift: 0.12
+
+vision:
+  enabled: true
+  face_detector: auto      # auto (MediaPipe, then OpenCV) | mediapipe | opencv | none
+  download_models: true    # BlazeFace, ~230 KB, from storage.googleapis.com
+  facecam_auto: true
+  facecam_min_confidence: 0.6
+  facecam_samples: 24
+  tracking_fps: 4
+  deadzone: 0.04
+  max_speed: 0.30
+  smoothing_s: 0.7
 
 video:
   width: 1080

@@ -1,6 +1,6 @@
 # Development status
 
-_Last updated: 2026-11-21 · version 0.2.0_
+_Last updated: 2026-11-21 · version 0.3.0_
 
 ## Milestones
 
@@ -9,7 +9,7 @@ _Last updated: 2026-11-21 · version 0.2.0_
 | 1. Environment and architecture | **Done.** Environment doctor, architecture, tool evaluation, project structure, typed interfaces. |
 | 2. First working pipeline | **Done.** Local video → metadata → transcription → ranked candidates → selection/adjustment → 9:16 crop → word-timed captions → MP4 → QC. |
 | 3. Intelligent highlight detection | Not started. Transcript + loudness signals exist; scene, HUD, chat and LLM signals are next. |
-| 4. Advanced tracking | Not started. `CropPlan` keyframes are ready for it; layouts accept a manual facecam rectangle today. |
+| 4. Advanced tracking | **Done (first version).** Facecam auto-detection (MediaPipe BlazeFace / OpenCV Haar + persistent-border search), motion-based gameplay tracking with smoothed keyframes, animated crops in the renderer, `auto` and `facecam_pip` layouts, real tracking QC, live boxes and moving crop in the workstation. |
 | 5. Audio and visual enhancements | Partial: two-pass loudness normalisation and optional light voice EQ/compression. Nothing else. |
 | 6. User interface | **First version working.** Local workstation wired to the real API: Program/Source with live crop + facecam boxes, Media Bin, Inspector, live 9:16 Output with render + QC, multitrack timeline, live Clipping Desk. |
 | 7. Production hardening | Not started beyond the test suite and resumability. |
@@ -25,7 +25,9 @@ _Last updated: 2026-11-21 · version 0.2.0_
 - faster-whisper transcription with word timestamps, VAD, CPU int8 or CUDA fp16, progress events.
 - Highlight candidates from two sources: whole-sentence windows (short lone reactions are padded with surrounding context) and loud audio peaks, so gameplay with little or no commentary still produces moments. Then six weighted features, dead-air and duration penalties, peak-aware de-duplication, stored reasons/contributions/confidence, threshold flag.
 - Review: accept/reject, trim, per-clip layout, crop centre, facecam rectangle, caption preset; stored as an overlay so regeneration never loses edits.
-- Layouts: `gameplay`, `fit_blur`, `facecam_split` (manual facecam region).
+- Layouts: `auto` (split when a facecam is found), `gameplay`, `fit_blur`, `facecam_split`, `facecam_pip`.
+- Facecam auto-detection once per source (stage `facecam`): synthetic stream with a real face in a bordered panel found at confidence 0.98 with both MediaPipe and OpenCV; the user's Valorant and Overwatch recordings (no webcam) correctly produce no facecam (a gloved first-person hand is held at 0.50, below the 0.6 threshold).
+- Gameplay tracking per clip (stage `track`): crop follows the moving subject on the synthetic stream (verified in the rendered pixels: a 203 px pan at the planned time), holds centre under frame-wide motion. QC checks pan speed, direction reversals and that a face is visible in the rendered facecam panel.
 - Captions: font-measured wrapping, active-word highlight with scale pop, 4 presets + custom presets, safe margins, avoidance of the facecam panel, profanity masking, ASS + SRT export, hand-edited tracks preserved.
 - Render: one FFmpeg pass (trim, composite, captions, two-pass loudnorm), libx264 or NVENC with automatic fallback.
 - QC per clip: file, full decode, resolution, aspect, duration, black frames, flat frames, audio presence, A/V stream sync, integrated loudness, true peak, sample-peak clipping, long silence, caption overlap/timeline/word coverage/sync, **caption pixels rendered by libass vs safe area and protected regions**, crop bounds and jumps. Unimplemented checks report `skip`, never `pass`.
@@ -67,6 +69,6 @@ Dev: pytest, httpx, espeak-ng (sample video synthesis).
 
 1. Run on real GTA streams on the user's PC (doctor + `process` + `ui`), calibrate weights and `minimum_score` from the results.
 2. Phase 3: scene cuts (PySceneDetect or FFmpeg `scdet`) for boundary snapping; GTA HUD detection (WASTED/BUSTED) on sampled frames; Twitch chat replay ingestion + spike signal; LLM re-ranker with provider abstraction (Ollama, OpenAI-compatible, Anthropic) and validated JSON output; chunked resumable transcription.
-3. Phase 4: facecam auto-detection (bordered static region + MediaPipe face), gameplay subject tracking on sampled frames, smoothed keyframes, dynamic layouts, keyframe interpolation in the renderer.
+3. Phase 4 follow-ups: test facecam detection on real webcam streams; per-segment layouts inside one clip; optional YOLO object path as an alternative tracker input.
 4. UI: split/move segments, effects track, batch export, platform presets with per-platform encodes.
 5. `--json` output on every CLI command so agents can drive the studio.

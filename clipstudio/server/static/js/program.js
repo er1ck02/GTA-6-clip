@@ -1,5 +1,5 @@
 // Program / Source monitor: the real source video with the real crop plan drawn on top.
-import { S, $, on, cand, media, timecode, fmtT, clamp, round, activeChunk, chunkText, layoutOf } from './core.js';
+import { S, $, on, cand, media, timecode, fmtT, clamp, round, activeChunk, chunkText, layoutOf, kfAt, clipT, hasFacePanel } from './core.js';
 import { video, patchClip, setLocalCropCenter } from './actions.js';
 
 const TEAL = '#2fe0d2', CORAL = '#ff5c7a';
@@ -81,14 +81,16 @@ function setDrawMode(onOff) {
 
 function syncTools() {
   const pv = S.preview;
-  const split = layoutOf() === 'facecam_split';
+  const lay = layoutOf();
+  const split = hasFacePanel(lay) || hasFacePanel(pv?.plan?.mode) || lay === 'auto';
   $('#btnDrawFace').hidden = !split;
   let hint = '';
   if (!pv) hint = '';
   else if (drawMode) hint = 'drag on the source to draw the facecam box';
   else if (pv.plan.mode === 'fit_blur') hint = 'fit_blur uses the whole frame · no crop to drag';
-  else if (split && !pv.edit?.facecam_region) hint = 'no facecam box yet: click FACE BOX and drag';
-  else if (split) hint = 'drag teal = gameplay · coral = face (corner resizes)';
+  else if (split && !faceRectNorm()) hint = 'no facecam found: click FACE BOX and drag one';
+  else if (split) hint = 'drag teal = gameplay · coral = face (corner resizes, makes it manual)';
+  else if (pv.plan.keyframes.length > 1) hint = 'crop follows the action · drag it to place by hand';
   else hint = 'drag the teal crop sideways to reframe';
   $('#progHint').textContent = hint;
 }
@@ -111,9 +113,20 @@ function dispRect() {
 }
 const toScr = (d, rect) => ({ x: d.x + rect.x * d.s, y: d.y + rect.y * d.s, w: rect.w * d.s, h: rect.h * d.s });
 
+// the facecam box shown on the source: a box being dragged, the manual box, or a confident auto-detection
 function faceRectNorm() {
   if (localFace) return localFace;
-  return S.preview?.edit?.facecam_region || null;
+  if (S.preview?.edit?.facecam_region) return S.preview.edit.facecam_region;
+  return autoFace();
+}
+function autoFace() {
+  const fc = S.preview?.facecam, min = S.config?.config?.vision?.facecam_min_confidence ?? 0.6;
+  return fc?.region && fc.confidence >= min ? fc.region : null;
+}
+function faceLabel() {
+  if (localFace || S.preview?.edit?.facecam_region) return 'FACE · manual';
+  const fc = S.preview?.facecam;
+  return `FACE · auto ${fc ? Math.round(fc.confidence * 100) + '%' : ''}`;
 }
 
 // ------------------------------------------------------------------ draw (called from the frame loop)
@@ -125,7 +138,7 @@ export function drawOverlay() {
   if (!pv || !m) return;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const d = dispRect();
-  const plan = pv.plan, kf = plan.keyframes[0];
+  const plan = pv.plan, kf = kfAt(plan, clipT());
   const W = cv.width / dpr, H = cv.height / dpr;
 
   if (plan.mode === 'fit_blur') {
@@ -150,10 +163,23 @@ export function drawOverlay() {
     ctx.fillStyle = TEAL;
     for (const x of [g.x, g.x + g.w]) ctx.fillRect(x - 3, g.y + g.h / 2 - 14, 6, 28);
     const cx = Math.round(((kf.gameplay.x + kf.gameplay.w / 2) / plan.source_width) * 1000) / 10;
-    const lab = plan.mode === 'facecam_split' ? `GAMEPLAY PANEL · X ${cx}%` : `9:16 / CROP · X ${cx}%`;
+    const moving = plan.keyframes.length > 1 ? ' · TRACKING' : '';
+    const lab = plan.mode === 'facecam_split' ? `GAMEPLAY PANEL · X ${cx}%${moving}` : `9:16 / CROP · X ${cx}%${moving}`;
     tag(g.x + g.w / 2, g.y + 6, lab, TEAL, '#06302d', true);
+    // the tracker's raw action estimate at this moment (before smoothing)
+    const raw = pv.track?.raw;
+    if (raw?.length) {
+      const t = clipT();
+      let best = raw[0];
+      for (const r of raw) if (Math.abs(r.t - t) < Math.abs(best.t - t)) best = r;
+      const ax = d.x + best.cx * d.w, ay = d.y + d.h * 0.5;
+      ctx.save(); ctx.globalAlpha = 0.35 + 0.65 * best.confidence;
+      ctx.fillStyle = TEAL; ctx.beginPath(); ctx.arc(ax, ay, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = TEAL; ctx.beginPath(); ctx.moveTo(ax, ay - 12); ctx.lineTo(ax, ay + 12); ctx.stroke();
+      ctx.restore();
+    }
 
-    if (plan.mode === 'facecam_split' && kf.facecam) {
+    if (hasFacePanel(plan.mode) && kf.facecam) {
       const fp = toScr(d, kf.facecam);
       ctx.save(); ctx.setLineDash([5, 4]); strokeRect(fp, 'rgba(255,92,122,.75)', 1); ctx.restore();
       ctx.fillStyle = 'rgba(255,92,122,.9)'; ctx.font = '600 9px "JetBrains Mono", monospace';
@@ -161,12 +187,17 @@ export function drawOverlay() {
     }
   }
   const fr = faceRectNorm();
-  if (fr && (layoutOf() === 'facecam_split' || plan.mode === 'facecam_split')) {
+  if (fr) {
     const r = { x: d.x + fr.x * d.w, y: d.y + fr.y * d.h, w: fr.w * d.w, h: fr.h * d.h };
     ctx.fillStyle = 'rgba(255,92,122,.12)'; ctx.fillRect(r.x, r.y, r.w, r.h);
     strokeRect(r, CORAL, 2);
     ctx.fillStyle = CORAL; ctx.fillRect(r.x + r.w - 6, r.y + r.h - 6, 10, 10);
-    tag(r.x, r.y + r.h + 4, 'FACE · manual', CORAL, '#fff');
+    tag(r.x, r.y + r.h + 4, faceLabel(), CORAL, '#fff');
+    const face = !localFace && !pv.edit?.facecam_region ? pv.facecam?.face : null;
+    if (face) {
+      const q = { x: d.x + face.x * d.w, y: d.y + face.y * d.h, w: face.w * d.w, h: face.h * d.h };
+      ctx.save(); ctx.setLineDash([3, 3]); strokeRect(q, 'rgba(255,92,122,.9)', 1); ctx.restore();
+    }
   }
   if (drag?.kind === 'face-draw' && drag.rect) {
     const n = drag.rect;
@@ -196,8 +227,8 @@ function pt(e) {
 function hit(p) {
   const pv = S.preview; if (!pv) return null;
   const d = dispRect();
-  const plan = pv.plan, kf = plan.keyframes[0];
-  const split = layoutOf() === 'facecam_split';
+  const plan = pv.plan, kf = kfAt(plan, clipT());
+  const split = hasFacePanel(layoutOf()) || hasFacePanel(plan.mode) || layoutOf() === 'auto';
   const fr = faceRectNorm();
   if (split && fr) {
     const r = { x: d.x + fr.x * d.w, y: d.y + fr.y * d.h, w: fr.w * d.w, h: fr.h * d.h };
@@ -221,7 +252,7 @@ function onDown(e) {
     const k = hit(p);
     if (!k) return;
     if (k === 'crop') {
-      const g = pv.plan.keyframes[0].gameplay;
+      const g = kfAt(pv.plan, clipT()).gameplay;
       drag = { kind: 'crop', px: p.x, startCenter: (g.x + g.w / 2) / pv.plan.source_width, center: null };
     } else {
       localFace = { ...faceRectNorm() };

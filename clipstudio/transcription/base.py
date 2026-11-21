@@ -13,7 +13,8 @@ ProgressFn = Callable[[float], None]
 class TranscriptionBackend(Protocol):
     name: str
 
-    def transcribe(self, wav: Path, duration: float, progress: ProgressFn | None = None) -> Transcript: ...
+    def transcribe(self, wav: Path, duration: float, progress: ProgressFn | None = None,
+                   chunk_dir: Path | None = None) -> Transcript: ...
 
 
 def resolve_device(requested: str) -> str:

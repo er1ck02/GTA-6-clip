@@ -18,16 +18,16 @@ from clipstudio.audio_analysis.loudness import analyze_loudness
 from clipstudio.captions.engine import build_caption_track, write_ass, write_srt
 from clipstudio.config import Config, Rect
 from clipstudio.core import events
-from clipstudio.core.errors import ClipStudioError, MediaError
+from clipstudio.core.errors import ClipStudioError, MediaError, StageFailed
 from clipstudio.core.logging import add_file_log, get_logger
-from clipstudio.core.models import (Candidate, CandidateSet, CaptionTrack, CropPlan, LoudnessTrack, MediaInfo,
-                                    QCReport, Transcript)
+from clipstudio.core.models import (ActionTrack, Candidate, CandidateSet, CaptionTrack, CropPlan, FacecamDetection,
+                                    LoudnessTrack, MediaInfo, QCReport, Transcript)
 from clipstudio.highlights.candidates import generate_candidates
 from clipstudio.ingestion.sources import download_url, file_fingerprint, job_id_for_file, job_id_for_url, validate_local
 from clipstudio.media.ffmpeg import extract_audio_wav, pick_speech_track, probe
 from clipstudio.pipeline.project import ClipEdit, Edits, StateFile, key_of, run_stage
 from clipstudio.quality_control.checks import run_qc
-from clipstudio.reframing.layout import plan_layout
+from clipstudio.reframing.layout import plan_layout, resolve_facecam
 from clipstudio.rendering.render import render_clip
 from clipstudio.transcription.base import get_backend, resolve_device
 
@@ -35,7 +35,7 @@ log = get_logger("studio")
 
 # bump a stage's version when its logic changes so caches invalidate
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 1, "transcribe": 2, "loudness": 1, "candidates": 5,
-                  "plan": 1, "captions": 3, "render": 2, "qc": 2}
+                  "facecam": 1, "track": 1, "plan": 2, "captions": 3, "render": 3, "qc": 3}
 
 
 @dataclass
@@ -54,6 +54,7 @@ class Project:
             "speech": self.analysis / "speech.wav", "preview": self.analysis / "preview.mp4",
             "transcript": self.analysis / "transcript.json", "loudness": self.analysis / "loudness.json",
             "candidates": self.root / "candidates.json", "edits": self.root / "edits.json",
+            "facecam": self.analysis / "facecam.json",
         }[name]
 
     def clip_dir(self, cid: str) -> Path:
@@ -191,7 +192,11 @@ class Studio:
                     last[0] = f
                     log.info("    transcribed %d%%", int(f * 100))
 
-            backend.transcribe(p.p("speech"), media.duration, prog).save(p.p("transcript"))
+            chunk_dir = p.analysis / "transcribe_chunks" / k_tr
+            backend.transcribe(p.p("speech"), media.duration, prog, chunk_dir=chunk_dir).save(p.p("transcript"))
+            # the merged transcript is saved; the per-chunk resume files are no longer needed
+            import shutil
+            shutil.rmtree(p.analysis / "transcribe_chunks", ignore_errors=True)
 
         run_stage(p.state, "transcribe", k_tr, [p.p("transcript")], do_transcribe, resume=resume, force=force)
 
@@ -205,7 +210,91 @@ class Studio:
                   lambda: generate_candidates(Transcript.load(p.p("transcript")), LoudnessTrack.load(p.p("loudness")),
                                               cfg.highlights, media.duration).save(p.p("candidates")),
                   resume=resume, force=force)
+        self.detect_facecam(p, force=force)
         return self.candidates(p)
+
+    # ------------------------------------------------------------------ vision
+    def face_detector(self):
+        """Lazily created, shared face detector (or None when no backend is available)."""
+        if not hasattr(self, "_face_det"):
+            from clipstudio.vision.faces import get_face_detector
+            v = self.cfg.vision
+            self._face_det = get_face_detector(v.face_detector, self.models_dir, download=v.download_models) \
+                if v.enabled else None
+            log.info("face detector: %s", self._face_det.name if self._face_det else "none")
+        return self._face_det
+
+    def detect_facecam(self, p: Project, force: bool = False) -> FacecamDetection | None:
+        """Analysis stage: find the facecam overlay from frames sampled across the whole source.
+
+        Vision is optional: a failure here is recorded and logged, and clips fall back to static crops.
+        """
+        v = self.cfg.vision
+        if not (v.enabled and v.facecam_auto):
+            return None
+        resume = self.cfg.processing.resume_enabled and self.cfg.processing.cache_enabled
+        media = MediaInfo.load(p.p("media"))
+        k = key_of("facecam", STAGE_VERSIONS["facecam"], p.state.stage("metadata").key, v.face_detector,
+                   v.facecam_samples)
+
+        def do() -> None:
+            from clipstudio.vision.facecam import detect_facecam
+            from clipstudio.vision.frames import sample_at
+            n = v.facecam_samples
+            d = media.duration
+            times = [d * (0.03 + 0.94 * (i + 0.5) / n) for i in range(n)]
+            _, frames = sample_at(p.source_path(), times, media.width, media.height, width=960)
+            det = detect_facecam(frames, self.face_detector())
+            log.info("facecam: %s (confidence %.2f) %s", det.method, det.confidence,
+                     f"region {det.region.model_dump()}" if det.region else "")
+            det.save(p.p("facecam"))
+
+        try:
+            run_stage(p.state, "facecam", k, [p.p("facecam")], do, resume=resume, force=force)
+        except StageFailed as e:
+            log.warning("facecam detection failed, continuing without it: %s", e)
+            return None
+        return FacecamDetection.load(p.p("facecam"))
+
+    def facecam(self, p: Project) -> FacecamDetection | None:
+        f = p.p("facecam")
+        return FacecamDetection.load(f) if f.exists() and self.cfg.vision.enabled else None
+
+    def _track(self, p: Project, c: Candidate, cfg: Config, media: MediaInfo, state: StateFile,
+               resume: bool, force: bool) -> tuple[ActionTrack | None, str | None]:
+        """Per-clip stage: action path for the gameplay crop. Returns (track, cache key)."""
+        v = cfg.vision
+        if not (v.enabled and cfg.reframing.tracking) or cfg.reframing.mode == "fit_blur":
+            return None, None
+        fc = self.facecam(p)
+        probe_plan = plan_layout(media, cfg.reframing, cfg.video, cfg.captions, fc, None, v.facecam_min_confidence)
+        if probe_plan.mode == "fit_blur":
+            return None, None
+        crop_w = probe_plan.keyframes[0].gameplay.w / media.width
+        if crop_w > 0.98:
+            return None, None
+        region, _, _ = resolve_facecam(cfg.reframing, fc, v.facecam_min_confidence)
+        exclude = [region] if region is not None else []
+        f_tr = p.clip_dir(c.id) / "track.json"
+        k = key_of("track", STAGE_VERSIONS["track"], p.state.stage("metadata").key, c.start, c.end,
+                   cfg.section_hash("vision"), round(crop_w, 4), cfg.reframing.gameplay_center_x,
+                   [r.model_dump() for r in exclude])
+
+        def do() -> None:
+            from clipstudio.vision.frames import sample_range
+            from clipstudio.vision.tracking import track_action
+            times, frames = sample_range(p.source_path(), c.start, c.end, v.tracking_fps, media.width, media.height,
+                                         width=320)
+            tr = track_action(frames, times - c.start, v.tracking_fps, crop_w, cfg.reframing.gameplay_center_x,
+                              exclude, v.deadzone, v.max_speed, v.smoothing_s)
+            tr.save(f_tr)
+
+        try:
+            run_stage(state, "track", k, [f_tr], do, resume=resume, force=force)
+        except StageFailed as e:
+            log.warning("tracking failed for %s, using a static crop: %s", c.id, e)
+            return None, None
+        return ActionTrack.load(f_tr), k
 
     BROWSER_CODECS = {"h264", "vp8", "vp9", "av1"}
 
@@ -320,6 +409,7 @@ class Studio:
                 cfg.reframing.mode = e.layout  # type: ignore[assignment]
             if e.crop_center_x is not None:
                 cfg.reframing.gameplay_center_x = e.crop_center_x
+                cfg.reframing.tracking = False  # a hand-placed crop is not overridden by tracking
             if e.facecam_region is not None:
                 cfg.reframing.facecam_region = Rect(**e.facecam_region)
             if e.caption_preset:
@@ -356,10 +446,14 @@ class Studio:
         f_plan, f_caps, f_ass, f_srt = d / "cropplan.json", d / "captions.json", d / "captions.ass", d / "captions.srt"
         f_out, f_qc = d / f"{p.id}_{c.id}.mp4", d / "qc.json"
 
+        track, k_track = self._track(p, c, cfg, media, state, resume, force)
+        fc = self.facecam(p)
         margins = {k: getattr(cfg.captions, k) for k in ("safe_margin_x", "safe_margin_top", "safe_margin_bottom")}
-        k_plan = key_of("plan", STAGE_VERSIONS["plan"], media.model_dump(), cfg.section_hash("reframing", "video"), margins)
+        k_plan = key_of("plan", STAGE_VERSIONS["plan"], media.model_dump(), cfg.section_hash("reframing", "video"), margins,
+                        k_track, fc.model_dump() if fc else None, cfg.vision.facecam_min_confidence)
         r = run_stage(state, "plan", k_plan, [f_plan],
-                      lambda: plan_layout(media, cfg.reframing, cfg.video, cfg.captions).save(f_plan),
+                      lambda: plan_layout(media, cfg.reframing, cfg.video, cfg.captions, fc, track,
+                                          cfg.vision.facecam_min_confidence).save(f_plan),
                       resume=resume, force=force)
         cached += [r.name] if r.cached else []
         plan = CropPlan.load(f_plan)
@@ -398,7 +492,7 @@ class Studio:
         def do_qc() -> None:
             track = CaptionTrack.load(f_caps) if caps_on else None
             run_qc(c.id, f_out, c.end - c.start, plan, track, f_ass if caps_on else None, cfg.quality,
-                   cfg.captions, expect_audio=media.has_audio).save(f_qc)
+                   cfg.captions, expect_audio=media.has_audio, face_detector=self.face_detector()).save(f_qc)
 
         r = run_stage(state, "qc", k_q, [f_qc], do_qc, resume=resume, force=force)
         cached += [r.name] if r.cached else []
@@ -419,7 +513,13 @@ class Studio:
         c = self.candidates(p).get(cid)
         cfg = self._clip_config(p.edits().clips.get(c.id))
         media = MediaInfo.load(p.p("media"))
-        plan = plan_layout(media, cfg.reframing, cfg.video, cfg.captions)
+        d = p.clip_dir(c.id)
+        d.mkdir(parents=True, exist_ok=True)
+        state = StateFile(d / "state.json", {"clip_id": c.id})
+        resume = self.cfg.processing.resume_enabled and self.cfg.processing.cache_enabled
+        track, _ = self._track(p, c, cfg, media, state, resume, False)
+        plan = plan_layout(media, cfg.reframing, cfg.video, cfg.captions, self.facecam(p), track,
+                           cfg.vision.facecam_min_confidence)
         f_caps = p.clip_dir(c.id) / "captions.json"
         track = None
         if cfg.captions.enabled:

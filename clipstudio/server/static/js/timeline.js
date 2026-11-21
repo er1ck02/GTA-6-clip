@@ -1,5 +1,5 @@
 // Multitrack sequence for the selected clip: source thumbs + trim, captions (retime), face, audio, crop keyframes, effects.
-import { S, $, h, on, cand, P, api, fmtT, clamp, round, chunkText, activeChunk, layoutOf } from './core.js';
+import { S, $, h, on, cand, P, api, fmtT, clamp, round, chunkText, activeChunk, layoutOf, hasFacePanel } from './core.js';
 import { video, patchClip, saveCaptions } from './actions.js';
 import { selectChunk, onChunkSelect } from './inspector.js';
 
@@ -199,12 +199,16 @@ function remapWords(ch, o0, o1) {
 
 function renderFace(c, pv, s, e) {
   const tr = $('#trFace');
-  const fr = pv.edit?.facecam_region;
-  if (pv.plan.mode === 'facecam_split' && fr) {
+  const fr = pv.edit?.facecam_region, fc = pv.facecam;
+  const r = fr || (fc?.region ? fc.region : null);
+  if (hasFacePanel(pv.plan.mode) && r) {
+    const src = fr ? 'manual' : `auto ${Math.round(fc.confidence * 100)}%`;
     tr.replaceChildren(h('div', { class: 'face-bar', style: { left: pct(s), width: `calc(${pct(e)} - ${pct(s)})` } },
-      `FACE · manual region (static) x${fr.x.toFixed(2)} y${fr.y.toFixed(2)} ${fr.w.toFixed(2)}×${fr.h.toFixed(2)}`));
+      `FACE · ${src} x${r.x.toFixed(2)} y${r.y.toFixed(2)} ${r.w.toFixed(2)}×${r.h.toFixed(2)}`));
   } else {
-    const why = layoutOf() === 'facecam_split' ? 'no facecam region set · auto facecam detection: Phase 4' : 'auto facecam detection: Phase 4 · layout has no face panel';
+    const why = fc?.region
+      ? `facecam candidate ${Math.round(fc.confidence * 100)}% (${fc.method}) · below auto threshold or layout has no face panel`
+      : fc ? `no facecam detected (${fc.detector}) · layout ${pv.plan.mode}` : 'facecam detection has not run for this project';
     tr.replaceChildren(h('span', { class: 'tl-muted' }, why));
   }
 }
@@ -214,7 +218,7 @@ function renderKf(c, pv) {
   $('#trKf').replaceChildren(...plan.keyframes.map(k => h('div', {
     class: 'kf-dmd', style: { left: pct(c.start + k.t) },
     title: `crop keyframe t=${k.t}s · gameplay ${k.gameplay.x},${k.gameplay.y} ${k.gameplay.w}×${k.gameplay.h}`,
-  })), h('span', { class: 'tl-muted', style: { left: `calc(${pct(c.start)} + 12px)` } }, `${plan.keyframes.length} static keyframe · tracking keyframes: Phase 4`));
+  })), h('span', { class: 'tl-muted', style: { left: `calc(${pct(c.start)} + 12px)` } }, plan.keyframes.length > 1 ? `${plan.keyframes.length} tracking keyframes` : '1 static keyframe'));
 }
 
 // ------------------------------------------------------------------ waveform

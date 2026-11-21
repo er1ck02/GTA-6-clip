@@ -1,5 +1,5 @@
 // 9:16 output: live canvas preview through the real crop plan + captions, render/export, QC.
-import { S, $, h, on, cand, C, activeChunk, toast, clamp } from './core.js';
+import { S, $, h, on, cand, C, activeChunk, toast, clamp, kfAt } from './core.js';
 import { video, startRender } from './actions.js';
 
 let cv, ctx, tab = 'live', fitStage = () => {}, hasFrame = false;
@@ -67,7 +67,7 @@ function renderPanel() {
     $('#tabRendered').disabled = true;
     return;
   }
-  const modeLabel = { gameplay: 'GAMEPLAY CROP', fit_blur: 'FIT + BLUR FILL', facecam_split: 'FACECAM + GAMEPLAY' }[pv.plan.mode] || pv.plan.mode;
+  const modeLabel = { gameplay: 'GAMEPLAY CROP', fit_blur: 'FIT + BLUR FILL', facecam_split: 'FACECAM + GAMEPLAY', facecam_pip: 'GAMEPLAY + FACECAM PIP' }[pv.plan.mode] || pv.plan.mode;
   out.replaceChildren(`SHORT_${String(c.rank).padStart(2, '0')}`,
     h('small', {}, `${pv.plan.out_width}×${pv.plan.out_height} · ${modeLabel} · ${pv.captions ? 'CAPS ' + pv.captions.preset.toUpperCase() : 'NO CAPS'}`));
 
@@ -154,7 +154,7 @@ export function drawOutput() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#0f0e0d'; ctx.fillRect(0, 0, W, H);
   if (!pv || !c) { msg('Select a moment'); hasFrame = false; return; }
-  const plan = pv.plan, kf = plan.keyframes[0];
+  const plan = pv.plan, kf = kfAt(plan, v.currentTime - c.start);
   const s = W / plan.out_width;
   const ready = v.readyState >= 2;
   if (!ready) msg('Loading frame…');
@@ -178,6 +178,10 @@ export function drawOutput() {
       } else {
         const src = p.name === 'facecam' ? kf.facecam : kf.gameplay;
         if (!src) continue;
+        if (p.name === 'facecam' && plan.mode === 'facecam_pip') {
+          const b = Math.max(2, Math.round(plan.out_width / 180)) * s;
+          ctx.fillStyle = '#F2E8D5'; ctx.fillRect(d.x * s - b, d.y * s - b, d.w * s + 2 * b, d.h * s + 2 * b);
+        }
         ctx.drawImage(v, src.x * vk, src.y * vk, src.w * vk, src.h * vk, d.x * s, d.y * s, d.w * s, d.h * s);
       }
     }

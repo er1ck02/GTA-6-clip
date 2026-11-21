@@ -203,11 +203,13 @@ export function setLocalCropCenter(center) {
   const pv = S.preview;
   if (!pv) return null;
   const plan = pv.plan, kf = plan.keyframes[0];
-  const g = kf.gameplay;
+  const g = { ...kf.gameplay };
   const sw = plan.source_width;
   let x = Math.round(center * sw - g.w / 2);
   x = Math.max(0, Math.min(sw - g.w, x));
   g.x = x;
+  // a hand-placed crop is static (it switches tracking off for this clip once saved)
+  plan.keyframes = [{ ...kf, t: 0, gameplay: g }];
   S.dirty = true;
   return round((x + g.w / 2) / sw, 4);
 }

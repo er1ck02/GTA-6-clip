@@ -127,3 +127,17 @@ export function activeChunk(track, tRel) {
 
 // the layout the user asked for (the plan's mode can differ, e.g. facecam_split without a region falls back)
 export const layoutOf = () => S.preview?.edit?.layout || S.config?.config?.reframing?.mode || S.preview?.plan?.mode;
+
+// crop keyframe at clip-relative time t (linear interpolation, held at the ends), same rule as the renderer
+export function kfAt(plan, t) {
+  const k = plan.keyframes;
+  if (k.length === 1 || t <= k[0].t) return k[0];
+  if (t >= k[k.length - 1].t) return k[k.length - 1];
+  let i = 0;
+  while (i < k.length - 2 && t >= k[i + 1].t) i++;
+  const a = k[i], b = k[i + 1], f = (t - a.t) / Math.max(1e-3, b.t - a.t);
+  const L = (u, v) => 2 * Math.trunc((u + (v - u) * f) / 2);
+  return { t, gameplay: { ...a.gameplay, x: L(a.gameplay.x, b.gameplay.x), y: L(a.gameplay.y, b.gameplay.y) }, facecam: a.facecam };
+}
+export const clipT = () => (document.getElementById('video')?.currentTime || 0) - (cand()?.start || 0);
+export const hasFacePanel = mode => mode === 'facecam_split' || mode === 'facecam_pip';

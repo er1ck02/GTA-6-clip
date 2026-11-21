@@ -247,3 +247,55 @@ All candidates go through the same scoring and de-duplication.
 **Why.** Real gameplay recordings have long stretches without commentary. A
 speech-only builder produced zero candidates on a 60 s Overwatch clip whose
 best moment was a two-word reaction.
+
+
+## TD-16 · Facecam detection: face + persistent border, MediaPipe first
+
+**Decision.** Sample 24 frames spread over the whole source. Detect faces with
+MediaPipe Tasks BlazeFace (short range, run on the full frame and on 2x2/3x3
+tiles because a facecam face is small), falling back to OpenCV's Haar cascade.
+Cluster faces by position; a face in the same place in at least 30 % of
+samples is a facecam candidate. Then look outward from the face for the
+overlay's border, using edges that are present in the same place **with the
+same polarity** in most samples (game texture flips polarity at random; an
+overlay border does not). Confidence combines face hit rate and border
+strength; only ≥ 0.6 is auto-applied. Border-only panels (no face) score ≤ 0.4.
+Borderless faces need ≥ 80 % hit rate to reach the threshold.
+
+**Why.** The face is what separates a webcam from HUD panels (minimap, kill
+feed, sponsor box), which are also static bordered rectangles. On the user's
+Valorant clip a first-person gloved hand was detected as a face in 46 % of
+samples, with no border: the confidence rules keep it at 0.50, below the
+threshold. MediaPipe is Apache-2.0, CPU-fast and its model is 230 KB; YOLO
+(AGPL, weights blocked in the sandbox) and SAM 2 (heavy) are not needed for this.
+
+**Alternatives.** Template matching on common overlay frames (too many
+styles), training a detector (no data), user-only rectangles (kept as the
+override).
+
+## TD-17 · Gameplay tracking: motion window + offline smoothing
+
+**Decision.** Sample the clip at 4 fps (320 px wide), difference consecutive
+frames, sum changed pixels per column (facecam masked out) and take the
+crop-wide window with the most motion. The crop moves toward it in proportion
+to how concentrated the motion is; with frame-wide motion it holds the
+default centre. The path is median-filtered, Gaussian-smoothed in both time
+directions, passed through a deadzone and a two-way speed limit (0.3 source
+widths/s), then simplified (Ramer-Douglas-Peucker, ≤ 48 keyframes). The
+renderer animates the FFmpeg `crop` x/y with a piecewise-linear expression in
+`t`, snapped to even pixels; the UI interpolates with the same rule.
+
+**Why.** It is cheap (about 1 s per 20 s clip on 4 vCPU), needs no model, works
+for any game and never jitters: QC checks pan speed and direction reversals on
+every render. Object detectors (YOLO) would know *what* moved but are AGPL,
+need weights and still need the same smoothing; they can be added later as an
+alternative source of the raw path.
+
+## TD-18 · Facecam in split/PiP layouts: cover crop and border clearance
+
+**Decision.** The facecam panel uses a *cover* crop inside the detected box
+(inset 2 % to drop border pixels), centred on the face, so no gameplay leaks
+into the camera panel. In split and PiP layouts the gameplay crop is shifted
+off the facecam overlay (plus a 1 % margin for its border) when that costs at
+most `reframing.avoid_facecam_shift` (12 % of the width); otherwise it is left
+and the overlap is accepted.

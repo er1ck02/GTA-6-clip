@@ -58,6 +58,31 @@ def run(args: list[str], *, check: bool = True, capture: bool = True, timeout: f
     return cp
 
 
+def stream_raw(args: list[str], frame_bytes: int, batch: int = 64):
+    """Run ffmpeg writing raw frames to stdout and yield them in batches (bytes), without holding the whole video.
+
+    The child is killed if the consumer stops early or on Ctrl+C.
+    """
+    log.debug("exec %s", " ".join(_q(a) for a in args))
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        while True:
+            buf = proc.stdout.read(frame_bytes * batch)  # type: ignore[union-attr]
+            if not buf:
+                break
+            n = len(buf) // frame_bytes
+            if n:
+                yield buf[: n * frame_bytes]
+        proc.wait()
+        if proc.returncode != 0:
+            tail = proc.stderr.read().decode(errors="replace").strip().splitlines()[-10:]  # type: ignore[union-attr]
+            raise MediaError(f"ffmpeg exited with {proc.returncode}:\n" + "\n".join(tail))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
 def _q(a: str) -> str:
     return a if re.fullmatch(r"[\w./:=+,-]+", a) else repr(a)
 

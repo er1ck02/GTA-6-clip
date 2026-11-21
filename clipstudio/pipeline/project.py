@@ -47,7 +47,7 @@ class ClipEdit(BaseModel):
     status: Literal["pending", "accepted", "rejected"] | None = None
     start: float | None = Field(None, ge=0)
     end: float | None = Field(None, gt=0)
-    layout: Literal["gameplay", "fit_blur", "facecam_split"] | None = None
+    layout: Literal["auto", "gameplay", "fit_blur", "facecam_split", "facecam_pip"] | None = None
     crop_center_x: float | None = Field(None, ge=0, le=1)
     facecam_region: dict[str, float] | None = None
     caption_preset: str | None = None

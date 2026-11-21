@@ -1,0 +1,5 @@
+# Facecam auto-detection (MediaPipe BlazeFace, Apache-2.0) with an OpenCV Haar fallback.
+# The 230 KB BlazeFace model is downloaded once into models/vision/ on first use.
+# OpenCV is pinned below 5: OpenCV 5 wheels no longer bundle the Haar cascade files.
+mediapipe>=0.10.14
+opencv-python-headless>=4.8,<5

@@ -1,8 +1,8 @@
 """Automated quality control. A clip is only 'done' when this report passes.
 
 Every check inspects the real output (or the real caption render), not the
-intent. Checks that are not implemented yet report ``skip`` with a reason,
-never ``pass``.
+intent. A check that cannot run (e.g. no face detector installed) reports
+``skip`` with the reason, never ``pass``.
 """
 from __future__ import annotations
 
@@ -42,7 +42,8 @@ def _intersects(a: PixelRect, x0: int, y0: int, x1: int, y1: int) -> bool:
 
 
 def run_qc(clip_id: str, output: Path, expected_duration: float, plan: CropPlan, track: CaptionTrack | None,
-           ass_path: Path | None, qcfg: QualityCfg, ccfg: CaptionsCfg, expect_audio: bool) -> QCReport:
+           ass_path: Path | None, qcfg: QualityCfg, ccfg: CaptionsCfg, expect_audio: bool,
+           face_detector=None) -> QCReport:
     checks: list[QCCheck] = []
 
     # ------------------------------------------------------------ video
@@ -140,28 +141,69 @@ def run_qc(clip_id: str, output: Path, expected_duration: float, plan: CropPlan,
                 bad.append(f"{name}@{kf.t:.2f}s")
     checks.append(QCCheck(name="crop_in_bounds", group="tracking", status="fail" if bad else "pass",
                           detail="crop windows inside source frame" if not bad else "out of bounds: " + ", ".join(bad)))
-    jumps = _max_crop_jump(plan)
-    checks.append(QCCheck(name="crop_jumps", group="tracking", status="pass" if jumps <= 0.15 else "warn",
-                          detail=f"largest keyframe-to-keyframe crop move {jumps:.1%} of source width"
-                          + (" (static plan)" if len(plan.keyframes) == 1 else ""), value=round(jumps, 4)))
-    if plan.mode == "facecam_split":
-        checks.append(QCCheck(name="facecam", group="tracking", status="pass" if plan.source == "manual" else "warn",
-                              detail="facecam panel uses the configured facecam_region (manual; auto-detection is Phase 4)"))
+    speed, reversals = _crop_motion(plan)
+    moving = len(plan.keyframes) > 1
+    checks.append(QCCheck(name="crop_speed", group="tracking",
+                          status="pass" if speed <= qcfg.max_crop_speed else "warn",
+                          detail=(f"fastest crop pan {speed:.0%} of source width per second" if moving
+                                  else "static crop"), value=round(speed, 4)))
+    dur = max(1e-6, plan.keyframes[-1].t - plan.keyframes[0].t) if moving else 0
+    rate = reversals / dur if moving else 0.0
+    checks.append(QCCheck(name="crop_jitter", group="tracking", status="pass" if rate <= 0.5 else "warn",
+                          detail=f"{reversals} pan direction changes" + (f" in {dur:.1f}s" if moving else ""),
+                          value=round(rate, 3)))
+    face_panel = next((p for p in plan.panels if p.name == "facecam"), None)
+    if face_panel is None:
+        checks.append(QCCheck(name="facecam_visible", group="tracking", status="skip",
+                              detail=f"layout '{plan.mode}' has no facecam panel"))
+    elif face_detector is None:
+        checks.append(QCCheck(name="facecam_visible", group="tracking", status="skip",
+                              detail="no face detector installed (requirements/vision.txt); facecam panel not verified"))
     else:
-        checks.append(QCCheck(name="facecam", group="tracking", status="skip",
-                              detail=f"layout '{plan.mode}' has no facecam panel; facecam detection arrives in Phase 4"))
-    checks.append(QCCheck(name="subject_tracking", group="tracking", status="skip",
-                          detail="gameplay subject tracking not implemented yet (Phase 4); crop is static"))
+        checks.append(_facecam_check(output, info.duration, face_panel.dest, plan, face_detector))
+    checks.append(QCCheck(name="subject_tracking", group="tracking", status="pass",
+                          detail=(f"crop follows the action over {len(plan.keyframes)} keyframes" if moving
+                                  else "static crop (tracking off, or no dominant on-screen subject)")))
 
     passed = not any(c.status == "fail" for c in checks)
     return QCReport(clip_id=clip_id, output=str(output), passed=passed, checks=checks)
 
 
-def _max_crop_jump(plan: CropPlan) -> float:
-    m = 0.0
+def _crop_motion(plan: CropPlan) -> tuple[float, int]:
+    """(max pan speed as fraction of source width per second, number of pan direction reversals)."""
+    speed, rev, last = 0.0, 0, 0
     for a, b in zip(plan.keyframes, plan.keyframes[1:]):
-        m = max(m, abs((a.gameplay.x + a.gameplay.w / 2) - (b.gameplay.x + b.gameplay.w / 2)) / plan.source_width)
-    return m
+        dx = ((b.gameplay.x + b.gameplay.w / 2) - (a.gameplay.x + a.gameplay.w / 2)) / plan.source_width
+        dt = max(1e-3, b.t - a.t)
+        speed = max(speed, abs(dx) / dt)
+        sgn = (dx > 0.002) - (dx < -0.002)
+        if sgn and last and sgn != last:
+            rev += 1
+        last = sgn or last
+    return speed, rev
+
+
+def _facecam_check(output: Path, duration: float, dest: PixelRect, plan: CropPlan, detector) -> QCCheck:
+    """Decode a few frames of the facecam panel from the rendered file and look for a face."""
+    n = 6
+    scale = min(1.0, 640 / plan.out_width)
+    w, h = int(plan.out_width * scale) // 2 * 2, int(plan.out_height * scale) // 2 * 2
+    hits = 0
+    for i in range(n):
+        t = duration * (i + 0.5) / n
+        cp = run([ffmpeg_bin(), "-v", "error", "-ss", f"{t:.3f}", "-i", str(output), "-frames:v", "1",
+                  "-vf", f"scale={w}:{h}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], check=False)
+        if len(cp.stdout) < w * h * 3:
+            continue
+        fr = np.frombuffer(cp.stdout[: w * h * 3], np.uint8).reshape(h, w, 3)
+        x0, y0 = int(dest.x * scale), int(dest.y * scale)
+        panel = np.ascontiguousarray(fr[y0:y0 + int(dest.h * scale), x0:x0 + int(dest.w * scale)])
+        if panel.size and detector.detect(panel):
+            hits += 1
+    frac = hits / n
+    return QCCheck(name="facecam_visible", group="tracking", status="pass" if frac >= 0.5 else "warn",
+                   detail=f"face found in the facecam panel in {hits}/{n} sampled frames ({detector.name})",
+                   value=round(frac, 3))
 
 
 def _caption_checks(track: CaptionTrack, duration: float, plan: CropPlan, ass_path: Path | None,

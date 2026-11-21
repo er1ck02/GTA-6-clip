@@ -1,11 +1,13 @@
 // Inspector / live edit: layout, crop, trim, captions, score breakdown, audio settings, keyframes.
-import { S, $, h, on, cand, fmtT, round, clamp, pretty, chunkText, activeChunk, layoutOf } from './core.js';
+import { S, $, h, on, cand, fmtT, round, clamp, pretty, chunkText, activeChunk, layoutOf, kfAt, clipT, hasFacePanel } from './core.js';
 import { video, patchClip, saveCaptions, resetCaptions, setLocalCropCenter } from './actions.js';
 
 const LAYOUTS = [
+  ['auto', 'auto · split if a facecam is found'],
   ['gameplay', 'gameplay · 9:16 crop'],
   ['fit_blur', 'fit_blur · whole frame + blur'],
   ['facecam_split', 'facecam_split · face top / game below'],
+  ['facecam_pip', 'facecam_pip · game + face corner box'],
 ];
 
 export function initInspector() {
@@ -64,13 +66,19 @@ function render() {
   range.onchange = () => patchClip({ crop_center_x: round(clamp(range.value / 100, 0, 1), 4) });
   num.onchange = () => { const v = setLocalCropCenter(clamp(parseFloat(num.value) / 100 || 0, 0, 1)); patchClip({ crop_center_x: v }); };
   const fr = pv.edit?.facecam_region;
+  const fc = pv.facecam;
+  const faceLine = fr
+    ? `FACE · manual  x ${fr.x.toFixed(3)}  y ${fr.y.toFixed(3)}  w ${fr.w.toFixed(3)}  h ${fr.h.toFixed(3)}`
+    : fc?.region
+      ? `FACE · auto ${fc.method} ${Math.round(fc.confidence * 100)}% (${fc.detector})  x ${fc.region.x.toFixed(3)}  y ${fc.region.y.toFixed(3)}  w ${fc.region.w.toFixed(3)}  h ${fc.region.h.toFixed(3)}`
+      : `FACE · none detected${fc ? ` (${fc.detector}, ${fc.samples} samples)` : ''}: use FACE BOX to draw one`;
   const reframe = sec('REFRAME', `plan: ${plan.mode} · ${plan.source}`,
     row('LAYOUT', laySel),
     row('CROP X', range, num, h('span', { class: 'i-unit' }, '%')),
     cropDisabled ? h('div', { class: 'i-meta' }, 'fit_blur shows the whole 16:9 frame; crop X does not apply.') : null,
-    layout === 'facecam_split'
-      ? h('div', { class: 'i-meta' }, fr ? `FACE · manual  x ${fr.x.toFixed(3)}  y ${fr.y.toFixed(3)}  w ${fr.w.toFixed(3)}  h ${fr.h.toFixed(3)}` : 'No facecam region yet: use FACE BOX under the program monitor.')
-      : null,
+    h('div', { class: 'i-meta' }, faceLine),
+    ...(fc?.notes || []).map(n => h('div', { class: 'i-note' }, n)),
+    pv.track ? h('div', { class: 'i-note teal' }, `tracking: ${pv.track.notes.join(' · ')}`) : null,
     ...(plan.notes || []).map(n => h('div', { class: 'i-note' }, n)));
 
   // ---- captions
@@ -120,7 +128,9 @@ function render() {
         h('div', {}, `t = ${k.t.toFixed(2)}s`),
         h('div', {}, `gameplay ${k.gameplay.x},${k.gameplay.y} ${k.gameplay.w}×${k.gameplay.h}`),
         k.facecam ? h('div', { class: 'face' }, `facecam ${k.facecam.x},${k.facecam.y} ${k.facecam.w}×${k.facecam.h}`) : null)))),
-    h('div', { class: 'i-note teal' }, 'Static plan: one keyframe at t = 0. Tracking keyframes arrive with Phase 4.'));
+    h('div', { class: 'i-note teal' }, plan.keyframes.length > 1
+      ? 'Crop follows the action; the render interpolates linearly between keyframes. Dragging the crop pins it by hand.'
+      : 'Static plan: one keyframe (tracking off, crop placed by hand, or no dominant subject).'));
 
   body.replaceChildren(clipSec, reframe, captions, score, audio, kfs);
   renderChunks(); renderEditor();
@@ -129,7 +139,7 @@ function render() {
 
 export function syncCropInputs() {
   const pv = S.preview; if (!pv) return;
-  const kf = pv.plan.keyframes[0];
+  const kf = kfAt(pv.plan, clipT());
   const center = (kf.gameplay.x + kf.gameplay.w / 2) / pv.plan.source_width;
   const r = $('#cropRange'), n = $('#cropNum');
   if (r && document.activeElement !== r) r.value = (center * 100).toFixed(1);

@@ -1,14 +1,15 @@
 """9:16 layout planning. Produces a CropPlan (pure data) that the renderer executes.
 
-Phase 2 supports static plans for three layouts. Facecam *detection* and
-gameplay subject *tracking* (Phase 4) will emit time-varying keyframes into
-the same CropPlan structure, so rendering and QC do not change.
+Inputs: source size, the reframing config, an optional automatic facecam
+detection and an optional action track for the clip. Output: panels (where
+each piece goes in the 9:16 frame) and crop keyframes over clip-relative time.
+The renderer interpolates linearly between keyframes.
 """
 from __future__ import annotations
 
 from clipstudio.config import CaptionsCfg, ReframingCfg, VideoCfg
 from clipstudio.core.logging import get_logger
-from clipstudio.core.models import CropKeyframe, CropPlan, MediaInfo, Panel, PixelRect
+from clipstudio.core.models import ActionTrack, CropKeyframe, CropPlan, FacecamDetection, MediaInfo, NormRect, Panel, PixelRect
 
 log = get_logger("reframing")
 
@@ -44,26 +45,99 @@ def _crop_for_aspect(src_w: int, src_h: int, aspect: float, cx: float, cy: float
     return PixelRect(x=x, y=y, w=w, h=h)
 
 
-def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: CaptionsCfg) -> CropPlan:
+def _cover_crop(region: PixelRect, aspect: float, focus_x: float, focus_y: float) -> PixelRect:
+    """Largest crop of ``aspect`` that fits inside ``region``, centred on the focus point where possible."""
+    w, h = region.w, region.w / aspect
+    if h > region.h:
+        h, w = region.h, region.h * aspect
+    w, h = _even(w), _even(h)
+    w, h = min(w, region.w - region.w % 2), min(h, region.h - region.h % 2)
+    x = int(round(min(max(region.x, focus_x - w / 2), region.x + region.w - w)))
+    y = int(round(min(max(region.y, focus_y - h / 2), region.y + region.h - h)))
+    return PixelRect(x=x, y=y, w=w, h=h)
+
+
+def resolve_facecam(rcfg: ReframingCfg, facecam: FacecamDetection | None,
+                    min_conf: float) -> tuple[NormRect | None, NormRect | None, str]:
+    """(region, face, source) from the manual setting or a confident detection."""
+    if rcfg.facecam_region is not None:
+        r = rcfg.facecam_region
+        return NormRect(x=r.x, y=r.y, w=r.w, h=r.h), None, "manual"
+    if facecam is not None and facecam.region is not None and facecam.confidence >= min_conf:
+        return facecam.region, facecam.face, "auto"
+    return None, None, "none"
+
+
+def _avoid(g: PixelRect, fr: PixelRect | None, sw: int, max_shift: float) -> PixelRect:
+    """Shift a gameplay crop sideways off the facecam overlay if that is a small move."""
+    if fr is None or max_shift <= 0:
+        return g
+    # detected regions are the inside of the overlay's border; keep clear of the border too
+    pad = max(8, int(0.01 * sw))
+    fr = PixelRect(x=fr.x - pad, y=fr.y - pad, w=fr.w + 2 * pad, h=fr.h + 2 * pad)
+    if g.x >= fr.x + fr.w or fr.x >= g.x + g.w or g.y >= fr.y + fr.h or fr.y >= g.y + g.h:
+        return g
+    right = fr.x + fr.w - g.x            # shift right to clear an overlay on the left
+    left = g.x + g.w - fr.x              # shift left to clear an overlay on the right
+    for dx in sorted((right, -left), key=abs):
+        nx = g.x + dx
+        if abs(dx) <= max_shift * sw and 0 <= nx <= sw - g.w:
+            return PixelRect(x=nx, y=g.y, w=g.w, h=g.h)
+    return g
+
+
+def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: CaptionsCfg,
+                facecam: FacecamDetection | None = None, track: ActionTrack | None = None,
+                min_facecam_conf: float = 0.6) -> CropPlan:
     W, H = vcfg.width, vcfg.height
     sw, sh = media.width, media.height
     safe_top = int(H * ccfg.safe_margin_top)
     safe_bottom = H - int(H * ccfg.safe_margin_bottom)
     notes: list[str] = []
     mode = rcfg.mode
+    region, face, fsource = resolve_facecam(rcfg, facecam, min_facecam_conf)
 
-    if mode == "facecam_split" and rcfg.facecam_region is None:
-        notes.append("facecam_split requested but no facecam_region configured and automatic facecam "
-                     "detection is not implemented yet (Phase 4); fell back to gameplay crop")
+    if mode == "auto":
+        mode = "facecam_split" if region is not None else "gameplay"
+        notes.append(f"auto layout: {mode}" + (f" ({fsource} facecam)" if region is not None else
+                                               " (no confident facecam)"))
+    if mode in ("facecam_split", "facecam_pip") and region is None:
+        why = ("detected facecam confidence %.2f below %.2f" % (facecam.confidence, min_facecam_conf)
+               if facecam is not None and facecam.region is not None else "no facecam configured or detected")
+        notes.append(f"{mode} requested but {why}; fell back to gameplay crop")
         log.warning(notes[-1])
         mode = "gameplay"
 
+    fr_px = cam_px = None
+    if region is not None:
+        fr_px = PixelRect(x=int(region.x * sw), y=int(region.y * sh), w=int(region.w * sw), h=int(region.h * sh))
+        # the camera picture itself: a small inset drops any leftover border pixels
+        ix, iy = max(2, int(0.02 * fr_px.w)), max(2, int(0.02 * fr_px.h))
+        cam_px = PixelRect(x=fr_px.x + ix, y=fr_px.y + iy, w=fr_px.w - 2 * ix, h=fr_px.h - 2 * iy)
+
+    path = [(0.0, rcfg.gameplay_center_x)]
+    if track is not None and track.smoothed and rcfg.tracking and mode != "fit_blur":
+        path = list(track.smoothed)
+        notes.append(f"gameplay crop follows the action: {len(path)} keyframes ({track.method})")
+
+    def gameplay_keys(aspect: float, avoid: bool) -> list[PixelRect]:
+        rects = [_crop_for_aspect(sw, sh, aspect, cx * sw, sh / 2) for _, cx in path]
+        if avoid:
+            rects = [_avoid(r, fr_px, sw, rcfg.avoid_facecam_shift) for r in rects]
+        return rects
+
+    def dedupe(keys: list[CropKeyframe]) -> list[CropKeyframe]:
+        """Drop keyframes in the middle of a run with the same crop (the renderer holds anyway)."""
+        out = [k for i, k in enumerate(keys)
+               if i in (0, len(keys) - 1) or not (keys[i - 1].gameplay == k.gameplay == keys[i + 1].gameplay)]
+        return out
+
     if mode == "gameplay":
-        g = _crop_for_aspect(sw, sh, W / H, rcfg.gameplay_center_x * sw, sh / 2)
+        rects = gameplay_keys(W / H, avoid=False)
         return CropPlan(
             mode=mode, source_width=sw, source_height=sh, out_width=W, out_height=H,
             panels=[Panel(name="gameplay", dest=PixelRect(x=0, y=0, w=W, h=H))],
-            keyframes=[CropKeyframe(t=0.0, gameplay=g)],
+            keyframes=dedupe([CropKeyframe(t=t, gameplay=g) for (t, _), g in zip(path, rects)]),
             caption_band=(safe_top, safe_bottom), notes=notes,
         )
 
@@ -80,21 +154,40 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
             caption_band=band, notes=notes,
         )
 
-    # facecam_split
-    fr = rcfg.facecam_region
-    assert fr is not None
-    ph = _even(H * rcfg.facecam_panel_ratio)
-    face_src = _crop_for_aspect(
-        sw, sh, W / ph, (fr.x + fr.w / 2) * sw, (fr.y + fr.h / 2) * sh,
-        min_w=int(fr.w * sw), min_h=int(fr.h * sh),
-    )
-    g = _crop_for_aspect(sw, sh, W / (H - ph), rcfg.gameplay_center_x * sw, sh / 2)
-    face_dest = PixelRect(x=0, y=0, w=W, h=ph)
+    assert fr_px is not None and cam_px is not None and region is not None
+    fx = (face.x + face.w / 2) * sw if face else fr_px.x + fr_px.w / 2
+    fy = (face.y + face.h / 2) * sh if face else fr_px.y + fr_px.h / 2
+    src_source = "manual" if fsource == "manual" else "auto"
+
+    if mode == "facecam_split":
+        ph = _even(H * rcfg.facecam_panel_ratio)
+        face_src = _cover_crop(cam_px, W / ph, fx, fy)
+        rects = gameplay_keys(W / (H - ph), avoid=True)
+        face_dest = PixelRect(x=0, y=0, w=W, h=ph)
+        return CropPlan(
+            mode=mode, source_width=sw, source_height=sh, out_width=W, out_height=H,
+            panels=[Panel(name="facecam", dest=face_dest), Panel(name="gameplay", dest=PixelRect(x=0, y=ph, w=W, h=H - ph))],
+            keyframes=dedupe([CropKeyframe(t=t, gameplay=g, facecam=face_src) for (t, _), g in zip(path, rects)]),
+            protected_regions=[face_dest],
+            caption_band=(max(safe_top, ph + int(0.02 * H)), safe_bottom),
+            source=src_source, notes=notes,
+        )
+
+    # facecam_pip: full-screen gameplay with the facecam boxed in a top corner
+    pw = _even(W * rcfg.pip_width_ratio)
+    cam_aspect = max(0.5, min(2.4, fr_px.w / max(1, fr_px.h)))
+    pph = _even(pw / cam_aspect)
+    margin = _even(0.035 * W)
+    px = margin if rcfg.pip_corner == "top_left" else W - pw - margin
+    py = _even(max(0.04 * H, safe_top * 0.5))
+    pip = PixelRect(x=px, y=py, w=pw, h=pph)
+    face_src = _cover_crop(cam_px, pw / pph, fx, fy)
+    rects = gameplay_keys(W / H, avoid=True)
     return CropPlan(
         mode=mode, source_width=sw, source_height=sh, out_width=W, out_height=H,
-        panels=[Panel(name="facecam", dest=face_dest), Panel(name="gameplay", dest=PixelRect(x=0, y=ph, w=W, h=H - ph))],
-        keyframes=[CropKeyframe(t=0.0, gameplay=g, facecam=face_src)],
-        protected_regions=[face_dest],
-        caption_band=(max(safe_top, ph + int(0.02 * H)), safe_bottom),
-        source="manual", notes=notes,
+        panels=[Panel(name="gameplay", dest=PixelRect(x=0, y=0, w=W, h=H)), Panel(name="facecam", dest=pip)],
+        keyframes=dedupe([CropKeyframe(t=t, gameplay=g, facecam=face_src) for (t, _), g in zip(path, rects)]),
+        protected_regions=[pip],
+        caption_band=(max(safe_top, py + pph + int(0.02 * H)), safe_bottom),
+        source=src_source, notes=notes,
     )

@@ -22,7 +22,7 @@ def _common(p: argparse.ArgumentParser) -> None:
 
 
 def _clip_opts(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--layout", choices=["gameplay", "fit_blur", "facecam_split"])
+    p.add_argument("--layout", choices=["auto", "gameplay", "fit_blur", "facecam_split", "facecam_pip"])
     p.add_argument("--caption-preset")
     p.add_argument("--facecam", metavar="X,Y,W,H", help="facecam region in normalised coords, e.g. 0.02,0.05,0.25,0.3")
 

@@ -45,3 +45,14 @@ def sample_short(tmp_path_factory) -> Path:
     out = tmp_path_factory.mktemp("media") / "sample_short.mp4"
     subprocess.run([sys.executable, str(ROOT / "scripts" / "make_sample_video.py"), str(out), "--short"], check=True)
     return out
+
+
+@pytest.fixture(scope="session")
+def sample_face(tmp_path_factory) -> Path:
+    """Short synthetic stream whose facecam panel shows a real (public-domain) face."""
+    if not (shutil.which("espeak-ng") or shutil.which("espeak")):
+        pytest.skip("espeak-ng not installed; cannot synthesise the sample video")
+    out = tmp_path_factory.mktemp("media") / "sample_face.mp4"
+    subprocess.run([sys.executable, str(ROOT / "scripts" / "make_sample_video.py"), str(out), "--short",
+                    "--face", str(ROOT / "tests" / "fixtures" / "face_nasa_public_domain.jpg")], check=True)
+    return out

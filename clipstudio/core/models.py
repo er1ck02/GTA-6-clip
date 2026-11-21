@@ -169,6 +169,73 @@ class CropPlan(_M):
     notes: list[str] = Field(default_factory=list)
 
 
+# --------------------------------------------------------------------------- vision
+class NormRect(_M):
+    """Rectangle in normalised source coordinates (0..1)."""
+    x: float
+    y: float
+    w: float
+    h: float
+
+
+class FacecamDetection(_M):
+    region: NormRect | None = None       # the facecam overlay box
+    face: NormRect | None = None         # median face box inside it
+    confidence: float = 0.0
+    method: Literal["face+border", "face", "border_only", "fullframe_face", "none", "unavailable"] = "none"
+    detector: str = "none"
+    samples: int = 0
+    face_hit_rate: float = 0.0
+    border_score: float = 0.0
+    notes: list[str] = Field(default_factory=list)
+
+
+class TrackPoint(_M):
+    t: float          # clip-relative seconds
+    cx: float         # normalised horizontal centre of the action (raw, before smoothing)
+    confidence: float
+
+
+class ActionTrack(_M):
+    """Where the action is over time inside one clip, and the smoothed crop centre path."""
+    method: str
+    sample_fps: float
+    raw: list[TrackPoint] = Field(default_factory=list)
+    smoothed: list[tuple[float, float]] = Field(default_factory=list)  # (t, cx) keyframes after smoothing
+    notes: list[str] = Field(default_factory=list)
+
+
+class VisualEvent(_M):
+    kind: Literal["flash", "desaturation", "hud_text"]
+    start: float
+    end: float
+    strength: float
+    label: str = ""
+
+
+class VisualTrack(_M):
+    sample_fps: float
+    motion: list[float] = Field(default_factory=list)
+    motion_median: float = 0.0
+    brightness: list[float] = Field(default_factory=list)
+    saturation: list[float] = Field(default_factory=list)
+    scene_cuts: list[float] = Field(default_factory=list)
+    events: list[VisualEvent] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class ChatMessage(_M):
+    t: float
+    user: str = ""
+    text: str
+
+
+class ChatTrack(_M):
+    source: str
+    format: str
+    messages: list[ChatMessage] = Field(default_factory=list)
+
+
 # --------------------------------------------------------------------------- captions
 class CaptionWord(_M):
     text: str

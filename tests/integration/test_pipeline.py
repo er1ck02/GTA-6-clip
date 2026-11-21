@@ -5,6 +5,7 @@ import pytest
 
 from clipstudio.config import load_config
 from clipstudio.core.errors import Cancelled
+from clipstudio.core.models import CropPlan
 from clipstudio.media.ffmpeg import probe
 from clipstudio.pipeline import studio as studio_mod
 from clipstudio.pipeline.studio import Studio
@@ -75,6 +76,28 @@ def test_layouts_render_and_pass_qc(tmp_path, sample_short, layout):
     assert res.qc.passed, [x for x in res.qc.checks if x.status == "fail"]
     face = next(x for x in res.qc.checks if x.name == "caption_avoids_face")
     assert face.status == "pass"
+
+
+@needs_whisper
+def test_auto_facecam_split_and_tracking(tmp_path, sample_face):
+    pytest.importorskip("mediapipe")
+    st = Studio(_cfg(tmp_path, "paths.models_dir=models"))
+    p = st.open_or_create(input_path=sample_face)
+    cs = st.analyze(p)
+    fc = st.facecam(p)
+    if fc is None or fc.detector == "none":
+        pytest.skip("no face detector backend available")
+    assert fc.method == "face+border" and fc.confidence >= 0.9
+    # the panel is drawn at x=40, y=40, 480x300 in a 1920x1080 frame
+    assert abs(fc.region.x - 40 / 1920) < 0.01 and abs(fc.region.w - 480 / 1920) < 0.02
+    [res] = st.render(p, [cs.candidates[0].id])
+    assert res.qc.passed, [x for x in res.qc.checks if x.status == "fail"]
+    plan = CropPlan.load(res.output.parent / "cropplan.json")
+    assert plan.mode == "facecam_split" and plan.source == "auto"
+    assert len(plan.keyframes) > 1  # the moving 'vehicle' is followed
+    checks = {c.name: c for c in res.qc.checks}
+    assert checks["facecam_visible"].status == "pass"
+    assert checks["crop_speed"].status == "pass" and checks["crop_jitter"].status == "pass"
 
 
 def test_qc_flags_broken_output(tmp_path):

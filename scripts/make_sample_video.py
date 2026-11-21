@@ -4,7 +4,10 @@ Gameplay: FFmpeg test pattern with a moving 'vehicle' box. Facecam: a framed
 panel in the top-left with a moving 'head'. Audio: espeak-ng commentary with
 calm stretches and loud reaction moments over a low game-ambience bed.
 
-    python scripts/make_sample_video.py out.mp4 [--short]
+    python scripts/make_sample_video.py out.mp4 [--short] [--face tests/fixtures/face_nasa_public_domain.jpg]
+
+With --face, the facecam panel shows that (public-domain) photo, gently moving,
+so face detection and facecam auto-detection can be tested end to end.
 
 Requires ffmpeg and espeak-ng (or espeak) on PATH.
 """
@@ -52,6 +55,7 @@ def main() -> int:
     ap.add_argument("out", type=Path)
     ap.add_argument("--short", action="store_true", help="30 s version for fast tests")
     ap.add_argument("--fps", type=int, default=30)
+    ap.add_argument("--face", type=Path, help="image shown inside the facecam panel")
     a = ap.parse_args()
     tts = shutil.which("espeak-ng") or shutil.which("espeak")
     if not tts:
@@ -90,11 +94,20 @@ def main() -> int:
             f"box=1:boxcolor=black@0.5:boxborderw=8,"
             f"drawtext=text='%{{pts\\:hms}}':x=w-tw-40:y=40:fontsize=36:fontcolor=white:box=1:boxcolor=black@0.5[v]"
         )
+        extra = []
+        if a.face:
+            # photo (cover-scaled into the 480x300 panel, drifting slightly) instead of the drawn 'head'
+            vf = vf.replace(
+                f"[2:v]drawbox=x=0:y=0:w=iw:h=ih:color=0xFF5A6E:t=8,"
+                f"drawbox=x='200+40*sin(t*2)':y='90+20*sin(t*3)':w=110:h=140:color=0xE8C39E:t=fill[cam];",
+                f"[4:v]scale=520:-2,crop=480:300:x='20+18*sin(t*0.9)':y='(ih-300)/3+10*sin(t*1.4)',"
+                f"drawbox=x=0:y=0:w=iw:h=ih:color=0xFF5A6E:t=8[cam];")
+            extra = ["-loop", "1", "-framerate", str(a.fps), "-t", str(total), "-i", str(a.face)]
         run(["ffmpeg", "-y", "-v", "error",
              "-f", "lavfi", "-i", f"testsrc2=size={W}x{H}:rate={a.fps}:duration={total}",
              "-f", "lavfi", "-i", f"color=c=0x2AB7CA:size=220x120:rate={a.fps}:duration={total}",
              "-f", "lavfi", "-i", f"color=c=0x30343F:size=480x300:rate={a.fps}:duration={total}",
-             "-i", str(audio), "-filter_complex", vf, "-map", "[v]", "-map", "3:a",
+             "-i", str(audio), *extra, "-filter_complex", vf, "-map", "[v]", "-map", "3:a",
              "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
              "-c:a", "aac", "-b:a", "160k", "-shortest", "-metadata", "title=Clip Studio synthetic sample",
              str(a.out)])
