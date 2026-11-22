@@ -218,6 +218,18 @@ def test_probe_reads_twitch_titles_from_the_description():
     assert L.parse_probe("not_live|||NA|x").live is False
 
 
+def test_youtube_live_search_feeds_stand_ins():
+    r = L.parse_search_line("is_live|4321|@BigGTA|GTA 6 heists LIVE | day 3")
+    assert r.live and r.url == "https://www.youtube.com/@BigGTA/live" and r.viewers == 4321
+    assert L.channel_of(r.url) == "biggta" and r.title == "GTA 6 heists LIVE | day 3"
+    assert L.parse_search_line("was_live|10|@x|GTA 6") is None and L.parse_search_line("is_live|10||GTA 6") is None
+    yt = [L.LiveCheck(True, "GTA 6 story", "https://www.youtube.com/@yt/live", viewers=900),
+          L.LiveCheck(True, "Minecraft", "https://www.youtube.com/@mc/live", viewers=99999)]
+    check = lambda u: L.LiveCheck(True, "GTA 6 rp", u, viewers=500) if "tw1" in u else L.LiveCheck(False, url=u)  # noqa: E731
+    got = L.discover_live(["tw1", "tw2"], check, ["gta 6"], search=lambda: yt)
+    assert [L.channel_of(g.url) for g in got] == ["yt", "tw1"]  # most viewers first, non-GTA dropped
+
+
 def test_sleep_and_non_gta_streams_count_as_offline(cfg, tmp_path):
     words, games = cfg.production.idle_keywords, cfg.production.substitute_keywords
     assert L.idle_reason(L.LiveCheck(True, "SLEEP STREAM zzz"), words, games) == "sleep stream"
