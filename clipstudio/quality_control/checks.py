@@ -200,8 +200,44 @@ def run_qc(clip_id: str, output: Path, expected_duration: float, plan: CropPlan,
                           detail=(f"crop follows the action over {len(plan.keyframes)} keyframes" if moving
                                   else "static crop (tracking off, or no dominant on-screen subject)")))
 
+    if qcfg.max_skin_frames > 0:
+        checks.append(_content_check(output, info.duration, plan, qcfg))
+
     passed = not any(c.status == "fail" for c in checks)
     return QCReport(clip_id=clip_id, output=str(output), passed=passed, checks=checks)
+
+
+def skin_share(rgb: np.ndarray) -> float:
+    """Share of an RGB picture (h, w, 3) that is skin-coloured (a classic RGB rule; crude by design)."""
+    f = rgb.astype(np.int16)
+    r, g, b = f[..., 0], f[..., 1], f[..., 2]
+    skin = ((r > 95) & (g > 40) & (b > 20) & (r > g) & (g > b) & (r - b > 20) & (r - g > 12) & (r - g < 90)
+            & (f.max(-1) - f.min(-1) > 18))
+    return float(skin.mean())
+
+
+def _content_check(output: Path, duration: float, plan: CropPlan, qcfg: QualityCfg) -> QCCheck:
+    """Fail (= held for a person) when much of the gameplay picture is skin for a good part of the clip."""
+    g = next((p.dest for p in plan.panels if p.name == "gameplay"), None)
+    if g is None:
+        return QCCheck(name="content_safety", group="content", status="skip", detail="no gameplay panel")
+    w, h = max(2, g.w // 8 * 2), max(2, g.h // 8 * 2)
+    n = 12
+    shares = []
+    for i in range(n):
+        t = duration * (i + 0.5) / n
+        cp = run([ffmpeg_bin(), "-v", "error", "-ss", f"{t:.3f}", "-i", str(output), "-frames:v", "1",
+                  "-vf", f"crop={g.w}:{g.h}:{g.x}:{g.y},scale={w}:{h}:flags=area", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                 check=False)
+        if len(cp.stdout) >= w * h * 3:
+            shares.append(skin_share(np.frombuffer(cp.stdout[: w * h * 3], np.uint8).reshape(h, w, 3)))
+    if not shares:
+        return QCCheck(name="content_safety", group="content", status="skip", detail="no frames could be read")
+    frac = float(np.mean([s >= qcfg.skin_frame_share for s in shares]))
+    bad = frac > qcfg.max_skin_frames
+    return QCCheck(name="content_safety", group="content", status="fail" if bad else "pass", value=round(frac, 3),
+                   detail=(f"{frac:.0%} of sampled frames are mostly skin-coloured (peak {max(shares):.0%})"
+                           + (": possible nudity, a person must look before this is posted" if bad else "")))
 
 
 def _crop_motion(plan: CropPlan) -> tuple[float, int]:

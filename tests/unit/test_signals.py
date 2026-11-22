@@ -245,3 +245,47 @@ def test_game_subtitle_line_is_detected_and_its_speech_is_not_the_streamers():
     loud = LoudnessTrack(window=0.5, rms_db=[-40.0] * 60, median_db=-40.0, p90_db=-40.0)
     assert "speech" in evidence_at(11.0, sents, loud, Signals())
     assert "speech" not in evidence_at(11.0, sents, loud, Signals(game_subs=flags, game_subs_fps=4.0))
+
+
+def test_talk_is_not_a_reaction_and_chat_is_the_judge():
+    from clipstudio.highlights.candidates import held_words, is_spoken_reaction
+    assert not is_spoken_reaction("too many people have my phone number it's insane")      # just how streamers talk
+    assert not is_spoken_reaction("where did he go what the hell do you mean")             # a question
+    assert is_spoken_reaction("oh my god no way") and is_spoken_reaction("No way! He actually did it")
+    assert is_spoken_reaction("hahaha lmao that is so bad")
+    assert held_words("did not realize she had her breasts out", ["breasts", "strip club"]) == ["breasts"]
+    assert held_words("the abreast formation", ["breasts"]) == []
+
+    cfg = load_config(overrides=["highlights.minimum_duration=10", "highlights.maximum_duration=40",
+                                 "highlights.target_duration=20", "highlights.minimum_score=0"]).highlights
+    tr = make_transcript([(31, "oh my god no way bro what was that")])
+    loud = _loud_with([14, 30])
+    # a chat that is busy but did not react: not queued, even with an audio peak and a spoken reaction
+    rate = np.full(60, 1.0, np.float32)
+    silent = Signals(chat_rate=rate, chat_hype=np.zeros(60, np.float32), chat_react=np.zeros(60, np.float32))
+    best = generate_candidates(tr, loud, cfg, 60, silent).candidates[0]
+    assert not best.passes_threshold and "chat did not react" in best.reason
+    # the same moment with chat laughing: kept
+    react = np.zeros(60, np.float32)
+    react[32:40] = 1
+    laughing = Signals(chat_rate=rate, chat_hype=react, chat_react=react)
+    assert generate_candidates(tr, loud, cfg, 60, laughing).candidates[0].passes_threshold
+    # words that point to nudity: held for a person, never queued
+    nsfw = make_transcript([(31, "oh my god no way I did not realize she was naked")])
+    held = generate_candidates(nsfw, loud, cfg, 60, laughing).candidates[0]
+    assert not held.passes_threshold and held.features["content_hold"] == 1.0 and "a person must look" in held.reason
+    # a clip that is dark nearly all the way through: not queued
+    dark = VisualTrack(sample_fps=4, motion=[1.0] * 240, motion_median=1.0, brightness=[12.0] * 240)
+    d = generate_candidates(tr, loud, cfg, 60, Signals(visual=dark)).candidates[0]
+    assert not d.passes_threshold and "too dark" in d.reason
+
+
+def test_skin_share_flags_a_mostly_skin_picture():
+    from clipstudio.quality_control.checks import skin_share
+    skin = np.zeros((40, 40, 3), np.uint8)
+    skin[:] = (205, 150, 120)
+    grass = np.zeros((40, 40, 3), np.uint8)
+    grass[:] = (60, 140, 50)
+    assert skin_share(skin) > 0.95 and skin_share(grass) == 0.0
+    half = np.concatenate([skin[:, :20], grass[:, :20]], axis=1)
+    assert abs(skin_share(half) - 0.5) < 0.01

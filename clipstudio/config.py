@@ -118,6 +118,17 @@ class HighlightsCfg(_Strict):
     # The signs must happen together (within a few seconds of one moment), and one of them must be a reaction:
     # the streamer reacting out loud, or chat laughing/shouting. A loud cutscene in a busy chat is not a moment.
     require_reaction: bool = True
+    # When the source has a live chat that is actually talking, chat is the judge: its reaction must be one of
+    # the signs. The streamer saying "it's insane" in a conversation, with chat not reacting, is not a moment.
+    chat_must_react: bool = True
+    # a clip that is dark for most of its length (a night scene, a dark room) is unreadable on a phone
+    max_dark_share: float = Field(0.6, ge=0, le=1)
+    # Never queue these for posting without a person looking: clips whose words point to nudity or sexual
+    # content (the game has such scenes, and platforms demonetise them). Matched as whole words.
+    hold_words: list[str] = Field(default_factory=lambda: [
+        "breasts", "boobs", "boob", "tits", "titties", "naked", "nude", "nudity", "topless", "nipple", "nipples",
+        "stripper", "strippers", "strip club", "lap dance", "sex", "sexual", "porn", "blowjob", "handjob",
+        "penis", "vagina", "genitals", "orgasm", "horny", "onlyfans"])
     # Lead-in: a clip starts at least this long before the moment, and further back over the talk that leads
     # straight into it (sentences with no real pause between them), up to lead_in_max seconds before it.
     lead_in_seconds: float = Field(14.0, ge=2, le=40)
@@ -526,6 +537,11 @@ class QualityCfg(_Strict):
     max_silence_seconds: float = Field(6.0, gt=0)
     av_sync_tolerance: float = Field(0.1, gt=0)
     max_crop_speed: float = Field(0.5, gt=0)  # fraction of source width per second
+    # content check on the rendered gameplay picture: a clip where this share of sampled frames is mostly
+    # skin-coloured fails QC ("a person must look"), so it is never queued for posting on its own. Crude on
+    # purpose: it also stops some harmless close-ups, which only costs a look. 0 = off.
+    max_skin_frames: float = Field(0.3, ge=0, le=1)
+    skin_frame_share: float = Field(0.38, gt=0, le=1)   # skin-coloured share of the gameplay picture that counts
 
 
 class ProductionCfg(_Strict):

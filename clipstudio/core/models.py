@@ -294,7 +294,7 @@ class CaptionTrack(_M):
 # --------------------------------------------------------------------------- QC
 class QCCheck(_M):
     name: str
-    group: Literal["video", "audio", "captions", "tracking"]
+    group: Literal["video", "audio", "captions", "tracking", "content"]
     status: Literal["pass", "warn", "fail", "skip"]
     detail: str
     value: float | str | None = None

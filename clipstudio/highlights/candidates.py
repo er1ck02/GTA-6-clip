@@ -30,6 +30,9 @@ REACTION_LEXICON: dict[str, float] = {
     "did you see": 1.5, "look at": 0.8, "unbelievable": 1.5, "clutch": 1.2, "run": 0.6, "go go": 1.2,
     "absolutely": 0.6, "help": 0.8, "wtf": 1.5, "omg": 1.5, "dead": 0.8, "yes": 0.5,
 }
+# reactions nobody says in ordinary talk; "insane", "crazy", "what" or "bro" alone are just how streamers speak
+STRONG_REACTIONS = ("oh my god", "oh my gosh", "no way", "what the", "are you kidding", "let's go", "lets go",
+                    "holy", "nooo", "no no no", "oh no", "did you see", "unbelievable", "wtf", "omg")
 LAUGH_WORDS = {"haha", "hahaha", "lol", "lmao", "laughing", "hehe", "ahaha"}
 ACTION_WORDS = {"exploded", "explosion", "explode", "crash", "crashed", "shoot", "shot", "police", "cops",
                 "chase", "wanted", "killed", "kill", "died", "fire", "car", "heist", "bomb", "jump"}
@@ -140,6 +143,21 @@ def reaction_score(text: str) -> float:
     s += sum(1.5 for tok in t.split() if tok in LAUGH_WORDS)
     s += 0.5 * text.count("!") + 0.15 * text.count("?")
     return s
+
+
+def is_spoken_reaction(text: str) -> bool:
+    """Is this the streamer reacting out loud (not just talking)? Needs a strong reaction phrase or laughter,
+    and enough of it: one "what the" in a question is conversation."""
+    t = _norm(text)
+    strong = sum(t.count(f" {p} ") for p in STRONG_REACTIONS) + sum(1 for tok in t.split() if tok in LAUGH_WORDS)
+    return strong >= 1 and reaction_score(text) >= 2.0 and (strong >= 2 or text.count("!") >= 1
+                                                              or reaction_score(text) >= 3.0)
+
+
+def held_words(text: str, words: list[str]) -> list[str]:
+    """Which of the hold words (nudity / sexual content) appear in ``text`` as whole words."""
+    t = _norm(text)
+    return [w for w in words if f" {w.lower()} " in t]
 
 
 def _sat(x: float, k: float) -> float:
@@ -277,8 +295,11 @@ def evidence_at(t: float, sents: list[Sentence], loud: LoudnessTrack, sig: "Sign
         if float(db[i0:i1].max()) - base >= EVIDENCE_AUDIO_DB:
             ev.append("audio")
     # only the streamer's own words count as a reaction: a game character shouting is part of the game
-    if reaction_score(sig.streamer_words(sents, t - 2, t + 8)) >= EVIDENCE_SPEECH:
+    if is_spoken_reaction(sig.streamer_words(sents, t - 2, t + 8)):
         ev.append("speech")
+    # the loudest moments of the source, not just louder than the second before (any sentence after a pause is)
+    if "audio" in ev and float(db[i0:i1].max()) < loud.p90_db:
+        ev.remove("audio")
     if sig.has_chat:
         a, b = max(0, int(t)), min(len(sig.chat_rate), int(t + CHAT_WINDOW) + 1)
         if b > a:
@@ -543,6 +564,20 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
         f["payoff_evidence"] = float(len(evidence))
         reacted = any(e in REACTIONS for e in evidence)
         weak = cfg.min_evidence > 0 and (len(evidence) < cfg.min_evidence or (cfg.require_reaction and not reacted))
+        why_not = ""
+        # an active chat that did not react: nobody watching thought it was a moment
+        chat_live = sig.has_chat and sig.chat_react is not None and float(sig.chat_rate.sum()) >= 25
+        if cfg.min_evidence > 0 and cfg.chat_must_react and chat_live and "chat" not in evidence:
+            weak, why_not = True, "chat did not react"
+        if sig.visual is not None and sig.visual.brightness:
+            br = np.asarray(sig.visual.brightness[int(start * sig.visual.sample_fps): int(end * sig.visual.sample_fps) + 1])
+            f["dark_share"] = round(float((br < 45).mean()), 3) if br.size else 0.0
+            if cfg.min_evidence > 0 and f["dark_share"] > cfg.max_dark_share:
+                weak, why_not = True, f"{f['dark_share']:.0%} of it is too dark to read"
+        held = held_words(" ".join(x.text for s in sents for x in s.words if start - 3 <= x.start <= end + 3), cfg.hold_words)
+        if held:
+            f["content_hold"] = 1.0
+            weak, why_not = True, "possible nudity or sexual content (" + ", ".join(sorted(set(held))[:3]) + "): a person must look"
         if weak:
             f["payoff_evidence"] = min(f["payoff_evidence"], float(cfg.min_evidence - 1))  # reads as "not enough"
             score *= 0.6 if not evidence else 0.8
@@ -563,7 +598,9 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
         reason += "; payoff seen in: " + (", ".join(evidence) if evidence else "nothing")
         if evidence:
             reason += f" at {_fmt(pay)}"
-        if weak:
+        if weak and why_not:
+            reason += f" ({why_not}: not queued)"
+        elif weak:
             reason += (f" (needs {cfg.min_evidence} together" + (", one of them a reaction" if cfg.require_reaction else "")
                        + ": probably not a real moment)")
         pk = pay if evidence else (peak if peak is not None else (_peak_sentence(group, loud).start if group else start))
