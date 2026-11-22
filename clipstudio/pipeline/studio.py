@@ -53,8 +53,8 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
-STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 10,
-                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 5, "captions": 7, "render": 9, "qc": 5, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 3}
+STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 11,
+                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 5, "captions": 7, "render": 9, "qc": 5, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 3, "game_subs": 1}
 
 
 @dataclass
@@ -76,6 +76,7 @@ class Project:
             "candidates_raw": self.analysis / "candidates_heuristic.json",
             "facecam": self.analysis / "facecam.json", "visual": self.analysis / "visual.json",
             "chat": self.analysis / "chat.json", "speech_tracks": self.analysis / "speech_tracks.json",
+            "game_subs": self.analysis / "game_subs.json",
         }[name]
 
     def clip_dir(self, cid: str) -> Path:
@@ -255,8 +256,10 @@ class Studio:
 
         k_vis = self._visual(p, media, resume, force)
         k_chat = self._chat(p, media, resume, force)
+        k_subs = self._game_subs(p, media, resume, force)
         k_c = key_of("candidates", STAGE_VERSIONS["candidates"], k_tr, k_ld, cfg.section_hash("highlights"),
-                     k_vis, k_chat, cfg.chat.window_seconds, cfg.visual.snap_to_cuts, p.state.data.get("anchor"))
+                     k_vis, k_chat, cfg.chat.window_seconds, cfg.visual.snap_to_cuts, p.state.data.get("anchor"),
+                     k_subs)
 
         def do_candidates() -> None:
             generate_candidates(Transcript.load(p.p("transcript")), LoudnessTrack.load(p.p("loudness")),
@@ -312,6 +315,48 @@ class Studio:
             return None
         return k
 
+    def _game_subs(self, p: Project, media: MediaInfo, resume: bool, force: bool) -> str | None:
+        """Analysis stage: when the game's own subtitles are on screen. Optional: a failure is logged and skipped."""
+        v = self.cfg.visual
+        if not (v.enabled and v.game_subtitles) or media.width <= 0:
+            return None
+        k = key_of("game_subs", STAGE_VERSIONS["game_subs"], p.state.stage("metadata").key)
+
+        def do() -> None:
+            from clipstudio.visual_analysis.subtitles import detect_subtitles
+            flags = detect_subtitles(p.source_path(), media, 4.0)
+            log.info("game subtitles on screen for %.0f%% of the source", 100 * sum(flags) / max(1, len(flags)))
+            p.p("game_subs").write_text(json.dumps({"fps": 4.0, "flags": [int(x) for x in flags]}))
+
+        try:
+            run_stage(p.state, "game_subs", k, [p.p("game_subs")], do, resume=resume, force=force)
+        except StageFailed as e:
+            log.warning("game subtitle detection failed, continuing without it: %s", e)
+            return None
+        return k
+
+    def game_subs(self, p: Project) -> tuple[list[bool] | None, float]:
+        f = p.p("game_subs")
+        if not (self.cfg.visual.game_subtitles and f.exists() and p.state.stage("game_subs").status == "done"):
+            return None, 4.0
+        try:
+            d = json.loads(f.read_text())
+            return [bool(x) for x in d["flags"]], float(d.get("fps", 4.0))
+        except (ValueError, KeyError, TypeError):
+            return None, 4.0
+
+    def _caption_words(self, p: Project, c: Candidate, cfg: Config) -> list:
+        """The clip's words for captions: the streamer's only when asked for, with cuts applied."""
+        words = Transcript.load(p.p("transcript")).words_between(c.start, c.end)
+        if cfg.captions.streamer_only:
+            from clipstudio.visual_analysis.subtitles import drop_game_dialogue
+            flags, fps = self.game_subs(p)
+            kept = drop_game_dialogue(words, flags, fps)
+            if len(kept) != len(words):
+                log.info("    captions: left out %d word(s) spoken by game characters", len(words) - len(kept))
+            words = kept
+        return remap_words(words, c.cuts)
+
     def chat_source(self, p: Project) -> Path | None:
         if p.state.data.get("chat_path"):
             return Path(p.state.data["chat_path"])
@@ -354,6 +399,7 @@ class Studio:
             track = ChatTrack.load(p.p("chat"))
             sig.chat_rate, sig.chat_hype = activity(track, media.duration, self.cfg.chat.keywords)
             sig.chat_react = reactions(track, media.duration)
+        sig.game_subs, sig.game_subs_fps = self.game_subs(p)
         return sig
 
     # ------------------------------------------------------------------ vision
@@ -723,7 +769,8 @@ class Studio:
         # a transcript-line fallback title is not a hook; only written titles go on screen
         hook = c.title if cfg.enhance.hook_title and c.title_source != "transcript" else None
         k_cap = key_of("captions", STAGE_VERSIONS["captions"], tr_key, k_plan, c.start, c.end, cfg.section_hash("captions"),
-                       hook, cfg.enhance.hook_title_seconds if hook else None, c.cuts)
+                       hook, cfg.enhance.hook_title_seconds if hook else None, c.cuts,
+                       p.state.stage("game_subs").key if cfg.captions.streamer_only else None)
 
         def do_captions() -> None:
             # a hand-corrected caption track is preserved; only its ASS/SRT are regenerated
@@ -731,7 +778,7 @@ class Studio:
                 track = CaptionTrack.load(f_caps)
                 log.info("    using hand-edited captions")
             else:
-                words = remap_words(Transcript.load(p.p("transcript")).words_between(c.start, c.end), c.cuts)
+                words = self._caption_words(p, c, cfg)
                 track = build_caption_track(words, c.start, c.start + c.output_duration, cfg.captions, plan)
                 track.save(f_caps)
             write_ass(track, cfg.captions.resolved_style(), plan, f_ass, hook, cfg.enhance.hook_title_seconds,
@@ -918,7 +965,7 @@ class Studio:
             if f_caps.exists() and CaptionTrack.load(f_caps).edited:
                 track = CaptionTrack.load(f_caps)
             else:
-                words = remap_words(Transcript.load(p.p("transcript")).words_between(c.start, c.end), c.cuts)
+                words = self._caption_words(p, c, cfg)
                 track = build_caption_track(words, c.start, c.start + c.output_duration, cfg.captions, plan)
         return c, plan, track
 

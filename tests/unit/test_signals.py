@@ -206,3 +206,42 @@ def test_start_is_pulled_back_over_the_build_up_only():
     # the new start does not land inside a sentence
     sents = build_sentences(make_transcript([(2.0, "keep it steady keep it steady come on")]))
     assert extend_setup(15.0, 40.0, race, sents, 12.0, 45.0) <= 2.0
+
+
+def _subtitle_band(text=True, colour=(235, 235, 235), offset=0):
+    """A 960x140 band: mid-grey moving scene, optionally with a centred line of 'lettering'."""
+    rng = np.random.default_rng(1)
+    band = rng.integers(60, 120, (140, 960, 3), dtype=np.uint8)
+    if text:
+        for i in range(30):                       # letters: thin bright bars with gaps, centred
+            x = 480 - 30 * 9 // 2 + i * 9 + offset
+            band[78:96, x:x + 2] = colour         # a stem
+            band[84:90, x + 2:x + 5] = colour     # and a bowl
+    return band
+
+
+def test_game_subtitle_line_is_detected_and_its_speech_is_not_the_streamers():
+    from clipstudio.core.models import Word
+    from clipstudio.highlights.candidates import build_sentences, evidence_at
+    from clipstudio.visual_analysis.subtitles import drop_game_dialogue, share_present, text_line_present
+    assert text_line_present(_subtitle_band())
+    assert not text_line_present(_subtitle_band(text=False))
+    assert not text_line_present(_subtitle_band(offset=300))                 # off-centre: a sign or HUD text
+    assert not text_line_present(_subtitle_band(colour=(240, 200, 60)))      # coloured: not subtitle lettering
+
+    flags = [False] * 40 + [True] * 20 + [False] * 40                        # a subtitle is up from 10 s to 15 s
+    assert share_present(flags, 4.0, 10.0, 15.0) == 1.0 and share_present(flags, 4.0, 0.0, 5.0) == 0.0
+    words = [Word(text="watch", start=2.0, end=2.3), Word(text="this.", start=2.4, end=2.8),
+             Word(text="Oh", start=10.5, end=10.7), Word(text="my", start=10.8, end=11.0),
+             Word(text="God!", start=11.1, end=11.5), Word(text="no", start=17.0, end=17.2),
+             Word(text="way.", start=17.3, end=17.6)]
+    kept = [w.text for w in drop_game_dialogue(words, flags, 4.0)]
+    assert kept == ["watch", "this.", "no", "way."]                          # the character's line is left out
+    assert len(drop_game_dialogue(words, None, 4.0)) == len(words)            # no subtitle data: keep everything
+
+    # a game character's "oh my god" is not a reaction; the streamer's is
+    tr = make_transcript([(10.5, "oh my god no way")])
+    sents = build_sentences(tr)
+    loud = LoudnessTrack(window=0.5, rms_db=[-40.0] * 60, median_db=-40.0, p90_db=-40.0)
+    assert "speech" in evidence_at(11.0, sents, loud, Signals())
+    assert "speech" not in evidence_at(11.0, sents, loud, Signals(game_subs=flags, game_subs_fps=4.0))

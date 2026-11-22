@@ -45,6 +45,20 @@ class Signals:
     chat_window: float = 5.0
     snap_to_cuts: bool = True
     chat_react: np.ndarray | None = None   # per-second count of reaction messages (laughter, shock)
+    game_subs: list[bool] | None = None    # the game's own subtitle is on screen, one flag per 1/game_subs_fps s
+    game_subs_fps: float = 4.0
+
+    def streamer_words(self, sents: list["Sentence"], t0: float, t1: float) -> str:
+        """The words spoken in [t0, t1] by the streamer (sentences of game characters left out)."""
+        from clipstudio.visual_analysis.subtitles import GAME_SHARE, share_present
+        out = []
+        for s in sents:
+            if s.end < t0 or s.start > t1:
+                continue
+            if self.game_subs and share_present(self.game_subs, self.game_subs_fps, s.start, s.end) > GAME_SHARE:
+                continue
+            out += [x.text for x in s.words if t0 <= x.start <= t1]
+        return " ".join(out)
     # live mode: the moment (source seconds) the trigger fired for, already corrected for chat lag
     anchor: float | None = None
 
@@ -262,8 +276,8 @@ def evidence_at(t: float, sents: list[Sentence], loud: LoudnessTrack, sig: "Sign
         base = max(float(np.median(before)) if before.size else loud.median_db, loud.median_db)
         if float(db[i0:i1].max()) - base >= EVIDENCE_AUDIO_DB:
             ev.append("audio")
-    words = " ".join(x.text for s in sents for x in s.words if t - 2 <= x.start <= t + 8)
-    if reaction_score(words) >= EVIDENCE_SPEECH:
+    # only the streamer's own words count as a reaction: a game character shouting is part of the game
+    if reaction_score(sig.streamer_words(sents, t - 2, t + 8)) >= EVIDENCE_SPEECH:
         ev.append("speech")
     if sig.has_chat:
         a, b = max(0, int(t)), min(len(sig.chat_rate), int(t + CHAT_WINDOW) + 1)

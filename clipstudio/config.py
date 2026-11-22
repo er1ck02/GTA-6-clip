@@ -202,6 +202,9 @@ class VisualCfg(_Strict):
     desat_ratio: float = Field(0.45, gt=0, lt=1)     # saturation below this fraction of the median
     min_desat_seconds: float = Field(1.2, gt=0)
     snap_to_cuts: bool = True                        # move clip edges onto nearby scene cuts
+    # notice when the game's own subtitles are on screen: speech during them is a game character, not the
+    # streamer (used by captions.streamer_only and so that a character's "oh my god" is not a reaction)
+    game_subtitles: bool = True
     # optional OCR of on-screen text at event moments (needs Tesseract + pytesseract)
     ocr: Literal["auto", "on", "off"] = "auto"
     ocr_words: list[str] = Field(default_factory=lambda: ["WASTED", "BUSTED", "MISSION PASSED", "MISSION FAILED",
@@ -354,6 +357,9 @@ class CaptionsCfg(_Strict):
     # every caption (and word highlight) is shown this many seconds before its word starts: text that appears
     # exactly on the word reads as late
     lead_seconds: float = Field(0.15, ge=0, le=0.5)
+    # caption only the streamer: lines spoken while the game shows its own subtitle are left out
+    # (needs visual.game_subtitles; a game with subtitles off cannot be told apart and is captioned in full)
+    streamer_only: bool = True
     safe_margin_x: float = Field(0.07, ge=0, le=0.3)
     safe_margin_top: float = Field(0.10, ge=0, le=0.3)
     safe_margin_bottom: float = Field(0.16, ge=0, le=0.4)
