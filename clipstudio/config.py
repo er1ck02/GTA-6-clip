@@ -437,7 +437,7 @@ class LiveCfg(_Strict):
     """Live mode: watch a stream with a short rolling buffer and keep only the moments that trigger."""
     buffer_seconds: float = Field(90, ge=20, le=900)     # footage older than this is deleted unless a moment needs it
     segment_seconds: float = Field(2.0, ge=1, le=10)
-    pre_seconds: float = Field(35, ge=5)                  # kept before the trigger (the setup)
+    pre_seconds: float = Field(50, ge=5)                  # kept before the trigger (the build-up the picker can use)
     post_seconds: float = Field(15, ge=3)                 # kept after the trigger (the payoff and reaction)
     threshold: float = Field(1.0, gt=0)                   # trigger score needed to save a moment
     cooldown_seconds: float = Field(45, ge=0)             # no new moment this soon after the last one's end
