@@ -98,7 +98,8 @@ def test_signals_create_and_lift_candidates():
     top = cs.candidates[0]
     assert top.start <= 120.6 <= top.end and top.features["game_event"] == 1.0 and top.features["chat_activity"] > 0.5
     assert "WASTED" in top.title or "WASTED" in top.reason
-    assert top.start == 118.0  # snapped to the scene cut just before the event
+    # the clip opens well before the death screen (what led to it), not on the cut 2 s before it
+    assert top.start <= 120.0 - 5.0
 
 
 def test_live_anchor_frames_the_clip_on_the_trigger_moment():
@@ -129,29 +130,63 @@ def test_tighten_trims_quiet_edges_but_not_speech_or_the_minimum():
     assert s <= 3.0 - 0.25 + 1e-6                      # words are never cut off
 
 
-def test_a_clip_needs_two_signs_of_a_payoff():
-    from clipstudio.highlights.candidates import payoff_evidence
-    sig = Signals()
-    assert payoff_evidence({"audio_spike": 0.7}, "just driving around", sig, 0, 20) == ["audio"]
-    assert payoff_evidence({"audio_spike": 0.7}, "oh my god no way", sig, 0, 20) == ["audio", "speech"]
-    # three chat messages in a quiet chat are not a burst, however large the relative lift
-    quiet = np.zeros(60, np.float32)
-    quiet[30:33] = 1
-    sig = Signals(chat_rate=quiet, chat_hype=np.zeros(60, np.float32))
-    assert payoff_evidence({"chat_activity": 0.9}, "", sig, 20, 40) == []
-    busy = np.zeros(60, np.float32)
-    busy[30:34] = 3
-    sig = Signals(chat_rate=busy, chat_hype=np.zeros(60, np.float32))
-    assert payoff_evidence({"chat_activity": 0.9, "game_event": 0.8}, "", sig, 20, 40) == ["chat", "game event"]
+def _loud_with(peaks, n_s=60, base=-40.0):
+    db = [base] * (n_s * 2)
+    for t in peaks:
+        db[int(t * 2)] = base + 20.0
+        db[int(t * 2) + 1] = base + 20.0
+    return LoudnessTrack(window=0.5, rms_db=db, median_db=base, p90_db=base)
 
-    cfg = load_config(overrides=["highlights.minimum_duration=10", "highlights.maximum_duration=30",
+
+def test_a_clip_needs_a_cause_and_a_reaction_together():
+    from clipstudio.chat.replay import is_reaction
+    from clipstudio.highlights.candidates import build_sentences, cause_time, evidence_at, find_payoff, lead_in_start
+    # chat that reacts vs chat that is just busy
+    assert is_reaction("LMAOOO") and is_reaction("no way") and is_reaction("hahaha") and is_reaction("WHAT?!")
+    assert not is_reaction("W") and not is_reaction("giveaway time") and not is_reaction("hi from brazil")
+
+    sents = build_sentences(make_transcript([(8, "so we take the highway then left at the light"),
+                                             (31, "oh my god no way")]))
+    loud = _loud_with([30])
+    sig = Signals()
+    assert evidence_at(30.0, sents, loud, sig) == ["audio", "speech"]
+    assert evidence_at(12.0, sents, loud, sig) == []                 # same clip, nothing happening there
+    t, ev = find_payoff(sents, loud, sig, 5.0, 45.0)
+    assert abs(t - 30.0) <= 3.0 and ev == ["audio", "speech"]
+    # a loud sound at 10 s and a "wow" at 40 s are two things, not one moment
+    apart = build_sentences(make_transcript([(40, "oh my god no way")]))
+    assert all(len(evidence_at(float(x), apart, _loud_with([10]), sig)) < 2 for x in range(5, 50))
+    # busy chat with no reactions in it is not a sign; laughing chat is
+    rate = np.zeros(60, np.float32)
+    rate[30:40] = 4
+    quiet = Signals(chat_rate=rate, chat_hype=np.zeros(60, np.float32), chat_react=np.zeros(60, np.float32))
+    assert "chat" not in evidence_at(30.0, [], _loud_with([]), quiet)
+    react = np.zeros(60, np.float32)
+    react[31:36] = 2
+    assert "chat" in evidence_at(30.0, [], _loud_with([]), Signals(chat_rate=rate, chat_hype=react, chat_react=react))
+
+    # the clip starts before the cause (the crash at 14 s), not on its aftermath
+    assert cause_time(30.0, _loud_with([14, 30]), sig) == 14.0
+    assert cause_time(30.0, _loud_with([]), sig) is None
+    # lead-in runs back over the talk that leads straight into the moment, but not over unrelated talk long before
+    talk = build_sentences(make_transcript([(2, "anyway thanks for the sub"), (17, "watch this watch this"),
+                                            (19.5, "i am going to jump it")]))
+    assert abs(lead_in_start(30.0, 20.0, talk, 8.0, 26.0) - 16.75) < 0.01
+
+    cfg = load_config(overrides=["highlights.minimum_duration=10", "highlights.maximum_duration=40",
                                  "highlights.target_duration=20", "highlights.minimum_score=0"]).highlights
-    tr = make_transcript([(20, "just driving around the city for now nothing much")])
-    cs = generate_candidates(tr, _loud(60), cfg, 60)
+    # loud game audio alone, nobody reacting: rejected
+    calm = make_transcript([(20, "just driving around the city for now nothing much")])
+    cs = generate_candidates(calm, _loud_with([22]), cfg, 60)
     assert cs.candidates and not any(c.passes_threshold for c in cs.candidates)
     assert "probably not a real moment" in cs.candidates[0].reason
+    # a crash at 14 s and the streamer reacting at 30 s: kept, and the clip opens before the crash
+    tr = make_transcript([(31, "oh my god no way bro what was that")])
+    cs = generate_candidates(tr, _loud_with([14, 30]), cfg, 60)
+    best = cs.candidates[0]
+    assert best.passes_threshold and best.start <= 14.0 - 4.0 and best.end >= 36.0
     off = cfg.model_copy(update={"min_evidence": 0})
-    assert all(c.passes_threshold for c in generate_candidates(tr, _loud(60), off, 60).candidates)
+    assert all(c.passes_threshold for c in generate_candidates(calm, _loud_with([22]), off, 60).candidates)
 
 
 def test_start_is_pulled_back_over_the_build_up_only():

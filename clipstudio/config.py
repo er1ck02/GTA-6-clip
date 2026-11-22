@@ -115,6 +115,17 @@ class HighlightsCfg(_Strict):
     # an on-screen game event. A candidate with fewer than this many is marked as not passing and loses score;
     # live mode does not edit it at all. 0 turns the check off.
     min_evidence: int = Field(2, ge=0, le=4)
+    # The signs must happen together (within a few seconds of one moment), and one of them must be a reaction:
+    # the streamer reacting out loud, or chat laughing/shouting. A loud cutscene in a busy chat is not a moment.
+    require_reaction: bool = True
+    # Lead-in: a clip starts at least this long before the moment, and further back over the talk that leads
+    # straight into it (sentences with no real pause between them), up to lead_in_max seconds before it.
+    lead_in_seconds: float = Field(14.0, ge=2, le=40)
+    lead_in_max: float = Field(26.0, ge=2, le=60)
+    reaction_tail: float = Field(6.0, ge=1, le=20)   # at least this much after the moment (the reaction itself)
+    # The cause must be in the clip: the loudest jump or on-screen event in the 25 s before the reaction (the
+    # crash, not the wreck) is looked for, and the clip starts this long before it instead of on the aftermath.
+    cause_lead: float = Field(5.0, ge=0, le=15)
     edge_keep: float = Field(2.5, ge=0, le=5)   # quiet seconds left at each edge after tightening
     # Build-up: when the footage right before a clip is the same continuous action (a race before the finish
     # line, a chase before the crash), the start is pulled back by up to this many seconds. It stops at a scene

@@ -141,6 +141,34 @@ def activity(chat: ChatTrack, duration: float, keywords: list[str]) -> tuple[np.
     return rate, hype
 
 
+REACT_WORDS = {"lol", "lmao", "lmfao", "lul", "lulw", "kekw", "omegalul", "rofl", "xd", "wtf", "omg", "holy", "clip",
+               "dead", "crying", "insane", "crazy", "bruh", "ayo", "pog", "poggers", "pogchamp", "icant", "nahh", "wow"}
+REACT_PHRASES = ("no way", "oh my god", "what the", "clip it", "clip that", "no shot", "hell nah", "im dead", "i'm dead")
+REACT_RE = re.compile(r"^(?:a?(?:ha){2,}h?|l+o{1,}l+|lma+o+|lmfa+o+|no{3,}|y+o{3,}|w+h+a+t+|bru+h+|na+h{2,})$")
+
+
+def is_reaction(text: str) -> bool:
+    """Is this chat message a reaction to something (laughter, shock, a clip request), not just talk?
+
+    Deliberately narrower than the hype keywords: "W", "gg" and the like flood chat for giveaways and
+    greetings too, which is not evidence that something happened on screen."""
+    toks = _tokens(text)
+    low = " ".join(toks)
+    return (any(t in REACT_WORDS or REACT_RE.match(t) for t in toks) or any(p in low for p in REACT_PHRASES)
+            or "?!" in text or "!?" in text)
+
+
+def reactions(chat: ChatTrack, duration: float) -> np.ndarray:
+    """Per-second count of chat messages that are reactions (see ``is_reaction``)."""
+    n = int(np.ceil(max(duration, 1)))
+    out = np.zeros(n, np.float32)
+    for m in chat.messages:
+        i = int(m.t)
+        if 0 <= i < n and is_reaction(m.text):
+            out[i] += 1
+    return out
+
+
 def chat_score(rate: np.ndarray, hype: np.ndarray, start: float, end: float, window: float) -> float:
     """0..1: how far the busiest ``window`` seconds in [start, end+4] exceed the stream's typical chat rate.
 

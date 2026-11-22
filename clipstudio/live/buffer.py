@@ -68,6 +68,17 @@ def resolve_stream_urls(url: str, max_height: int = 1080) -> list[str]:
     return urls[:2]
 
 
+def reconnect_flags(url: str) -> list[str]:
+    """FFmpeg's HTTP reconnect options for one input URL.
+
+    Not for Twitch playlists: with ``-reconnect_streamed`` FFmpeg treats the normal end of every HLS segment as a
+    dropped connection and retries it forever, so nothing is ever written (Twitch heads stayed at 0 s). A Twitch
+    stream that really drops ends FFmpeg, and the session reconnects it with fresh URLs instead."""
+    if "ttvnw.net" in url or "twitch.tv" in url:
+        return []
+    return ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
+
+
 class Recorder:
     def __init__(self, work: Path, segment_seconds: float = 2.0, *, file: Path | None = None,
                  url: str | None = None, realtime: bool = True):
@@ -130,7 +141,7 @@ class Recorder:
         else:
             ins: list[str] = []
             for u in self._urls:
-                ins += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-i", u]
+                ins += reconnect_flags(u) + ["-i", u]
             self._ff = subprocess.Popen(base + ["-nostdin"] + ins + out, stderr=subprocess.PIPE)
         log.info("recording %s into %s (%gs segments)", self.file or self.url, self.work, self.segment_seconds)
 

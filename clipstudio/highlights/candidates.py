@@ -44,6 +44,7 @@ class Signals:
     chat_hype: np.ndarray | None = None
     chat_window: float = 5.0
     snap_to_cuts: bool = True
+    chat_react: np.ndarray | None = None   # per-second count of reaction messages (laughter, shock)
     # live mode: the moment (source seconds) the trigger fired for, already corrected for chat lag
     anchor: float | None = None
 
@@ -239,32 +240,113 @@ def tighten(start: float, end: float, sents: list[Sentence], loud: LoudnessTrack
     return s2, e2
 
 
-EVIDENCE_AUDIO = 0.5     # audio_spike: a jump of about 7.5 dB over the level just before it
-EVIDENCE_SPEECH = 1.4    # reaction_score of the clip's words ("oh my god", "no way", laughter, exclamations)
-EVIDENCE_CHAT = 5        # messages inside 5 s, and chat clearly busier than normal for this stream
-EVIDENCE_EVENT = 0.5     # game_event (death screen, HUD text, flash)
+EVIDENCE_AUDIO_DB = 8.0   # a jump this far over the level just before it (and over the source's typical level)
+EVIDENCE_SPEECH = 1.4     # reaction_score of the words around the moment ("oh my god", "no way", laughter)
+EVIDENCE_CHAT = 3         # reaction messages in the CHAT_WINDOW after the moment, and a fifth of all messages then
+CHAT_WINDOW = 20.0        # seconds: typing time plus stream delay (YouTube chat runs 10-20 s behind the picture)
+EVIDENCE_EVENT = 0.5      # on-screen game event weight (death screen, HUD text, flash)
+REACTIONS = ("speech", "chat")
 
 
-def payoff_evidence(f: dict[str, float], text: str, sig: "Signals", start: float, end: float) -> list[str]:
-    """Which independent signs of a payoff this clip has: any of "audio", "speech", "chat", "game event".
+def evidence_at(t: float, sents: list[Sentence], loud: LoudnessTrack, sig: "Signals") -> list[str]:
+    """Signs of a payoff at source time ``t``: any of "audio", "speech", "chat", "game event".
 
-    Each one alone is common (a loud game sound, a talkative streamer, three chat messages in a row); a real
-    moment usually shows in two or more at the same time."""
+    Everything is measured right around ``t``: the cause just before or at it, the reactions just after.
+    A loud sound early in a clip and a "wow" twenty seconds later are two unrelated things, not one moment."""
     ev = []
-    if f.get("audio_spike", 0.0) >= EVIDENCE_AUDIO:
-        ev.append("audio")
-    if reaction_score(text) >= EVIDENCE_SPEECH:
+    w = loud.window
+    db = np.asarray(loud.rms_db, np.float32)
+    i0, i1 = max(0, int((t - 3) / w)), min(len(db), int((t + 3) / w) + 1)
+    if i1 > i0:
+        before = db[max(0, int((t - 12) / w)): i0]
+        base = max(float(np.median(before)) if before.size else loud.median_db, loud.median_db)
+        if float(db[i0:i1].max()) - base >= EVIDENCE_AUDIO_DB:
+            ev.append("audio")
+    words = " ".join(x.text for s in sents for x in s.words if t - 2 <= x.start <= t + 8)
+    if reaction_score(words) >= EVIDENCE_SPEECH:
         ev.append("speech")
-    if sig.has_chat and f.get("chat_activity", 0.0) >= 0.5:
-        a, b = max(0, int(start)), min(len(sig.chat_rate), int(end + 6) + 1)
+    if sig.has_chat:
+        a, b = max(0, int(t)), min(len(sig.chat_rate), int(t + CHAT_WINDOW) + 1)
         if b > a:
-            burst = float(np.convolve(sig.chat_rate, np.ones(5, np.float32), mode="same")[a:b].max())
-            hype = float(np.convolve(sig.chat_hype, np.ones(8, np.float32), mode="same")[a:b].max())
-            if burst >= EVIDENCE_CHAT or hype >= 3:
-                ev.append("chat")
-    if f.get("game_event", 0.0) >= EVIDENCE_EVENT:
+            total = float(sig.chat_rate[a:b].sum())
+            if sig.chat_react is not None:
+                react = float(sig.chat_react[a:b].sum())
+                if react >= EVIDENCE_CHAT and react >= 0.2 * total:
+                    ev.append("chat")
+            else:  # no message texts: fall back to a real burst of messages
+                burst = float(np.convolve(sig.chat_rate, np.ones(5, np.float32), mode="same")[a:b].max())
+                if burst >= 5 and burst >= 2.5 * (float(np.median(sig.chat_rate)) * 5 + 1):
+                    ev.append("chat")
+    if sig.visual is not None and any(EVENT_WEIGHT[e.kind] * (e.strength if e.kind != "hud_text" else 1.0)
+                                      >= EVIDENCE_EVENT and t - 5 <= e.start <= t + 3 for e in sig.visual.events):
         ev.append("game event")
     return ev
+
+
+def find_payoff(sents: list[Sentence], loud: LoudnessTrack, sig: "Signals", start: float, end: float) -> tuple[float, list[str]]:
+    """(time, signs) of the strongest moment in [start, end]: most signs at once, a reaction preferred.
+
+    In live mode the search stays near the trigger's moment, which is what viewers reacted to."""
+    lo, hi = start + 1.0, end - 1.0
+    near = sig.anchor if sig.anchor is not None and start <= sig.anchor <= end else None
+    if near is not None:
+        # the trigger is placed on chat's reaction, which can run well behind the picture: look further back
+        lo, hi = max(lo, near - 14.0), min(hi, near + 6.0)
+    ref = near if near is not None else start + 0.6 * (end - start)
+    best_t, best_ev, best_key = ref, [], (-1.0, -1.0, 0.0)
+    t = lo
+    while t <= hi + 1e-6:
+        ev = evidence_at(t, sents, loud, sig)
+        key = (1.0 if any(e in REACTIONS for e in ev) else 0.0, float(len(ev)), -abs(t - ref))
+        if key > best_key:
+            best_t, best_ev, best_key = t, ev, key
+        t += 1.0
+    return round(best_t, 3), best_ev
+
+
+def cause_time(t: float, loud: LoudnessTrack, sig: "Signals", back: float = 25.0) -> float | None:
+    """When the thing being reacted to at ``t`` happened: the biggest sudden jump in loudness, or an on-screen
+    game event, in the ``back`` seconds before ``t``. None when nothing stands out (the cause is then
+    usually something said, which the lead-in over the preceding talk covers)."""
+    w = loud.window
+    db = np.asarray(loud.rms_db, np.float32)
+    found: list[float] = []
+    best_u, best_jump = None, EVIDENCE_AUDIO_DB
+    u = max(0.0, t - back)
+    while u <= t + 1.0:
+        i = int(u / w)
+        seg, before = db[i: i + max(1, int(1.0 / w))], db[max(0, i - int(8.0 / w)): i]
+        if seg.size and before.size:
+            jump = float(seg.max()) - max(float(np.median(before)), loud.median_db)
+            if jump > best_jump:
+                best_u, best_jump = u, jump
+        u += 1.0
+    if best_u is not None:
+        found.append(best_u)
+    if sig.visual is not None:
+        found += [e.start for e in sig.visual.events
+                  if EVENT_WEIGHT[e.kind] * (e.strength if e.kind != "hud_text" else 1.0) >= EVIDENCE_EVENT
+                  and t - back <= e.start <= t + 1.0]
+    return min(found) if found else None
+
+
+def lead_in_start(t: float, start: float, sents: list[Sentence], lead: float, lead_max: float) -> float:
+    """Where a clip about the moment at ``t`` should start so the viewer has the context for it.
+
+    At least ``lead`` seconds before ``t``, then further back over the talk that runs straight into it
+    (sentences less than 2 s apart), up to ``lead_max`` seconds before ``t``. Never mid-sentence."""
+    new = min(start, t - lead)
+    for s in sorted(sents, key=lambda s: -s.start):
+        if s.end < new - 2.0 or s.start >= new:
+            continue
+        if t - (s.start - 0.25) <= lead_max:
+            new = s.start - 0.25          # this sentence leads into the clip: take all of it
+        elif s.start < new < s.end:
+            new = s.end + 0.1             # too far back: start right after it instead of inside it
+            break
+        else:
+            break
+    return max(0.0, new)
 
 
 def extend_setup(start: float, end: float, v: VisualTrack, sents: list[Sentence], max_back: float,
@@ -399,6 +481,27 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
                                                      else None)
             floor = max(cfg.minimum_duration, 0.75 * cfg.target_duration)
             start, end = tighten(start, end, inside, loud, cfg.edge_keep, floor, keep_pt)
+        # the moment this clip is about, and enough before it to understand it / after it to see the reaction
+        pay, evidence = find_payoff(sents, loud, sig, start, end)
+        if peak is not None and not evidence:
+            pay = peak
+        if evidence:
+            start = min(start, lead_in_start(pay, start, sents, cfg.lead_in_seconds, cfg.lead_in_max))
+            cause = cause_time(pay, loud, sig)
+            if cause is not None and cause - cfg.cause_lead < start:
+                start = max(0.0, cause - cfg.cause_lead)   # open before the cause, not on its aftermath
+                for snt in sents:
+                    if snt.start < start < snt.end:
+                        start = max(0.0, snt.start - 0.25)
+            end = max(end, min(media_duration, pay + cfg.reaction_tail))
+            for snt in sents:  # the reaction is not cut off mid-sentence
+                if snt.start < end < snt.end and snt.end + cfg.tail - start <= cfg.maximum_duration:
+                    end = min(media_duration, snt.end + cfg.tail)
+            if end - start > cfg.maximum_duration:
+                start = end - cfg.maximum_duration
+                for snt in sents:
+                    if snt.start < start < snt.end:
+                        start = snt.end + 0.1
         if sig.visual is not None and cfg.setup_seconds > 0:
             start = extend_setup(start, end, sig.visual, sents, cfg.setup_seconds, cfg.maximum_duration)
         dur = end - start
@@ -413,7 +516,7 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
         if sig.has_chat:
             from clipstudio.chat.replay import chat_score
             f["chat_activity"] = round(chat_score(sig.chat_rate, sig.chat_hype, start, end, sig.chat_window), 4)
-        pay = peak if peak is not None else payoff_time(group, loud, start, end)
+        f["payoff_time"] = round(pay - start, 3)
         f["payoff_position"] = round(position_score(pay, start, end), 4)
         if sig.anchor is not None:
             f["trigger_moment"] = round(position_score(sig.anchor, start, end), 4)
@@ -423,10 +526,11 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
         dead_air = f["silence_fraction"] > 0.4 and f["audio_intensity"] < 0.3
         if dead_air:
             score *= 1.0 - 0.5 * (f["silence_fraction"] - 0.4)
-        evidence = payoff_evidence(f, " ".join(s.text for s in group), sig, start, end)
         f["payoff_evidence"] = float(len(evidence))
-        weak = cfg.min_evidence > 0 and len(evidence) < cfg.min_evidence
+        reacted = any(e in REACTIONS for e in evidence)
+        weak = cfg.min_evidence > 0 and (len(evidence) < cfg.min_evidence or (cfg.require_reaction and not reacted))
         if weak:
+            f["payoff_evidence"] = min(f["payoff_evidence"], float(cfg.min_evidence - 1))  # reads as "not enough"
             score *= 0.6 if not evidence else 0.8
         if group:
             agreement = 1.0 - abs(f["audio_intensity"] - f["reaction_language"])
@@ -443,9 +547,12 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
         if dead_air:
             reason += f"; penalised for {f['silence_fraction']:.0%} dead air"
         reason += "; payoff seen in: " + (", ".join(evidence) if evidence else "nothing")
+        if evidence:
+            reason += f" at {_fmt(pay)}"
         if weak:
-            reason += f" (needs {cfg.min_evidence}: probably not a real moment)"
-        pk = peak if peak is not None else (_peak_sentence(group, loud).start if group else start)
+            reason += (f" (needs {cfg.min_evidence} together" + (", one of them a reaction" if cfg.require_reaction else "")
+                       + ": probably not a real moment)")
+        pk = pay if evidence else (peak if peak is not None else (_peak_sentence(group, loud).start if group else start))
         if group and peak is None:
             title = _title(group, loud)
         elif group:

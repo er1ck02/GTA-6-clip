@@ -53,7 +53,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
-STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 9,
+STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 10,
                   "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 3, "captions": 6, "render": 7, "qc": 5, "platforms": 1, "edges": 1, "framing": 2, "chat_overlay": 3}
 
 
@@ -349,9 +349,11 @@ class Studio:
             sig.visual = VisualTrack.load(p.p("visual"))
         if (self.cfg.chat.enabled and self.chat_source(p) is not None and p.p("chat").exists()
                 and p.state.stage("chat").status == "done"):
-            from clipstudio.chat.replay import activity
+            from clipstudio.chat.replay import activity, reactions
             media = MediaInfo.load(p.p("media"))
-            sig.chat_rate, sig.chat_hype = activity(ChatTrack.load(p.p("chat")), media.duration, self.cfg.chat.keywords)
+            track = ChatTrack.load(p.p("chat"))
+            sig.chat_rate, sig.chat_hype = activity(track, media.duration, self.cfg.chat.keywords)
+            sig.chat_react = reactions(track, media.duration)
         return sig
 
     # ------------------------------------------------------------------ vision
