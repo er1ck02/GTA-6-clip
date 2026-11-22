@@ -564,6 +564,10 @@ class ProductionCfg(_Strict):
     edit_seconds_estimate: float = Field(25, gt=0)        # per-moment edit time until real timings are measured
     vod_seconds_estimate: float = Field(180, gt=0)        # per VOD/file analysis, for the stop countdown
     open_browser: bool = True                             # open the workstation when production starts
+    # pick up new commits on the checkout's branch while running: tests first, then a quick restart onto them
+    auto_update: bool = True
+    update_check_minutes: float = Field(10, ge=1, le=1440)
+    update_run_tests: bool = True
 
 
 class Config(_Strict):

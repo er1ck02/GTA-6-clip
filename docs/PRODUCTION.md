@@ -68,3 +68,12 @@ marked saved/queued/processing (up to `production.backlog_max_age_hours` old) an
 
 The supervisor (the server window) restarts the server if it crashes while production is running (up to 6 times
 in 10 minutes) and re-engages the lineup.
+
+## Auto-update
+
+While production runs, the server window checks the checkout's branch every `production.update_check_minutes`
+(10). When new commits fast-forward a clean checkout, their unit tests run first in a temporary git worktree.
+If they pass, production stops quickly (the clip being edited finishes, waiting moments are saved), the
+checkout fast-forwards, the server restarts on the new code and resumes the lineup and the saved moments.
+Edited files or local commits in the checkout mean someone is working there, so nothing is touched. A commit
+whose tests fail is skipped until a newer one arrives. Turn it off with `production.auto_update: false`.

@@ -389,6 +389,10 @@ def supervise(a) -> int:
     print("Clip Studio server. Don't close this window: double-click Stop Production instead, so clips being "
           "edited are finished and saved.\n", flush=True)
     crashes: list[float] = []
+    update: dict = {}  # set by the auto-update thread: {"sha": ..., "summary": ...} while restarting onto it
+    if cfg.production.auto_update:
+        threading.Thread(target=_auto_update, args=(port, cfg, state, update), daemon=True,
+                         name="clipstudio-auto-update").start()
     while True:
         started = time.time()
         try:
@@ -396,6 +400,15 @@ def supervise(a) -> int:
         except KeyboardInterrupt:
             print("stopped with Ctrl+C. Unfinished clips are edited on the next Start Production.", flush=True)
             return 130
+        if update.get("sha"):
+            from clipstudio.production import updater
+
+            ok, out = updater.fast_forward(update["sha"])
+            print(("updated to " + update["sha"][:7] + ": " + update.get("summary", "")) if ok
+                  else f"update could not be applied ({out}); restarting on the old code", flush=True)
+            update.clear()
+            threading.Thread(target=_reengage, args=(port,), daemon=True).start()
+            continue
         try:
             mode = json.loads(state.read_text(encoding="utf-8")).get("mode")
         except (OSError, ValueError):
@@ -412,6 +425,50 @@ def supervise(a) -> int:
               flush=True)
         time.sleep(5)
         threading.Thread(target=_reengage, args=(port,), daemon=True).start()
+
+
+def _auto_update(port: int, cfg, state: Path, update: dict, rounds: int | None = None) -> None:
+    """Every ``production.update_check_minutes``: if the branch has new commits that fast-forward a clean
+    checkout and pass their unit tests, stop quickly (only the clip mid-edit finishes; waiting moments are saved
+    and resumed) and let the supervisor loop restart the server on the new code."""
+    from clipstudio.production import updater
+
+    tested: dict[str, bool] = {}
+    n = 0
+    while rounds is None or n < rounds:
+        n += 1
+        time.sleep(cfg.production.update_check_minutes * 60 if rounds is None else 0)
+        try:
+            mode = json.loads(state.read_text(encoding="utf-8")).get("mode")
+        except (OSError, ValueError):
+            mode = None
+        if mode != "running" or update.get("sha"):
+            continue
+        chk = updater.check()
+        if not chk.available:
+            if chk.behind:
+                print(f"update waiting but skipped: {chk.why_not()}", flush=True)
+            continue
+        if chk.remote not in tested:
+            if cfg.production.update_run_tests:
+                print(f"new code {chk.remote[:7]} ({chk.behind} commit(s)); running its tests first", flush=True)
+                ok, tail = updater.test_commit(chk.remote)
+                print(f"  tests: {tail}", flush=True)
+            else:
+                ok = True
+            tested[chk.remote] = ok
+        if not tested[chk.remote]:
+            continue  # this commit failed its tests; wait for the next one
+        summary = updater.git("log", "-1", "--format=%s", chk.remote).stdout.strip()
+        print(f"restarting production onto {chk.remote[:7]}: {summary}", flush=True)
+        update.update(sha=chk.remote, summary=summary)
+        try:
+            api(port, "POST", "/api/production/stop", {"mode": "now"}, timeout=30)
+            while not api(port, "GET", "/api/production", timeout=15).get("safe"):
+                time.sleep(3)
+            api(port, "POST", "/api/production/shutdown", {}, timeout=15)
+        except Exception as e:  # noqa: BLE001 - the server may already be gone; the loop restarts it
+            print(f"  stopping for the update: {e}", flush=True)
 
 
 def _reengage(port: int) -> None:

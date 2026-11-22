@@ -141,3 +141,5 @@ production:                # `clipstudio production start|stop` (desktop: Start/
   recheck_minutes: 5       # offline channels are checked again this often; the original returns when it's live
   keep_awake: true         # Windows won't sleep while production runs
   backlog_max_age_hours: 24  # moments saved for later are edited on the next start if newer than this
+  auto_update: true        # while running, restart onto new commits of this branch (tests must pass first)
+  update_check_minutes: 10
