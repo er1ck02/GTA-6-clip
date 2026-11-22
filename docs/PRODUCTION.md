@@ -49,6 +49,13 @@ HTTP: `GET /api/production`, `POST /api/production/start {"channels": [...]}`,
   title mentions `production.substitute_keywords` (GTA by default) takes the slot. "Best" means on your upload
   allowlist first, then the most finished clips. Every `production.recheck_minutes` the original is checked
   again; when it's back, the stand-in stops (its saved moments still get edited) and the original returns.
+* **Always N streams** (`production.target_streams`, 8 by default; 0 turns it off): stand-ins only fill up to
+  that many recordings, and if the lineup alone can't reach it, extra streams are added. When your past
+  streamers run out, the most-watched live stream among `production.discover_channels` on Twitch whose title
+  mentions `production.discover_keywords` (GTA 6) is picked. When an original comes back, its stand-in keeps
+  recording as an extra unless that would go over the target; then the newest extra stops. An extra that goes
+  offline is replaced on the next check. Clips from streamers who are not on `upload.allow_channels` wait for
+  review instead of posting.
 * **A stream that ends** mid-session is replaced the same way within a few seconds.
 
 ## Stopping safely

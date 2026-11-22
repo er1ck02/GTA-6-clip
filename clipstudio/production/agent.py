@@ -275,7 +275,7 @@ def start(a) -> dict:
     say("  .. checking which channels are live (about 30 s)", quiet)
     res = api(port, "POST", "/api/production/start", {"channels": channels or None}, timeout=600)
     for p in res.get("plan", []):
-        mark = {"watch": "LIVE", "keep": "LIVE", "substitute": "SWAP"}.get(p["action"], "WAIT")
+        mark = {"watch": "LIVE", "keep": "LIVE", "substitute": "SWAP", "fill": "EXTRA"}.get(p["action"], "WAIT")
         say(f"  {mark:<4} {p.get('channel') or p['wanted']}: {p['note']}", quiet)
     url = f"http://127.0.0.1:{port}"
     if cfg.production.open_browser and not getattr(a, "no_browser", False):

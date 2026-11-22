@@ -28,6 +28,7 @@ class LiveCheck:
     title: str = ""
     url: str = ""
     error: str = ""
+    viewers: int = 0
 
 
 Probe = Callable[[str], LiveCheck]
@@ -142,16 +143,18 @@ def probe(url: str, timeout: float = 45) -> LiveCheck:
 
     try:
         cmd = _ytdlp_cmd() + ["--quiet", "--no-warnings", "--skip-download", "--no-playlist",
-                              "--print", "%(live_status)s|%(title)s", url]
+                              "--print", "%(live_status)s|%(concurrent_view_count)s|%(title)s", url]
         cp = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return LiveCheck(None, url=url, error="timed out")
     except Exception as e:  # noqa: BLE001 - yt-dlp missing etc.
         return LiveCheck(None, url=url, error=str(e))
     first = (cp.stdout.strip().splitlines() or [""])[0]
-    status, _, title = first.partition("|")
+    status, _, rest = first.partition("|")
+    viewers, _, title = rest.partition("|")
     if cp.returncode == 0 and status:
-        return LiveCheck(status == "is_live", title=title.strip(), url=url)
+        return LiveCheck(status == "is_live", title=title.strip(), url=url,
+                         viewers=int(viewers) if viewers.strip().isdigit() else 0)
     err = (cp.stderr or "").strip().splitlines()
     msg = err[-1] if err else f"yt-dlp exit {cp.returncode}"
     low = (cp.stderr or "").lower()
@@ -175,12 +178,23 @@ def title_matches(title: str, keywords: list[str]) -> bool:
     return not keywords or any(k.lower() in low for k in keywords)
 
 
+def discover_live(channels: list[str], check: Probe, keywords: list[str] | None = None,
+                  workers: int = 8) -> list[LiveCheck]:
+    """Big Twitch streamers (``production.discover_channels``) who are live with a matching title right now,
+    most viewers first. Used to keep every slot filled once your own past streamers run out."""
+    names = [c.lower().lstrip("@") for c in channels if c and re.fullmatch(r"@?[\w]+", c)]
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        res = list(ex.map(lambda c: check(f"https://www.twitch.tv/{c}"), names))
+    live = [r for r in res if r.live and title_matches(r.title, list(keywords or []))]
+    return sorted(live, key=lambda r: -r.viewers)
+
+
 # ------------------------------------------------------------------ planning
 @dataclass
 class SlotPlan:
     wanted: str                      # the lineup channel this slot is for
     wanted_url: str | None
-    action: str                      # watch | substitute | keep | wait
+    action: str                      # watch | substitute | keep | wait | fill (extra slot to reach the target)
     channel: str | None = None       # what will actually be watched
     url: str | None = None
     note: str = ""
@@ -192,10 +206,14 @@ class SlotPlan:
 
 def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, substitute: bool = True,
                 keywords: list[str] | None = None, max_candidates: int = 12,
-                busy: set[str] | None = None, workers: int = 8) -> list[SlotPlan]:
+                busy: set[str] | None = None, workers: int = 8, target: int = 0,
+                discover: Callable[[], list[LiveCheck]] | None = None) -> list[SlotPlan]:
     """For each lineup entry ({channel, url}) decide: watch it (live), stand someone in (offline), or wait.
 
     ``busy`` are channels already being watched (kept as they are, never picked as a substitute twice).
+    ``target`` (0 = off) is how many streams should record: stand-ins only fill up to it, and when the lineup
+    alone can't reach it, extra "fill" slots are added. Stand-ins come from your past streamers first, then
+    from ``discover()`` (live GTA streams on Twitch, most viewers first).
     """
     keywords = list(keywords or [])
     busy = {b.lower() for b in (busy or set())}
@@ -226,7 +244,12 @@ def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, 
             p.note = "offline" if r.live is False else f"not reachable ({r.error or 'unknown error'})"
 
     waiting = [p for p in plans if p.action == "wait"]
-    if not (substitute and waiting):
+    recording = sum(p.action in ("watch", "keep") for p in plans)
+    room = (target - recording) if target else len(waiting)
+    if not substitute or room <= 0:
+        if substitute and target:
+            for p in waiting:
+                p.note = f"{p.wanted} is {p.note}; {target} streams are already recording"
         return plans
     lineup_names = {p.wanted for p in plans}
     pool = [c for c in ranked if c.channel not in lineup_names and c.channel not in busy][:max_candidates]
@@ -234,14 +257,41 @@ def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, 
         checks = list(ex.map(lambda c: first_live(c.urls + [u for u in guess_urls(c.channel) if u not in c.urls],
                                                   check), pool))
     live_pool = [(c, r) for c, r in zip(pool, checks) if r.live and title_matches(r.title, keywords)]
+    if discover is not None and len(live_pool) < room:
+        taken = lineup_names | busy | {c.channel for c, _ in live_pool}
+        try:
+            found = discover()
+        except Exception as e:  # noqa: BLE001 - discovery is best effort
+            log.warning("finding live GTA streams on Twitch failed: %s", e)
+            found = []
+        for r in found:
+            ch = channel_of(r.url)
+            if ch and ch not in taken:
+                live_pool.append((PastChannel(ch, [r.url]), r))
+                taken.add(ch)
+
+    def why_picked(c: PastChannel, r: LiveCheck) -> str:
+        if c.sessions:
+            return f"{c.clips} clips from {c.sessions} past session{'s' if c.sessions != 1 else ''}"
+        return "top live GTA stream on Twitch" + (f", {r.viewers:,} viewers" if r.viewers else "")
+
     for p in waiting:
+        if room <= 0:
+            p.note = f"{p.wanted} is {p.note}; {target} streams are already recording"
+            continue
         if not live_pool:
             why = "none of your past streamers" + (f" streaming {'/'.join(keywords)}" if keywords else "")
             p.note = f"{p.wanted} is {p.note}; {why} is live right now, checking again later"
             continue
         c, r = live_pool.pop(0)
         p.action, p.channel, p.url, p.title = "substitute", c.channel, r.url, r.title
-        p.note = (f"{p.wanted} is {p.note}; watching {c.channel} instead "
-                  f"({c.clips} clips from {c.sessions} past session{'s' if c.sessions != 1 else ''})")
+        p.note = f"{p.wanted} is {p.note}; watching {c.channel} instead ({why_picked(c, r)})"
         busy.add(c.channel)
+        room -= 1
+    while target and room > 0 and live_pool:
+        c, r = live_pool.pop(0)
+        plans.append(SlotPlan(c.channel, r.url, "fill", c.channel, r.url,
+                              f"keeping {target} streams going: watching {c.channel} ({why_picked(c, r)})", r.title))
+        busy.add(c.channel)
+        room -= 1
     return plans

@@ -143,6 +143,9 @@ production:                # `clipstudio production start|stop` (desktop: Start/
   default_streams: 3       # streams to fill on the very first start (later starts resume the last lineup)
   substitute: true         # if a channel is offline, watch a live streamer you've clipped before instead
   substitute_keywords: ["gta", "grand theft auto"]  # a substitute's stream title must mention one ([] = any game)
+  target_streams: 8        # always keep this many streams recording: offline ones are swapped for live GTA streamers
+  # (your past streamers first, then the most-watched live GTA 6 streams among discover_channels on Twitch)
+  discover_keywords: ["gta 6", "gta vi", "gta6", "grand theft auto vi"]
   recheck_minutes: 5       # offline channels are checked again this often; the original returns when it's live
   keep_awake: true         # Windows won't sleep while production runs
   backlog_max_age_hours: 24  # moments saved for later are edited on the next start if newer than this

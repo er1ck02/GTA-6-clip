@@ -184,9 +184,9 @@ class ProductionManager:
         if resume_backlog:
             self._resume_backlog()
         self._next_recheck = time.time() + self.pc.recheck_minutes * 60
-        live_n = sum(p["action"] in ("watch", "substitute", "keep") for p in plans)
-        msg = f"production running: {live_n} of {len(plans)} channel(s) live"
-        subs = [p for p in plans if p["action"] == "substitute"]
+        live_n = sum(p["action"] in ("watch", "substitute", "keep", "fill") for p in plans)
+        msg = f"production running: {live_n} stream(s) recording"
+        subs = [p for p in plans if p["action"] in ("substitute", "fill")]
         if subs:
             msg += f", {len(subs)} stand-in(s)"
         if self.backlog_left:
@@ -202,34 +202,68 @@ class ProductionManager:
         top = self.history()[: self.pc.default_streams]
         return [{"channel": c.channel, "url": c.urls[0] if c.urls else None} for c in top]
 
+    def _discover(self) -> list[L.LiveCheck]:
+        return L.discover_live(self.pc.discover_channels, self.check, self.pc.discover_keywords)
+
+    def _recording_slots(self) -> list[dict]:
+        running = set(self._running().values())
+        return [s for s in self.slots if s.get("key") and self.live.watches.get(s["key"]) in running]
+
     def _apply_plan(self) -> list[dict]:
-        """Check every lineup channel, start the live ones, stand someone in for the rest."""
+        """Check every lineup channel, start the live ones, stand someone in for the rest, and keep
+        ``target_streams`` recording. Stand-ins that are still recording keep their slot."""
         if self._planning:
             return self.slots
         self._planning = True
         try:
-            busy = set(self._running())
-            plans = L.plan_lineup(list(self.state["lineup"]), self.history(), self.check,
+            running = self._running()
+            held = [s for s in self._recording_slots() if s["action"] in ("substitute", "fill")]
+            held_wanted = {s["wanted"] for s in held if s["action"] == "substitute"}
+            lineup = [e for e in self.state["lineup"]
+                      if (e.get("channel") or L.channel_of(e.get("url") or "") or "").lower() not in held_wanted]
+            target = self.pc.target_streams
+            plans = L.plan_lineup(lineup, self.history(), self.check,
                                   substitute=self.pc.substitute, keywords=self.pc.substitute_keywords,
-                                  max_candidates=self.pc.max_candidates, busy=busy)
+                                  max_candidates=self.pc.max_candidates, busy=set(running),
+                                  target=max(0, target - len(held)) if target else 0,
+                                  discover=self._discover if target else None)
             if self.mode != "running":  # a stop arrived while we were checking
                 return [p.to_dict() for p in plans]
+            if target:  # an original came back: make room by stopping extra streams, newest first
+                over = len(held) + sum(p.action in ("watch", "keep", "substitute", "fill") for p in plans) - target
+                for s in sorted(held, key=lambda s: (s["action"] != "fill", -s.get("started_at", 0))):
+                    if over <= 0:
+                        break
+                    log.info("stopping stand-in %s to keep %d streams", s["channel"], target)
+                    try:
+                        self.live.stop(s["key"])
+                    except ClipStudioError:
+                        pass
+                    held.remove(s)
+                    if s["action"] == "substitute":  # its lineup channel was skipped above; list it as waiting
+                        plans.append(L.SlotPlan(s["wanted"], s.get("wanted_url"), "wait",
+                                                note=f"{s['wanted']} is offline; {target} streams are already recording"))
+                    over -= 1
             slots = []
             for p in plans:
                 d = p.to_dict()
-                if p.action in ("watch", "substitute"):
+                if p.action in ("watch", "substitute", "fill"):
                     try:
                         key = self.live.start(p.url, None, p.channel, None, 0)["id"]
                         self.ours.add(key)
                         self._remember(p.channel, p.url)
-                        d["key"] = key
+                        d["key"], d["started_at"] = key, time.time()
                     except ClipStudioError as e:
+                        if p.action == "fill":
+                            continue
                         d["action"], d["note"] = "wait", f"could not start {p.channel}: {e}"
                 elif p.action == "keep":
-                    w = self._running().get(p.channel)
+                    w = running.get(p.channel)
                     d["key"] = w.key if w else None
                 slots.append(d)
                 log.info("lineup %s: %s %s", p.wanted, d["action"], d["note"])
+            order = {e.get("channel"): i for i, e in enumerate(self.state["lineup"])}
+            slots = sorted(held + slots, key=lambda d: (d["action"] == "fill", order.get(d["wanted"], 1 << 20)))
             with self.lock:
                 self.slots = slots
                 self.save()
@@ -278,13 +312,18 @@ class ProductionManager:
                 if "workstation" in why:  # you stopped it by hand: drop it from the lineup
                     self.state["lineup"] = [e for e in self.state["lineup"] if e["channel"] != s["wanted"]]
                     self.slots.remove(s)
+                    changed = True
+                elif s["action"] == "fill":  # an extra stream ended: a fresh pick takes its place
+                    self.slots.remove(s)
+                    changed = True
                 else:
                     s["action"], s["key"], s["note"] = "wait", None, f"{s['channel']} went offline ({why[:80]})"
                     changed = True
             if changed:
                 self.save()
         due = time.time() >= self._next_recheck
-        needs = any(s["action"] in ("wait", "substitute") for s in self.slots)
+        needs = (any(s["action"] in ("wait", "substitute", "fill") for s in self.slots)
+                 or (self.pc.target_streams and len(self._recording_slots()) < self.pc.target_streams))
         if (changed or due) and needs:
             self._next_recheck = time.time() + self.pc.recheck_minutes * 60
             self._swap_back()
@@ -300,7 +339,13 @@ class ProductionManager:
                 continue
             r = L.first_live([u for u in [L.resume_url(s.get("wanted_url"), s["wanted"])] if u]
                              + L.guess_urls(s["wanted"]), self.check)
-            if r.live:
+            if r.live and self.pc.target_streams:
+                # the original gets its slot back; the stand-in keeps recording as an extra stream unless that
+                # would go over target_streams (then _apply_plan stops it)
+                log.info("%s is live again; %s becomes an extra stream", s["wanted"], s["channel"])
+                s.update(action="fill", wanted=s["channel"], wanted_url=s.get("url"),
+                         note=f"keeping {self.pc.target_streams} streams going: {s['channel']} stays on")
+            elif r.live:
                 log.info("%s is live again; stopping stand-in %s", s["wanted"], s["channel"])
                 try:
                     self.live.stop(s["key"])
