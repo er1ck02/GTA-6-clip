@@ -137,6 +137,70 @@ def wait_for(port: int, want: str, seconds: float) -> bool:
     return False
 
 
+# ------------------------------------------------------------------ PATH repair
+def _registry_path() -> list[str]:
+    """PATH as Windows has it saved now (user + machine). A console opened before winget installed FFmpeg, or
+    started by another program, inherits an older PATH without it."""
+    out: list[str] = []
+    try:
+        import winreg  # type: ignore[import-not-found]
+
+        for root, key in ((winreg.HKEY_CURRENT_USER, r"Environment"),
+                          (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")):
+            try:
+                with winreg.OpenKey(root, key) as k:
+                    val, _ = winreg.QueryValueEx(k, "Path")
+                    out += [os.path.expandvars(x) for x in str(val).split(";") if x.strip()]
+            except OSError:
+                pass
+    except ImportError:
+        pass
+    return out
+
+
+def _known_ffmpeg_dirs() -> list[str]:
+    import glob
+
+    local = os.environ.get("LOCALAPPDATA", "")
+    pats = [os.path.join(local, "Microsoft", "WinGet", "Links"),
+            os.path.join(local, "Microsoft", "WinGet", "Packages", "*FFmpeg*", "*", "bin"),
+            os.path.join(local, "Microsoft", "WinGet", "Packages", "*FFmpeg*", "bin"),
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "ffmpeg", "bin"),
+            r"C:\ffmpeg\bin", os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), "chocolatey", "bin"),
+            os.path.join(os.path.expanduser("~"), "scoop", "shims")]
+    out = []
+    for p in pats:
+        out += sorted(glob.glob(p), reverse=True)  # newest FFmpeg build first
+    return out
+
+
+def repair_path() -> list[str]:
+    """Make sure FFmpeg, ffprobe and the venv's yt-dlp are on PATH for this process and the server it starts.
+    Returns the folders that were added."""
+    cur = os.environ.get("PATH", "").split(os.pathsep)
+    seen = {os.path.normcase(os.path.normpath(x)) for x in cur if x}
+    added = []
+
+    def add(d: str) -> None:
+        n = os.path.normcase(os.path.normpath(d))
+        if d and n not in seen and os.path.isdir(d):
+            seen.add(n)
+            added.append(d)
+
+    add(str(Path(sys.executable).parent))  # .venv\Scripts: yt-dlp, streamlink
+    if sys.platform == "win32":
+        for d in _registry_path():
+            add(d)
+        if not shutil.which("ffmpeg", path=os.pathsep.join(cur + added)):
+            for d in _known_ffmpeg_dirs():
+                if os.path.isfile(os.path.join(d, "ffmpeg.exe")):
+                    add(d)
+                    break
+    if added:
+        os.environ["PATH"] = os.pathsep.join(cur + added)
+    return added
+
+
 # ------------------------------------------------------------------ preflight
 def preflight(cfg) -> list[tuple[str, bool, str]]:
     """Quick checks before starting (the full ``doctor`` runs inside the workstation)."""
@@ -188,6 +252,8 @@ def start(a) -> dict:
     port = launch["port"]
     cfg = config_for(launch)
     say("Starting Clip Studio production", quiet)
+    for d in repair_path():
+        say(f"  .. added to PATH for Clip Studio: {d}", quiet)
     checks = preflight(cfg)
     for name, ok, note in checks:
         say(f"  {'OK ' if ok else '!! '} {name}: {note}", quiet)
@@ -308,6 +374,7 @@ def status(a) -> dict:
 # ------------------------------------------------------------------ supervise (runs in the server window)
 def supervise(a) -> int:
     """Run the server and bring it back if it crashes, until production is stopped."""
+    repair_path()  # the server inherits this PATH (FFmpeg from winget, the venv's yt-dlp)
     launch = resolve_launch(a)
     port = launch["port"]
     cfg = config_for(launch)

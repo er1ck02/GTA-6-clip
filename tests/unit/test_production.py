@@ -300,3 +300,13 @@ def test_launch_settings_are_remembered(tmp_path, monkeypatch):
     assert cmd[1:5] == ["-m", "app.cli", "ui", "--port"]
     cfg = agent.config_for(launch)
     assert Path(cfg.paths.data_dir) == tmp_path / "dd" and cfg.processing.profile == "quality"
+
+
+def test_repair_path_adds_the_venv_and_is_idempotent(monkeypatch):
+    import os
+    import sys
+
+    monkeypatch.setenv("PATH", "/usr/bin")
+    added = agent.repair_path()
+    assert str(Path(sys.executable).parent) in os.environ["PATH"].split(os.pathsep)
+    assert agent.repair_path() == [] and len(added) <= 1
