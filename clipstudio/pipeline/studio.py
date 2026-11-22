@@ -887,8 +887,8 @@ class Studio:
             if co.emotes:
                 # drawn as a small transparent video, so emote words can be pictures
                 from clipstudio.captions.chat_overlay import render_chat_video
-                from clipstudio.chat.emotes import EmoteIndex, channel_from_source
-                index = EmoteIndex(self.data_dir / "cache", channel_from_source(p.source_path()))
+                from clipstudio.chat.emotes import EmoteIndex
+                index = EmoteIndex.from_source(self.data_dir / "cache", p.source_path())
                 f_vid.unlink(missing_ok=True)
                 box = render_chat_video(msgs, plan, co, c.output_duration, f_vid, index, cap_y)
                 f_chat.write_text("", encoding="utf-8")

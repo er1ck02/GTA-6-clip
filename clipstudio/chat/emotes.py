@@ -6,8 +6,9 @@ Sources, all public and without a login:
   Twitch name, also for a YouTube stream of the same creator, whose viewers type the same emote names);
 * a short list of classic Twitch global emotes (Kappa, LUL, PogChamp ...) from Twitch's image server.
 
-Twitch subscriber emotes (a channel's paid emotes, e.g. "xqcL") are not in any public list by name: they
-would have to be recorded with their ids when chat is captured, so they stay text here.
+Twitch subscriber emotes (a channel's paid emotes, e.g. "xqcL") are not in any public list by name: live mode
+records their ids from Twitch chat's message tags into ``<session>/emotes.json``, and ``add_twitch_ids`` (or
+``from_source``) turns those into pictures too.
 
 Lists are cached for a day and pictures forever under ``<cache_dir>/emotes``. Everything is best effort:
 with no network, or an unknown channel, words simply stay words. Only the channel's public name is sent.
@@ -57,6 +58,24 @@ class EmoteIndex:
         self.providers = providers
         self.urls: dict[str, tuple[str, str]] = {}   # name -> (provider/id key, url)
         self._loaded = False
+
+    @classmethod
+    def from_source(cls, cache_dir: Path, source: Path, **kw) -> "EmoteIndex":
+        """Index for a clip's source; a live moment also gets the emote ids its session recorded from chat."""
+        idx = cls(cache_dir, channel_from_source(source), **kw)
+        f = source.parent.parent / "emotes.json" if source.parent.name == "moments" else None
+        if f is not None and f.is_file():
+            try:
+                idx.add_twitch_ids(json.loads(f.read_text(encoding="utf-8")))
+            except (OSError, ValueError) as e:
+                log.debug("emote ids in %s unreadable: %s", f, e)
+        return idx
+
+    def add_twitch_ids(self, ids: dict[str, str]) -> None:
+        """Emote name -> Twitch id seen in chat; these win over lists (they are exactly what chat sent)."""
+        for name, eid in (ids or {}).items():
+            if name and re.fullmatch(r"[\w-]+", str(eid)):
+                self.urls[name] = (f"twitch/{eid}", f"https://static-cdn.jtvnw.net/emoticons/v2/{eid}/default/dark/2.0")
 
     # ------------------------------------------------------------ lists
     def _cached(self, key: str, fetch):

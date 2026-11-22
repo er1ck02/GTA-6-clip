@@ -31,6 +31,7 @@ class LiveMessage:
     user: str
     text: str
     stream_time: bool = False
+    emotes: dict[str, str] | None = None  # Twitch emote name -> id (from the IRC tags), for the overlay's pictures
 
 
 class ChatSource:
@@ -83,6 +84,30 @@ def parse_irc_line(line: str) -> tuple[str, str] | None:
     return (m.group(1), m.group(2)) if m else None
 
 
+def irc_emotes(line: str, text: str) -> dict[str, str]:
+    """Emote name -> Twitch emote id from a tagged PRIVMSG (``@...;emotes=25:0-4,6-10/1902:12-16;...``).
+
+    Positions count characters of the message text, so the names include subscriber emotes (e.g. "xqcL") that no
+    public list knows by name. Empty without the twitch.tv/tags capability or when the message has no emotes."""
+    if not line.startswith("@"):
+        return {}
+    tags = line[1:].split(" ", 1)[0]
+    raw = next((kv[7:] for kv in tags.split(";") if kv.startswith("emotes=")), "")
+    out: dict[str, str] = {}
+    for part in raw.split("/"):
+        eid, _, spans = part.partition(":")
+        if not eid or not spans:
+            continue
+        a, _, b = spans.split(",")[0].partition("-")
+        try:
+            name = text[int(a): int(b) + 1]
+        except ValueError:
+            continue
+        if name and re.fullmatch(r"[\w-]+", eid):
+            out[name] = eid
+    return out
+
+
 class TwitchChat(_Threaded):
     name = "twitch"
     HOST, PORT = "irc.chat.twitch.tv", 6667
@@ -97,7 +122,9 @@ class TwitchChat(_Threaded):
                 with socket.create_connection((self.HOST, self.PORT), timeout=10) as s:
                     s.settimeout(1.0)
                     nick = f"justinfan{random.randint(10000, 99999)}"
-                    s.sendall(f"PASS SCHMOOPIIE\r\nNICK {nick}\r\nJOIN #{self.channel}\r\n".encode())
+                    # tags carry each message's emote ids (subscriber emotes have no public list by name)
+                    s.sendall(f"CAP REQ :twitch.tv/tags\r\nPASS SCHMOOPIIE\r\nNICK {nick}\r\n"
+                              f"JOIN #{self.channel}\r\n".encode())
                     log.info("reading Twitch chat for #%s (anonymous, read-only)", self.channel)
                     buf = b""
                     while not self._stop.is_set():
@@ -114,7 +141,8 @@ class TwitchChat(_Threaded):
                             if line.startswith("PING"):
                                 s.sendall(b"PONG :tmi.twitch.tv\r\n")
                             elif (m := parse_irc_line(line)) is not None:
-                                self.q.put(LiveMessage(time.time(), m[0], m[1]))
+                                self.q.put(LiveMessage(time.time(), m[0], m[1],
+                                                       emotes=irc_emotes(line, m[1]) or None))
             except OSError as e:
                 log.warning("Twitch chat connection dropped (%s); reconnecting", e)
                 self._stop.wait(5)

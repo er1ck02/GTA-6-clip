@@ -92,6 +92,8 @@ class LiveSession:
         self.moments: list[Moment] = []
         self.pending: list[Moment] = []
         self.chat_log: list[tuple[float, str, str]] = []  # (stream time, user, text), trimmed with the buffer
+        self.emote_ids: dict[str, str] = {}  # Twitch emote name -> id seen in this chat (saved as emotes.json)
+        self._emotes_saved = 0
         self.jobs: queue.Queue[Moment | None] = queue.Queue()
         self.worker: threading.Thread | None = None
         self.peak_disk = 0
@@ -200,7 +202,18 @@ class LiveSession:
             events.publish("live_moment", channel=self.channel, moment=m.id, status=m.status)
             self.save_queue()
 
+    def _save_emotes(self) -> None:
+        """Keep the channel's emote ids next to its moments, so the chat overlay can draw subscriber emotes."""
+        if len(self.emote_ids) == self._emotes_saved:
+            return
+        try:
+            write_text_atomic(self.out / "emotes.json", json.dumps(self.emote_ids, indent=1, sort_keys=True))
+            self._emotes_saved = len(self.emote_ids)
+        except OSError as e:
+            log.debug("could not save emote ids: %s", e)
+
     def _write_chat(self, m: Moment, video: Path) -> str | None:
+        self._save_emotes()
         a, b = m.saved
         rows = [{"time_in_seconds": round(t - a, 3), "message": text, "author": {"name": user}}
                 for t, user, text in self.chat_log if a <= t <= b]
@@ -331,6 +344,8 @@ class LiveSession:
                     t = msg.t if msg.stream_time else self.ring.stream_time_at(msg.t)
                     self.det.add_chat(t, msg.text)
                     self.chat_log.append((t, msg.user, msg.text))
+                    if getattr(msg, "emotes", None):
+                        self.emote_ids.update(msg.emotes)
                     self.chat_count += 1
                     self.recent_chat.append({"t": round(t, 1), "user": msg.user, "text": msg.text[:200]})
                 for tr in self.det.evaluate(head):
