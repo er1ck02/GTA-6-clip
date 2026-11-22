@@ -99,7 +99,7 @@ class ScoringWeights(_Strict):
 class HighlightsCfg(_Strict):
     # 12-30 s is where short clips hold their viewers; 45 s is the hard ceiling
     minimum_duration: float = Field(12, gt=1)
-    maximum_duration: float = Field(45, gt=1)
+    maximum_duration: float = Field(30, gt=1)   # style spec: 12-30 s clips
     target_duration: float = Field(20, gt=1)
     minimum_score: float = Field(0.55, ge=0, le=1)
     max_candidates: int = Field(10, ge=1, le=200)
@@ -136,11 +136,11 @@ class HighlightsCfg(_Strict):
     # Lead-in: a clip starts at least this long before the moment, and further back over the talk that leads
     # straight into it (sentences with no real pause between them), up to lead_in_max seconds before it.
     lead_in_seconds: float = Field(12.0, ge=2, le=40)
-    lead_in_max: float = Field(26.0, ge=2, le=60)
-    reaction_tail: float = Field(4.0, ge=1, le=20)   # at least this much after the moment (the reaction itself)
+    lead_in_max: float = Field(18.0, ge=2, le=60)
+    reaction_tail: float = Field(3.0, ge=1, le=20)   # at least this much after the moment (the reaction itself)
     # ... and no more than this: the clip cuts hard once the reaction has landed, with no trailing talk
     # (a sentence in progress is finished). The moment is located to within a few seconds, hence the slack.
-    reaction_max: float = Field(8.0, ge=1, le=30)
+    reaction_max: float = Field(5.0, ge=1, le=30)
     # The cause must be in the clip: the loudest jump or on-screen event in the 25 s before the reaction (the
     # crash, not the wreck) is looked for, and the clip starts this long before it instead of on the aftermath.
     cause_lead: float = Field(5.0, ge=0, le=15)

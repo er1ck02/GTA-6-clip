@@ -89,8 +89,10 @@ def record_verdict(clip_file: Path, approved: bool, reason: str, reviewer: str, 
     if approved:
         out.mkdir(parents=True, exist_ok=True)
         shutil.copy2(clip_file, dst)
-        line = (f"{dst.name} | title: {doc.get('post_title') or doc.get('title') or ''} | channel: {doc.get('channel') or ''}"
-                f" | approved by {reviewer}: {reason}\n")
+        ch = "".join(c for c in str(doc.get("channel") or "").lower() if c.isalnum() or c == "_")
+        tags = "#gta6" + (f" #{ch}" if ch else "") + " + #shorts (YouTube) or #fyp (TikTok)"
+        line = (f"{dst.name} | title: {doc.get('post_title') or doc.get('title') or ''} | hashtags: {tags}"
+                f" | channel: {doc.get('channel') or ''} | approved by {reviewer}: {reason}\n")
         with open(out / "MAP.txt", "a", encoding="utf-8") as f:
             f.write(line)
     elif dst.exists():

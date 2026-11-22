@@ -19,7 +19,7 @@ transcription:
 
 highlights:
   minimum_duration: 12
-  maximum_duration: 45
+  maximum_duration: 30
   target_duration: 20
   minimum_score: 0.55
   max_candidates: 10
