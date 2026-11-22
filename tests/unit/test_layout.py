@@ -22,10 +22,16 @@ def test_crops_inside_frame_and_9x16(w, h, mode, cx):
         assert r.x >= 0 and r.y >= 0 and r.x + r.w <= w and r.y + r.h <= h
         assert r.w % 2 == 0 and r.h % 2 == 0
     if mode == "gameplay":
-        assert abs(kf.gameplay.w / kf.gameplay.h - 9 / 16) < 0.01
+        # the crop has the shape of the panel it fills (wide by default: 1080x1280 over a blurred fill)
+        gp = next(p for p in plan.panels if p.name == "gameplay").dest
+        assert abs(kf.gameplay.w / kf.gameplay.h - gp.w / gp.h) < 0.01 and (gp.w, gp.h) == (1080, 1280)
+        full = load_config(overrides=["reframing.mode=gameplay", "reframing.gameplay_fill=full"])
+        fk = plan_layout(_m(w, h), full.reframing, full.video, full.captions).keyframes[0].gameplay
+        assert abs(fk.w / fk.h - 9 / 16) < 0.01
     if mode == "facecam_split":
         face = next(p for p in plan.panels if p.name == "facecam").dest
-        assert abs(kf.facecam.w / kf.facecam.h - face.w / face.h) < 0.02
+        # a webcam big enough fills the panel exactly; a small one is shown whole over a blurred fill
+        assert plan.facecam_fit or abs(kf.facecam.w / kf.facecam.h - face.w / face.h) < 0.02
         assert plan.caption_band[0] > face.h
 
 
@@ -103,3 +109,28 @@ def test_framing_moves_and_zooms_the_locked_crop():
     g = plan.keyframes[0].gameplay
     assert len(plan.keyframes) == 1 and abs(g.h - 1080 / 1.25) <= 2 and g.y == 0
     assert abs(g.w / g.h - 1080 / 1280) < 0.01 and any("overlays" in n for n in plan.notes)
+
+
+def test_small_webcam_is_shown_whole_not_blown_up():
+    from clipstudio.rendering.render import build_video_graph
+    cfg = load_config(overrides=["reframing.mode=auto"])
+    small = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions,
+                        _det(0.9, region=(0.039, 0.413, 0.088, 0.175)), None, 0.6)
+    f = small.keyframes[0].facecam
+    assert small.facecam_fit and f.w >= 150 and f.h >= 170          # the whole camera picture, not a strip of it
+    assert any("small webcam" in n for n in small.notes)
+    g = build_video_graph(small, 60, None)
+    assert "boxblur" in g and "overlay=" in g and g.count("vstack") == 1
+    big = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6)
+    assert not big.facecam_fit and "boxblur" not in build_video_graph(big, 60, None)
+
+
+def test_no_facecam_gameplay_is_wide_not_zoomed():
+    from clipstudio.rendering.render import build_video_graph
+    cfg = load_config(overrides=["reframing.mode=auto"])
+    plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions)
+    g = plan.keyframes[0].gameplay
+    assert plan.mode == "gameplay" and g.w >= 900                 # 912 px of the source, not 608
+    assert (plan.out_width, plan.out_height) == (1080, 1920)      # the output frame is still exactly 9:16
+    graph = build_video_graph(plan, 60, None)
+    assert "boxblur" in graph and "overlay=0:" in graph

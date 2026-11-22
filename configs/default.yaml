@@ -83,7 +83,9 @@ video:
 captions:
   enabled: true
   preset: bold_viral       # clean_gaming | bold_viral | minimal | high_energy | <your preset>
+  placement: top           # top: where the title card sits, off the action | manual: use vertical_position
   vertical_position: 0.72
+  lead_seconds: 0.15       # show each caption this much before its word
   profanity_filter: false
 
 audio:
@@ -102,7 +104,7 @@ enhance:
   punch_zoom: 1.10         # quick zoom on the peak moment and on-screen events (1.0 = off)
   punch_max: 3
   hook_title: true         # title card on the video (only for titles you or the LLM wrote, never a transcript line)
-  hook_title_seconds: 0    # 0 = the whole clip
+  hook_title_seconds: 3.5  # then it fades and the captions take its place; 0 = the whole clip
   trim_black_edges: true      # cut black frames at clip edges (not when you set start/end yourself)
 
 export:

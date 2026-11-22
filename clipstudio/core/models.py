@@ -180,6 +180,8 @@ class CropPlan(_M):
     # output-space regions that captions must not cover (e.g. the face)
     protected_regions: list[PixelRect] = Field(default_factory=list)
     caption_band: tuple[int, int]  # allowed vertical band (top, bottom) for captions
+    # the facecam source crop is fitted inside its panel (over a blurred fill) instead of filling it
+    facecam_fit: bool = False
     source: Literal["auto", "manual"] = "auto"
     notes: list[str] = Field(default_factory=list)
 

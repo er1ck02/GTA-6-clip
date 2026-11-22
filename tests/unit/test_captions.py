@@ -31,7 +31,8 @@ def test_chunks_cover_every_word_without_overlap():
 def test_word_times_are_clip_relative():
     _, _, track, tr = _track()
     first = track.chunks[0].lines[0][0]
-    assert abs(first.start - (tr.words()[0].start - 9.0)) < 1e-3
+    # clip-relative, and shown captions.lead_seconds (0.15 s) before the word is spoken
+    assert abs(first.start - (tr.words()[0].start - 9.0 - 0.15)) < 1e-3
 
 
 def test_respects_max_words_and_lines():
@@ -126,3 +127,30 @@ def test_chat_overlay_skips_bots_and_commands():
     from clipstudio.captions.chat_overlay import is_noise
     assert is_noise("@Fossabot", "JOIN THE OFFICIAL DISCORD") and is_noise("@someone", "!giveaway")
     assert not is_noise("@abbot_fan", "LMAO") and not is_noise("@viewer", "no way!")
+
+
+def test_captions_take_the_title_slot_and_the_title_fades(tmp_path):
+    import re
+    from clipstudio.captions.engine import title_slot
+    cfg = load_config(overrides=["reframing.mode=facecam_split", "reframing.facecam_region={x: 0, y: 0.35, w: 0.22, h: 0.29}"])
+    plan = plan_layout(_media(), cfg.reframing, cfg.video, cfg.captions)
+    tr = make_transcript([(1.0, "hello there chat"), (6.0, "that was close")])
+    track = build_caption_track(tr.words(), 0, 10, cfg.captions, plan)
+    slot = title_slot(plan)
+    game = next(p.dest for p in plan.panels if p.name == "gameplay")
+    assert game.y < slot < game.y + 0.05 * plan.out_height                     # just under the facecam
+    ass = write_ass(track, cfg.captions.resolved_style(), plan, tmp_path / "t.ass", hook="A title",
+                    hook_seconds=3.5, clip_duration=10, placement="top").read_text()
+    hook = [ln for ln in ass.splitlines() if ",Hook,," in ln][0]
+    assert hook.startswith("Dialogue: 1,0:00:00.00,0:00:03.50") and "\\fad(0,450)" in hook
+    ys = {ln.split(",")[1]: int(re.search(r"\\an8\\pos\(\d+,(\d+)\)", ln).group(1))
+          for ln in ass.splitlines() if ",Cap,," in ln}
+    early = [y for t, y in ys.items() if t < "0:00:03.30"]
+    late = [y for t, y in ys.items() if t > "0:00:03.50"]
+    assert early and late and all(y > slot + 60 for y in early)                # under the title while it is up
+    assert all(abs(y - slot) <= 2 for y in late)                               # then in the title's place
+    # manual placement keeps the old behaviour
+    man = load_config(overrides=["captions.placement=manual"])
+    plan2 = plan_layout(_media(), man.reframing, man.video, man.captions)
+    t2 = build_caption_track(tr.words(), 0, 10, man.captions, plan2)
+    assert abs(t2.layout.baseline_y - int(0.72 * plan2.out_height)) <= 2

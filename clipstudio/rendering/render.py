@@ -111,7 +111,18 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
     kf = plan.keyframes[0]
     W, H = plan.out_width, plan.out_height
     crop = gameplay_crop(plan)
-    if plan.mode == "gameplay":
+    gp = next(p.dest for p in plan.panels if p.name == "gameplay")
+    if plan.mode == "gameplay" and (gp.w, gp.h) != (W, H):
+        # wide: the gameplay crop at its panel size over a blurred, dimmed copy of itself
+        sw, sh = W // 4 - (W // 4) % 2, H // 4 - (H // 4) % 2
+        graph = (
+            f"[0:v]{crop},{pre_fx(enhance)}split=2[gbs][gfs];"
+            f"[gbs]scale={sw}:{sh}:force_original_aspect_ratio=increase,crop={sw}:{sh},"
+            f"boxblur=10:2,eq=brightness=-0.22:saturation=1.1,scale={W}:{H}:flags=bilinear,setsar=1[bg];"
+            f"[gfs]scale={gp.w}:{gp.h}:flags=lanczos,setsar=1{gameplay_fx(gp.w, gp.h, enhance, punches)}[fg];"
+            f"[bg][fg]overlay={gp.x}:{gp.y}[base]"
+        )
+    elif plan.mode == "gameplay":
         graph = (f"[0:v]{crop},{pre_fx(enhance)}scale={W}:{H}:flags=lanczos,setsar=1"
                  f"{gameplay_fx(W, H, enhance, punches)}[base]")
     elif plan.mode == "fit_blur":
@@ -129,10 +140,20 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
         assert f is not None
         top = next(p.dest for p in plan.panels if p.name == "facecam")
         bot = next(p.dest for p in plan.panels if p.name == "gameplay")
+        if plan.facecam_fit:
+            # the whole camera picture, fitted to the panel height, over a blurred and dimmed copy of itself
+            fw = min(top.w, max(2, int(round(top.h * f.w / f.h / 2.0)) * 2))
+            face = (f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},{pre_fx(enhance, strong=True)}split=2[fa][fb];"
+                    f"[fa]scale={top.w}:{top.h}:force_original_aspect_ratio=increase:flags=bilinear,"
+                    f"crop={top.w}:{top.h},boxblur=24:2,eq=brightness=-0.12:saturation=1.1,setsar=1[fbg];"
+                    f"[fb]scale={fw}:{top.h}:flags=lanczos,setsar=1{face_fx(enhance)}[ffg];"
+                    f"[fbg][ffg]overlay={(top.w - fw) // 2}:0[face];")
+        else:
+            face = (f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},{pre_fx(enhance, strong=True)}scale={top.w}:{top.h}:flags=lanczos,"
+                    f"setsar=1{face_fx(enhance)}[face];")
         graph = (
             f"[0:v]split=2[fsrc][gsrc];"
-            f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},{pre_fx(enhance, strong=True)}scale={top.w}:{top.h}:flags=lanczos,"
-            f"setsar=1{face_fx(enhance)}[face];"
+            f"{face}"
             f"[gsrc]{crop},{pre_fx(enhance)}scale={bot.w}:{bot.h}:flags=lanczos,setsar=1"
             f"{gameplay_fx(bot.w, bot.h, enhance, punches)}[game];"
             f"[face][game]vstack=inputs=2[base]"

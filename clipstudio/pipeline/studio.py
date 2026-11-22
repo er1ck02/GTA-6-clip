@@ -54,7 +54,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 10,
-                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 3, "captions": 6, "render": 7, "qc": 5, "platforms": 1, "edges": 1, "framing": 2, "chat_overlay": 3}
+                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 5, "captions": 7, "render": 9, "qc": 5, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 3}
 
 
 @dataclass
@@ -483,18 +483,30 @@ class Studio:
         g = probe_plan.keyframes[0].gameplay
         f_fr = p.clip_dir(c.id) / "framing.json"
         k = key_of("framing", STAGE_VERSIONS["framing"], p.state.stage("metadata").key, c.start, c.end,
-                   g.model_dump(), r.overlay_max_zoom, r.gameplay_center_x)
+                   g.model_dump(), r.overlay_max_zoom, r.gameplay_center_x, r.focus_max_shift,
+                   fc.model_dump() if fc else None)
 
         def do() -> None:
             from clipstudio.vision.frames import sample_range
             from clipstudio.vision.overlays import best_framing, overlay_mask
             fps = min(2.0, max(0.5, 40.0 / max(1.0, c.end - c.start)))
             _, frames = sample_range(p.source_path(), c.start, c.end, fps, media.width, media.height, width=320)
-            fr = best_framing(overlay_mask(frames), g.w / media.width, g.h / media.height, r.overlay_max_zoom,
-                              r.gameplay_center_x)
+            import numpy as np
+            from clipstudio.vision.overlays import action_centre
+            mask = overlay_mask(frames)
+            ignore = mask.copy() if mask is not None else np.zeros(frames.shape[1:3], bool)
+            if fc is not None and fc.region is not None:  # the webcam moves too, and is not the action
+                h, w = ignore.shape
+                rg = fc.region
+                ignore[max(0, int((rg.y - 0.02) * h)): int((rg.y + rg.h + 0.02) * h) + 1,
+                       max(0, int((rg.x - 0.02) * w)): int((rg.x + rg.w + 0.02) * w) + 1] = True
+            cx = action_centre(frames, ignore, r.gameplay_center_x, r.focus_max_shift)
+            fr = best_framing(mask, g.w / media.width, g.h / media.height, r.overlay_max_zoom, cx)
+            if fr is None and abs(cx - r.gameplay_center_x) > 1e-6:
+                fr = {"cx": round(cx, 4), "cy": 0.5, "zoom": 1.0, "cover_before": 0.0, "cover_after": 0.0}
             if fr:
-                log.info("    overlays cover %.0f%% of the gameplay crop; reframed (zoom %.2f) to %.0f%%",
-                         100 * fr["cover_before"], fr["zoom"], 100 * fr["cover_after"])
+                log.info("    gameplay crop centred at %.2f (action at %.2f), zoom %.2f; overlays %.0f%% -> %.0f%%",
+                         fr["cx"], cx, fr["zoom"], 100 * fr["cover_before"], 100 * fr["cover_after"])
             f_fr.write_text(json.dumps(fr))
 
         try:
@@ -723,7 +735,7 @@ class Studio:
                 track = build_caption_track(words, c.start, c.start + c.output_duration, cfg.captions, plan)
                 track.save(f_caps)
             write_ass(track, cfg.captions.resolved_style(), plan, f_ass, hook, cfg.enhance.hook_title_seconds,
-                      clip_duration=c.output_duration)
+                      clip_duration=c.output_duration, placement=cfg.captions.placement)
             if cfg.captions.export_srt:
                 write_srt(track, f_srt)
 

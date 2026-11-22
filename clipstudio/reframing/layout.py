@@ -124,9 +124,9 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
 
     tracked = len(path) > 1
     if framing and not tracked and mode != "fit_blur":
-        notes.append(f"gameplay crop moved off stream overlays: zoom {framing['zoom']:.2f}, centre "
-                     f"({framing['cx']:.2f}, {framing['cy']:.2f}); overlay share {framing.get('cover_before', 0):.0%}"
-                     f" -> {framing.get('cover_after', 0):.0%}")
+        notes.append(f"gameplay crop placed on the action and off stream overlays: zoom {framing['zoom']:.2f}, "
+                     f"centre ({framing['cx']:.2f}, {framing['cy']:.2f}); overlay share "
+                     f"{framing.get('cover_before', 0):.0%} -> {framing.get('cover_after', 0):.0%}")
 
     def gameplay_keys(aspect: float, avoid: bool) -> list[PixelRect]:
         if framing and not tracked:
@@ -146,6 +146,19 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
         out = [k for i, k in enumerate(keys)
                if i in (0, len(keys) - 1) or not (keys[i - 1].gameplay == k.gameplay == keys[i + 1].gameplay)]
         return out
+
+    if mode == "gameplay" and rcfg.gameplay_fill == "wide":
+        gh = _even(H * 2 / 3)
+        gy = _even(H * 0.21)   # leaves a band above for the title and captions, below the apps' top bar
+        rects = gameplay_keys(W / gh, avoid=False)
+        notes.append("no facecam: gameplay shown wide (less zoom) over a blurred fill, text in the band above it")
+        return CropPlan(
+            mode=mode, source_width=sw, source_height=sh, out_width=W, out_height=H,
+            panels=[Panel(name="background", dest=PixelRect(x=0, y=0, w=W, h=H)),
+                    Panel(name="gameplay", dest=PixelRect(x=0, y=gy, w=W, h=gh))],
+            keyframes=dedupe([CropKeyframe(t=t, gameplay=g) for (t, _), g in zip(path, rects)]),
+            caption_band=(safe_top, safe_bottom), notes=notes,
+        )
 
     if mode == "gameplay":
         rects = gameplay_keys(W / H, avoid=False)
@@ -177,6 +190,12 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
     if mode == "facecam_split":
         ph = _even(H * rcfg.facecam_panel_ratio)
         face_src = _cover_crop(cam_px, W / ph, fx, fy)
+        fit = W / max(1, face_src.w) > rcfg.facecam_max_upscale
+        if fit:  # a small webcam: show all of it rather than a blurry close-up of the face
+            face_src = PixelRect(x=cam_px.x, y=cam_px.y, w=_even(cam_px.w) if cam_px.w % 2 == 0 else cam_px.w - 1,
+                                 h=_even(cam_px.h) if cam_px.h % 2 == 0 else cam_px.h - 1)
+            notes.append(f"small webcam ({cam_px.w}x{cam_px.h} px): shown whole over a blurred fill, "
+                         f"enlarged {ph / max(1, face_src.h):.1f}x instead of {W / max(1, _cover_crop(cam_px, W / ph, fx, fy).w):.1f}x")
         rects = gameplay_keys(W / (H - ph), avoid=True)
         face_dest = PixelRect(x=0, y=0, w=W, h=ph)
         return CropPlan(
@@ -185,7 +204,7 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
             keyframes=dedupe([CropKeyframe(t=t, gameplay=g, facecam=face_src) for (t, _), g in zip(path, rects)]),
             protected_regions=[face_dest],
             caption_band=(max(safe_top, ph + int(0.02 * H)), safe_bottom),
-            source=src_source, notes=notes,
+            facecam_fit=fit, source=src_source, notes=notes,
         )
 
     # facecam_pip: full-screen gameplay with the facecam boxed in a top corner

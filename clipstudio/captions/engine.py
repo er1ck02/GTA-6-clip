@@ -133,6 +133,21 @@ def _ts_srt(t: float) -> str:
     return f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
 
 
+def title_slot(plan: CropPlan, block_h: int = 0) -> int:
+    """Top y of the title card, which is also where top-placed captions go.
+
+    Right under the seam of a split layout; otherwise at the top of the caption band (in the band above a
+    wide gameplay picture, below the apps' top bar). Moved below anything protected (a PiP facecam)."""
+    face = next((p.dest for p in plan.panels if p.name == "facecam"), None)
+    game = next((p.dest for p in plan.panels if p.name == "gameplay"), None)
+    split = face is not None and game is not None and face.y == 0 and game.y >= face.h
+    y = max(game.y + int(plan.out_height * 0.018), plan.caption_band[0]) if split else plan.caption_band[0]
+    for pr in plan.protected_regions:
+        if pr.y < y + block_h and pr.y + pr.h > y:
+            y = pr.y + pr.h + int(plan.out_height * 0.02)
+    return y
+
+
 # ------------------------------------------------------------------ build
 def build_caption_track(words: list[Word], clip_start: float, clip_end: float, cfg: CaptionsCfg,
                         plan: CropPlan) -> CaptionTrack:
@@ -152,7 +167,8 @@ def build_caption_track(words: list[Word], clip_start: float, clip_end: float, c
     for w in words:
         if w.end <= clip_start or w.start >= clip_end:
             continue
-        s, e = max(0.0, w.start - clip_start), min(dur, w.end - clip_start)
+        s, e = max(0.0, w.start - clip_start - cfg.lead_seconds), min(dur, w.end - clip_start - cfg.lead_seconds)
+        e = max(e, s + 0.04)
         txt = _clean(w.text, style, cfg)
         if txt:
             cw.append(CaptionWord(text=txt, start=round(s, 3), end=round(max(e, s + 0.04), 3)))
@@ -203,8 +219,11 @@ def build_caption_track(words: list[Word], clip_start: float, clip_end: float, c
     # vertical placement inside the allowed band
     band_top, band_bottom = plan.caption_band
     block_h = line_h * style.max_lines
-    baseline = int(cfg.vertical_position * H)
-    baseline = min(max(baseline, band_top + block_h), band_bottom)
+    if cfg.placement == "top":
+        baseline = min(title_slot(plan, block_h) + block_h, band_bottom)   # bottom of a full caption block
+    else:
+        baseline = int(cfg.vertical_position * H)
+        baseline = min(max(baseline, band_top + block_h), band_bottom)
     layout = CaptionLayout(font_family=family, font_file=font_file, font_size_px=fs, center_x=W // 2,
                            baseline_y=baseline, line_height_px=line_h, max_text_width_px=max_w, measured=m.measured)
     return CaptionTrack(preset=cfg.preset, chunks=chunks, layout=layout, source_word_count=len(cw))
@@ -228,7 +247,8 @@ def _merge_orphans(groups: list[list[CaptionWord]], style: CaptionStyle) -> list
 
 # ------------------------------------------------------------------ writers
 def write_ass(track: CaptionTrack, style: CaptionStyle, plan: CropPlan, path: Path,
-              hook: str | None = None, hook_seconds: float = 0, clip_duration: float | None = None) -> Path:
+              hook: str | None = None, hook_seconds: float = 0, clip_duration: float | None = None,
+              placement: str = "manual") -> Path:
     """Write the ASS file. ``hook`` adds a title card (dark text on a white box) at the top of the gameplay
     picture for the first ``hook_seconds``, or for the whole clip when that is 0."""
     L = track.layout
@@ -256,8 +276,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     hi = _ass_color(style.highlight_color)
     pct = int(round(style.active_word_scale * 100))
     events: list[str] = []
-    pos = f"\\an2\\pos({L.center_x},{L.baseline_y})"
+    # top placement: captions hang down from the title's slot (a one-line caption does not float a line lower),
+    # and sit under the title card for as long as it is up
+    top = placement == "top"
+    slot_y = L.baseline_y - L.line_height_px * style.max_lines
+    hook_end = (hook_seconds if hook_seconds > 0 else 1e9) if hook else 0.0
+    hook_block = int(hook_fs * 1.25 + 2 * hook_pad + plan.out_height * 0.012)
     for c in track.chunks:
+        if top:
+            y = slot_y + (hook_block if c.start < hook_end - 0.2 else 0)
+            pos = f"\\an8\\pos({L.center_x},{y})"
+        else:
+            pos = f"\\an2\\pos({L.center_x},{L.baseline_y})"
         flat = [w for ln in c.lines for w in ln]
         n = len(flat)
         spans = []
@@ -285,15 +315,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if hook:
         # top of the gameplay picture, so the title never sits on the facecam panel of a split layout
         game = next((p.dest for p in plan.panels if p.name == "gameplay"), None)
-        # a split layout puts it right under the seam; a full-screen picture keeps it below the apps' top bar
-        y = (game.y + int(plan.out_height * 0.018) if game and game.y > 0 else plan.caption_band[0])
-        block = int(hook_fs * 2.9)  # up to two lines of hook text
-        for pr in plan.protected_regions:  # e.g. a PiP facecam in a top corner: go below it
-            if pr.y < y + block and pr.y + pr.h > y:
-                y = pr.y + pr.h + int(plan.out_height * 0.02)
+        y = title_slot(plan, int(hook_fs * 2.9))  # room for up to two lines of title
         text = _ass_escape(hook.strip().upper())
         end = hook_seconds if hook_seconds > 0 else (clip_duration or max([c.end for c in track.chunks] + [3600.0]))
-        fade = "\\fad(0,250)" if hook_seconds > 0 else ""
+        fade = "\\fad(0,450)" if hook_seconds > 0 else ""
         events.insert(0, f"Dialogue: 1,{_ts_ass(0)},{_ts_ass(end)},Hook,,0,0,0,,"
                          f"{{\\an8\\pos({plan.out_width // 2},{y})\\q0\\fscx80\\fscy80\\t(0,140,\\fscx100\\fscy100)"
                          f"{fade}}}{text}")

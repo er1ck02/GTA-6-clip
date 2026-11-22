@@ -12,7 +12,7 @@ import numpy as np
 EDGE_THR = 18.0        # grey-level step that counts as an edge
 PERSIST = 0.6          # share of the clip's samples an edge must be present in
 STATIC_SCENE = 0.35    # more of the frame than this "persistent": the game picture itself is standing still
-MIN_COVER = 0.03       # overlays must cover this share of the default crop before the crop is changed
+MIN_COVER = 0.05       # overlays must cover this share of the default crop before the crop is changed
 W_COVER, W_ZOOM, W_CENTRE = 2.0, 0.25, 0.15
 
 
@@ -68,6 +68,34 @@ def _touching_border(mask: np.ndarray) -> np.ndarray:
     return seed
 
 
+def action_centre(frames: np.ndarray, ignore: np.ndarray | None = None, default: float = 0.5,
+                  max_shift: float = 0.14) -> float:
+    """Where, left to right (0..1), the action is over the whole clip: the median column of everything that
+    moved between samples. One value for the clip, so the crop sits on the subject without panning.
+
+    When the game camera itself moves, the whole frame changes and the median stays near the middle; a subject
+    that keeps to one side pulls it there. ``ignore``: mask of pixels to leave out (overlays, the webcam).
+    The result stays within ``max_shift`` of ``default``, and small offsets are not acted on."""
+    if len(frames) < 4 or max_shift <= 0:
+        return default
+    f = frames.astype(np.float32)
+    g = 0.299 * f[..., 0] + 0.587 * f[..., 1] + 0.114 * f[..., 2]
+    d = np.abs(np.diff(g, axis=0)) > 14.0                     # (n-1, h, w): what changed between samples
+    if ignore is not None:
+        d &= ~ignore[None]
+    # leave out samples where nearly everything changed (a scene cut): they say nothing about the subject
+    per = d.reshape(len(d), -1).mean(1)
+    d = d[per < 0.6]
+    col = d.sum((0, 1)).astype(np.float64)
+    if col.sum() < 50:
+        return default
+    cdf = np.cumsum(col) / col.sum()
+    cx = (float(np.searchsorted(cdf, 0.5)) + 0.5) / len(col)
+    if abs(cx - default) < 0.03:
+        return default
+    return float(np.clip(cx, default - max_shift, default + max_shift))
+
+
 def _cover(ii: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> float:
     area = max(1, (x1 - x0) * (y1 - y0))
     return float(ii[y1, x1] - ii[y0, x1] - ii[y1, x0] + ii[y0, x0]) / area
@@ -91,7 +119,7 @@ def best_framing(mask: np.ndarray | None, crop_w: float, crop_h: float = 1.0, ma
     before = _cover(ii, *px(centre_x, 0.5, 1.0))
     if before < MIN_COVER:
         return None
-    best, best_cost = None, W_COVER * before
+    best, best_cost = (float(centre_x), 0.5, 1.0, before), W_COVER * before
     for z in np.arange(1.0, max_zoom + 1e-6, 0.05):
         cw, ch = crop_w / z, crop_h / z
         for cx in np.arange(cw / 2, 1 - cw / 2 + 1e-6, 0.01):
@@ -100,8 +128,6 @@ def best_framing(mask: np.ndarray | None, crop_w: float, crop_h: float = 1.0, ma
                 cost = W_COVER * cov + W_ZOOM * (z - 1) + W_CENTRE * abs(cx - centre_x)
                 if cost < best_cost - 1e-6:
                     best, best_cost = (float(cx), float(cy), float(z), cov), cost
-    if best is None:
-        return None
     cx, cy, z, cov = best
     return {"cx": round(cx, 4), "cy": round(cy, 4), "zoom": round(z, 3), "cover_before": round(before, 4),
             "cover_after": round(cov, 4)}

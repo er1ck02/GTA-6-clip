@@ -179,6 +179,16 @@ class ReframingCfg(_Strict):
     # move and slightly zoom the locked gameplay crop so stream overlays (sponsor banners, alert boxes, a second
     # camera) stay out of the picture; the zoom never exceeds overlay_max_zoom on top of the normal crop
     avoid_overlays: bool = True
+    # No facecam: "wide" shows a 1080x1280 gameplay picture (a 912 px wide crop of 1080p, enlarged 1.19x) over
+    # a blurred fill, with the title and captions in the band above it. "full" fills the whole 9:16 frame with
+    # a 608 px wide crop (enlarged 1.78x), which looks zoomed in and soft on stream recordings.
+    gameplay_fill: Literal["wide", "full"] = "wide"
+    # centre the locked gameplay crop on where the action is over the whole clip (one position, no panning),
+    # moving at most this far from gameplay_center_x (fraction of source width). 0 = always the centre.
+    focus_max_shift: float = Field(0.14, ge=0, le=0.4)
+    # A small webcam is never blown up more than this to fill the facecam panel. Past it, the whole camera
+    # picture is shown at its natural framing over a blurred fill instead of a tight crop of the face.
+    facecam_max_upscale: float = Field(3.6, ge=1.5, le=8)
     overlay_max_zoom: float = Field(1.3, ge=1.0, le=1.6)
 
 
@@ -337,7 +347,13 @@ class CaptionsCfg(_Strict):
     preset: str = "bold_viral"
     style: dict[str, Any] = Field(default_factory=dict, description="overrides applied on top of the preset")
     presets: dict[str, dict[str, Any]] = Field(default_factory=dict, description="extra user presets")
+    # "top": captions sit where the title card is (top of the gameplay picture, or the band above it), so they
+    # do not cover the action; while the title card is up they sit just under it. "manual": vertical_position.
+    placement: Literal["top", "manual"] = "top"
     vertical_position: float = Field(0.72, ge=0.05, le=0.95, description="baseline as fraction of height")
+    # every caption (and word highlight) is shown this many seconds before its word starts: text that appears
+    # exactly on the word reads as late
+    lead_seconds: float = Field(0.15, ge=0, le=0.5)
     safe_margin_x: float = Field(0.07, ge=0, le=0.3)
     safe_margin_top: float = Field(0.10, ge=0, le=0.3)
     safe_margin_bottom: float = Field(0.16, ge=0, le=0.4)
@@ -385,7 +401,7 @@ class EnhanceCfg(_Strict):
     # title card at the top of the gameplay picture. Shown only for a title written by a person or by the
     # LLM re-rank: the automatic fallback title is a line of the transcript, which is not a hook.
     hook_title: bool = True
-    hook_title_seconds: float = Field(0, ge=0, le=600)   # 0 = stays up for the whole clip
+    hook_title_seconds: float = Field(3.5, ge=0, le=600)   # then it fades out; 0 = stays up for the whole clip
     # drop black frames at the very start/end of a clip (loading screens, fades); skipped when you set the bounds
     trim_black_edges: bool = True
 

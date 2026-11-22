@@ -194,3 +194,21 @@ def test_a_still_graphic_mid_screen_is_content_not_an_overlay():
     m[70:, :40] = True           # a banner docked to the bottom-left corner
     out = _touching_border(m)
     assert out[80, 10] and not out[45, 80]
+
+
+def test_action_centre_finds_the_side_the_subject_keeps_to():
+    from clipstudio.vision.overlays import action_centre
+    rng = np.random.default_rng(5)
+    h, w, n = 90, 160, 12
+    still = np.full((n, h, w, 3), 90, np.uint8)
+    left = still.copy()
+    for i in range(n):  # something keeps moving at x = 0.3 of the frame
+        left[i, 30:60, 40:56] = rng.integers(0, 255, (30, 16, 3), dtype=np.uint8)
+    assert abs(action_centre(left) - 0.36) < 0.02          # pulled left, but no further than max_shift (0.14)
+    assert abs(action_centre(left, max_shift=0.25) - 0.30) < 0.03
+    assert action_centre(still) == 0.5                     # nothing moves: stay centred
+    whole = rng.integers(0, 255, (n, h, w, 3), dtype=np.uint8)
+    assert action_centre(whole) == 0.5                     # everything changes (camera cuts): no bias
+    ignore = np.zeros((h, w), bool)
+    ignore[25:65, 35:60] = True
+    assert action_centre(left, ignore) == 0.5              # the moving thing is a webcam or an overlay
