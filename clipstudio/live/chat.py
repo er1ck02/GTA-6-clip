@@ -252,3 +252,46 @@ def make_chat_source(spec: str | None, url: str | None, work: Path) -> ChatSourc
         if "youtube.com" in url or "youtu.be" in url:
             return YouTubeChat(url, work / "chat")
     return ChatSource()
+
+
+LINK_RE = re.compile(r"(https?://\S+)")
+
+
+def split_links(text: str) -> list[str]:
+    """Links and file paths from pasted text: one per line, or several URLs on a line separated by spaces/commas."""
+    out: list[str] = []
+    for line in (text or "").splitlines():
+        line = line.strip().strip(",")
+        if not line:
+            continue
+        urls = LINK_RE.findall(line)
+        out += [u.rstrip(",;)") for u in urls] if urls else [line]
+    seen: set[str] = set()
+    return [x for x in out if not (x in seen or seen.add(x))]
+
+
+def classify_link(link: str, probe: bool = True) -> str:
+    """"live", "vod" or "file". Twitch/Kick channel pages are live and their /videos/ pages are VODs; a YouTube
+    link is asked about once with yt-dlp (one metadata request, no download) because watch URLs serve both."""
+    if not re.match(r"https?://", link, re.I):
+        return "file"
+    low = link.lower()
+    if re.search(r"twitch\.tv/(videos/|\w+/clip/|\w+/video/)|clips\.twitch\.tv|kick\.com/\w+/videos?/|"
+                 r"kick\.com/video/|youtube\.com/shorts/", low):
+        return "vod"
+    if re.search(r"twitch\.tv/\w+/?($|\?)|kick\.com/\w+/?($|\?)", low):
+        return "live"
+    if re.search(r"youtube\.com/(@[\w.-]+|channel/[\w-]+|c/[\w-]+)/live", low) or "/live/" in low:
+        return "live"
+    if not probe:
+        return "vod"
+    from clipstudio.live.buffer import _ytdlp_cmd
+
+    try:
+        cp = subprocess.run(_ytdlp_cmd() + ["--quiet", "--no-warnings", "--skip-download", "--no-playlist",
+                                            "--print", "%(live_status)s", link],
+                            capture_output=True, text=True, timeout=45)
+    except (OSError, subprocess.TimeoutExpired):
+        return "vod"
+    status = (cp.stdout.strip().splitlines() or [""])[0]
+    return "live" if status in ("is_live", "is_upcoming") else "vod"

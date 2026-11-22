@@ -19,10 +19,6 @@
       <select id="projectSelect" aria-label="Project"><option value="">loading…</option></select>
       <span id="sampleBadge" class="badge badge-sample" hidden title="This project's source is the bundled synthetic sample video, not a real stream">SAMPLE DATA<span class="long"> · SYNTHETIC</span></span>
     </div>
-    <form id="importForm" class="import" autocomplete="off">
-      <input id="importInput" type="text" spellcheck="false" placeholder="Import a local file path or a VOD URL…" aria-label="Import source">
-      <button type="submit" class="btn btn-dark">IMPORT</button>
-    </form>
     <div class="sysbadges">
       <span id="deviceBadge" class="badge badge-dim" title="Processing device / profile from /api/system">…</span>
       <span id="sseBadge" class="badge badge-dim" title="Live event stream">EVENTS ○</span>
@@ -39,20 +35,22 @@
   <!-- ============================================================ LIVE -->
   <section class="panel live" id="livePanel">
     <div class="panel-head">
-      <h2>LIVE / STREAM WATCH</h2>
-      <span class="badge badge-dim" id="liveBadge">OFF</span>
-      <span class="ph-meta" id="liveMeta">paste a Twitch / YouTube / Kick stream URL</span>
-      <form id="liveForm" class="live-form" autocomplete="off">
-        <input id="liveUrl" type="text" spellcheck="false" placeholder="Stream URL (or a file path for a dry run)" aria-label="Stream URL">
-        <input id="liveChannel" type="text" spellcheck="false" placeholder="channel (auto)" aria-label="Channel name">
-        <button type="submit" class="btn btn-accent btn-sm" id="liveStart" title="Add this stream; every stream is watched at the same time">WATCH LIVE</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="liveAll" title="Watch every stream listed in live.channels">WATCH ALL</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="liveStop" disabled title="Stop the selected stream">STOP</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="liveStopAll" disabled title="Stop every stream">STOP ALL</button>
-        <button type="button" class="ibtn toggle" id="liveFollow" title="Open each moment in the workstation while it is being edited">FOLLOW</button>
-      </form>
+      <h2>SOURCES / STREAM WATCH</h2>
+      <span class="badge badge-dim" id="liveBadge">IDLE</span>
+      <span class="ph-meta" id="liveMeta">paste links below: live streams are watched, VODs are analysed</span>
+      <div class="src-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="liveAll" title="Watch every stream listed in live.channels in your config">WATCH SAVED</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="liveStopAll" disabled title="Stop every live stream (moments already saved are still edited)">STOP ALL</button>
+        <button type="button" class="ibtn toggle" id="liveFollow" title="Open each moment of the selected stream in the workstation while it is being edited">FOLLOW</button>
+      </div>
     </div>
-    <div class="live-channels" id="liveChannels" aria-label="Streams being watched"></div>
+    <form class="src-add" id="srcForm" autocomplete="off">
+      <textarea id="srcInput" rows="1" spellcheck="false" aria-label="Links to add"
+        placeholder="Paste links: Twitch / YouTube / Kick live streams or VODs, or file paths. Paste as many as you like, one per line."></textarea>
+      <button type="submit" class="btn btn-accent" id="srcAdd">ADD</button>
+      <span class="src-hint mono"><b id="srcCount">0</b> link<span id="srcPlural">s</span> · live → watched · VOD → analysed · ctrl+enter</span>
+    </form>
+    <div class="src-table" id="srcTable" role="table" aria-label="Sources"></div>
     <div class="live-body">
       <div class="live-feed">
         <img id="liveFrame" alt="Newest recorded frame">
