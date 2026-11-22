@@ -239,6 +239,34 @@ def tighten(start: float, end: float, sents: list[Sentence], loud: LoudnessTrack
     return s2, e2
 
 
+EVIDENCE_AUDIO = 0.5     # audio_spike: a jump of about 7.5 dB over the level just before it
+EVIDENCE_SPEECH = 1.4    # reaction_score of the clip's words ("oh my god", "no way", laughter, exclamations)
+EVIDENCE_CHAT = 5        # messages inside 5 s, and chat clearly busier than normal for this stream
+EVIDENCE_EVENT = 0.5     # game_event (death screen, HUD text, flash)
+
+
+def payoff_evidence(f: dict[str, float], text: str, sig: "Signals", start: float, end: float) -> list[str]:
+    """Which independent signs of a payoff this clip has: any of "audio", "speech", "chat", "game event".
+
+    Each one alone is common (a loud game sound, a talkative streamer, three chat messages in a row); a real
+    moment usually shows in two or more at the same time."""
+    ev = []
+    if f.get("audio_spike", 0.0) >= EVIDENCE_AUDIO:
+        ev.append("audio")
+    if reaction_score(text) >= EVIDENCE_SPEECH:
+        ev.append("speech")
+    if sig.has_chat and f.get("chat_activity", 0.0) >= 0.5:
+        a, b = max(0, int(start)), min(len(sig.chat_rate), int(end + 6) + 1)
+        if b > a:
+            burst = float(np.convolve(sig.chat_rate, np.ones(5, np.float32), mode="same")[a:b].max())
+            hype = float(np.convolve(sig.chat_hype, np.ones(8, np.float32), mode="same")[a:b].max())
+            if burst >= EVIDENCE_CHAT or hype >= 3:
+                ev.append("chat")
+    if f.get("game_event", 0.0) >= EVIDENCE_EVENT:
+        ev.append("game event")
+    return ev
+
+
 def _category(text: str, f: dict[str, float]) -> str:
     toks = set(_norm(text).split())
     if toks & LAUGH_WORDS:
@@ -354,6 +382,11 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
         dead_air = f["silence_fraction"] > 0.4 and f["audio_intensity"] < 0.3
         if dead_air:
             score *= 1.0 - 0.5 * (f["silence_fraction"] - 0.4)
+        evidence = payoff_evidence(f, " ".join(s.text for s in group), sig, start, end)
+        f["payoff_evidence"] = float(len(evidence))
+        weak = cfg.min_evidence > 0 and len(evidence) < cfg.min_evidence
+        if weak:
+            score *= 0.6 if not evidence else 0.8
         if group:
             agreement = 1.0 - abs(f["audio_intensity"] - f["reaction_language"])
             confidence = f["mean_word_probability"] * (0.6 + 0.4 * agreement)
@@ -368,6 +401,9 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
             reason += f"; on-screen event: {ev_label}"
         if dead_air:
             reason += f"; penalised for {f['silence_fraction']:.0%} dead air"
+        reason += "; payoff seen in: " + (", ".join(evidence) if evidence else "nothing")
+        if weak:
+            reason += f" (needs {cfg.min_evidence}: probably not a real moment)"
         pk = peak if peak is not None else (_peak_sentence(group, loud).start if group else start)
         if group and peak is None:
             title = _title(group, loud)
@@ -385,7 +421,7 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
             id=cid, rank=0, start=round(start, 3), end=round(end, 3), duration=round(dur, 3),
             peak_time=round(pk, 3), title=title,
             description=f"{cat.title()} moment at {_fmt(start)}: " + (group[0].text[:120] if group else "no commentary"),
-            category=cat, score=round(score, 4), passes_threshold=score >= cfg.minimum_score,
+            category=cat, score=round(score, 4), passes_threshold=score >= cfg.minimum_score and not weak,
             confidence=round(confidence, 4), features=f, contributions=contrib, reason=reason, transcript=text,
         ))
 

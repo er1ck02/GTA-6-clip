@@ -232,11 +232,12 @@ def rerank(cs: CandidateSet, cfg: LLMCfg, minimum_score: float) -> tuple[Candida
         if j is not None and c.id in top_ids:
             heur = c.score
             c.features["llm_score"] = round(j.score / 10, 3)
+            c.features["llm_keep"] = 1.0 if j.keep else 0.0
             c.features["heuristic_score"] = round(heur, 4)
             c.score = round((1 - cfg.weight) * heur + cfg.weight * (j.score / 10), 4)
             if not j.keep:
                 c.score = round(c.score * 0.7, 4)
-            c.passes_threshold = c.score >= minimum_score
+            c.passes_threshold = c.score >= minimum_score and c.passes_threshold and j.keep
             if cfg.retitle and j.title.strip():
                 c.title = j.title.strip()[:80]
                 c.title_source = "llm"

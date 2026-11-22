@@ -127,3 +127,28 @@ def test_tighten_trims_quiet_edges_but_not_speech_or_the_minimum():
     sents = build_sentences(make_transcript([(3, "wait what is that")]))
     s, e = tighten(0.0, 30.0, sents, loud, keep=1.0, min_dur=5.0)
     assert s <= 3.0 - 0.25 + 1e-6                      # words are never cut off
+
+
+def test_a_clip_needs_two_signs_of_a_payoff():
+    from clipstudio.highlights.candidates import payoff_evidence
+    sig = Signals()
+    assert payoff_evidence({"audio_spike": 0.7}, "just driving around", sig, 0, 20) == ["audio"]
+    assert payoff_evidence({"audio_spike": 0.7}, "oh my god no way", sig, 0, 20) == ["audio", "speech"]
+    # three chat messages in a quiet chat are not a burst, however large the relative lift
+    quiet = np.zeros(60, np.float32)
+    quiet[30:33] = 1
+    sig = Signals(chat_rate=quiet, chat_hype=np.zeros(60, np.float32))
+    assert payoff_evidence({"chat_activity": 0.9}, "", sig, 20, 40) == []
+    busy = np.zeros(60, np.float32)
+    busy[30:34] = 3
+    sig = Signals(chat_rate=busy, chat_hype=np.zeros(60, np.float32))
+    assert payoff_evidence({"chat_activity": 0.9, "game_event": 0.8}, "", sig, 20, 40) == ["chat", "game event"]
+
+    cfg = load_config(overrides=["highlights.minimum_duration=10", "highlights.maximum_duration=30",
+                                 "highlights.target_duration=20", "highlights.minimum_score=0"]).highlights
+    tr = make_transcript([(20, "just driving around the city for now nothing much")])
+    cs = generate_candidates(tr, _loud(60), cfg, 60)
+    assert cs.candidates and not any(c.passes_threshold for c in cs.candidates)
+    assert "probably not a real moment" in cs.candidates[0].reason
+    off = cfg.model_copy(update={"min_evidence": 0})
+    assert all(c.passes_threshold for c in generate_candidates(tr, _loud(60), off, 60).candidates)

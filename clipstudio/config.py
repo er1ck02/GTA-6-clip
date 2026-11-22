@@ -110,6 +110,11 @@ class HighlightsCfg(_Strict):
     # cut quiet, speechless seconds off the start and end of a candidate (never below three quarters of
     # target_duration: quiet gameplay is often the setup; never the peak moment), so a clip opens on something happening and ends when the reaction does
     tighten_edges: bool = True
+    # A clip needs a payoff, and a payoff shows up in more than one place at once. Four independent signs are
+    # checked: an audio peak, a spoken reaction (reaction words, laughter, shouting), a real burst of chat,
+    # an on-screen game event. A candidate with fewer than this many is marked as not passing and loses score;
+    # live mode does not edit it at all. 0 turns the check off.
+    min_evidence: int = Field(2, ge=0, le=4)
     edge_keep: float = Field(2.5, ge=0, le=5)   # quiet seconds left at each edge after tightening
     weights: ScoringWeights = ScoringWeights()
 

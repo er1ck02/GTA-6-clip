@@ -240,10 +240,18 @@ class LiveSession:
                 cs = st.analyze(p)
                 ids = st.default_selection(p, 1)
                 best = cs.get(ids[0]) if ids else None
-                if best is not None and best.score < self.lc.min_clip_score and best.status != "accepted":
+                why = None
+                if best is not None and best.status != "accepted":
+                    need = self.cfg.highlights.min_evidence
+                    if best.score < self.lc.min_clip_score:
+                        why = f"best clip scores {best.score:.2f}, under live.min_clip_score {self.lc.min_clip_score:.2f}"
+                    elif best.features.get("payoff_evidence", need) < need:
+                        why = best.reason.split("; payoff seen in: ")[-1].join(["no clear payoff (seen in: ", ")"])
+                    elif best.features.get("llm_keep", 1.0) == 0.0:
+                        why = "the LLM judged it not worth posting: " + best.reason.split("LLM ")[-1]
+                if why:
                     m.status, m.upload = "skipped", "review"
-                    m.upload_note = (f"weak moment: best clip scores {best.score:.2f}, under live.min_clip_score "
-                                     f"{self.lc.min_clip_score:.2f}; the footage is kept, nothing was edited")
+                    m.upload_note = f"weak moment: {why}; the footage is kept, nothing was edited"
                     log.info("moment %s skipped: %s", m.id, m.upload_note)
                     return
                 res = st.render(p, ids)[0] if ids else None
