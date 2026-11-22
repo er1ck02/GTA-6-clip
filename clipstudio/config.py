@@ -4,7 +4,8 @@ Precedence (lowest to highest):
   1. Defaults defined in the pydantic models below.
   2. Processing profile (fast / balanced / quality) presets.
   3. YAML files passed with ``--config`` (merged left to right), or
-     ``configs/default.yaml`` when none are given and it exists.
+     ``configs/default.yaml`` when none are given and it exists, then
+     ``~/.clipstudio/config.yaml`` (personal settings: allowlist, uploader) when it exists.
   4. ``--set dotted.key=value`` CLI overrides.
   5. A few environment variables (see ``ENV_OVERRIDES``).
 
@@ -527,6 +528,15 @@ def parse_override(expr: str) -> tuple[str, Any]:
     return key.strip(), yaml.safe_load(raw) if raw.strip() else None
 
 
+def personal_config_path() -> Path | None:
+    """``~/.clipstudio/config.yaml``: personal settings merged after the repo config (CLIPSTUDIO_USER_CONFIG
+    overrides the path; set it empty to skip the file, as the tests do)."""
+    v = os.environ.get("CLIPSTUDIO_USER_CONFIG")
+    if v is not None:
+        return Path(v).expanduser() if v.strip() else None
+    return Path("~/.clipstudio/config.yaml").expanduser()
+
+
 def load_config(
     files: list[str | Path] | None = None,
     overrides: list[str] | None = None,
@@ -535,6 +545,9 @@ def load_config(
     files = [Path(f) for f in (files or [])]
     if not files and Path("configs/default.yaml").exists():
         files = [Path("configs/default.yaml")]
+    personal = personal_config_path()
+    if personal is not None and personal.is_file() and personal not in files:
+        files.append(personal)  # your own settings (allowlist, uploader) survive updates to the repo
 
     user: dict[str, Any] = {}
     for f in files:

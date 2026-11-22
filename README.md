@@ -300,6 +300,8 @@ you open the project. Renders always use the original file.
 
 ![Workstation](docs/screenshots/workstation.png)
 
+**Posting to YouTube.** The UPLOADS / YOUTUBE SHORTS panel shows the upload queue. Clips from streamers on `upload.allow_channels` that pass QC post by themselves (spaced out, within quota); everything else waits for APPROVE. One-time setup and the Google API audit: [docs/YOUTUBE_SETUP.md](docs/YOUTUBE_SETUP.md). Personal settings go in `~/.clipstudio/config.yaml`, which is merged after `configs/default.yaml`.
+
 ---
 
 ## 6. Tests

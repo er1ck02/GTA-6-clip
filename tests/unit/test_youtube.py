@@ -422,3 +422,13 @@ def test_upload_api(tmp_path, secrets_dir):
     assert c.post(f"/api/uploads/{j.id}/explode").status_code == 404
     assert c.get("/api/uploads").json()["counts"]["queued"] == 1
     app.state.uploads.stop()
+
+
+def test_personal_config_is_merged_after_repo_config(tmp_path, monkeypatch):
+    f = tmp_path / "config.yaml"
+    f.write_text("upload:\n  allow_channels: [ludwig]\n  youtube: {enabled: true}\n")
+    monkeypatch.setenv("CLIPSTUDIO_USER_CONFIG", str(f))
+    cfg = load_config()
+    assert cfg.upload.allow_channels == ["ludwig"] and cfg.upload.youtube.enabled is True
+    monkeypatch.setenv("CLIPSTUDIO_USER_CONFIG", "")
+    assert load_config().upload.youtube.enabled is False
