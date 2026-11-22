@@ -119,4 +119,9 @@ live:                      # clipstudio live: watch a stream, keep only the mome
   max_parallel_edits: 1    # moments edited at the same time across all streams (they queue; the GPU is shared)
 
 upload:                    # nothing is uploaded unless the streamer's channel is listed here
-  allow_channels: []       # e.g. ["ludwig"] for streamers who allow clipping
+  allow_channels: []       # e.g. ["ludwig"] for streamers who allow clipping (put yours in ~/.clipstudio/config.yaml)
+  youtube:                 # built-in YouTube Shorts uploader; setup: docs/YOUTUBE_SETUP.md
+    enabled: false         # nothing is posted until you turn this on
+    privacy: unlisted      # private | unlisted | public
+    min_gap_minutes: 45    # spacing between posts
+    max_per_day: 6         # posts per day (YouTube's quota day starts at midnight Pacific)

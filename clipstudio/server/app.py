@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import json
 import queue
 import threading
@@ -58,7 +59,7 @@ TOOLS: list[dict[str, Any]] = [
     {"id": "live_record", "name": "Live recorder", "role": "rolling 90 s buffer", "stage": "live_record", "status": "optional"},
     {"id": "live_chat", "name": "Live chat", "role": "Twitch / YouTube chat", "stage": "live_chat", "status": "optional"},
     {"id": "live_trigger", "name": "Trigger detector", "role": "hype · clip · audio jumps", "stage": "live_trigger", "status": "optional"},
-    {"id": "upload", "name": "Upload queue", "role": "allowlisted streamers", "stage": "upload", "status": "optional"},
+    {"id": "upload", "name": "YouTube uploader", "role": "Shorts · allowlisted streamers", "stage": "upload", "status": "optional"},
     {"id": "tesseract", "name": "Tesseract OCR", "role": "HUD text", "stage": None, "status": "optional"},
     {"id": "yolo", "name": "Ultralytics YOLO", "role": "object tracking", "stage": None, "status": "optional"},
     {"id": "sam2", "name": "SAM 2", "role": "segmentation", "stage": None, "status": "optional"},
@@ -129,8 +130,9 @@ class LiveManager:
     stays responsive. Every stream records and scores on its own; their editors share one gate
     (``live.max_parallel_edits``), so moments from many channels queue for the GPU instead of piling onto it."""
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, uploads=None):
         self.cfg = cfg
+        self.uploads = uploads  # UploadManager: finished clips are queued for YouTube
         self.watches: dict[str, _Watch] = {}
         self.error: str | None = None
         self._lock = threading.Lock()
@@ -165,8 +167,9 @@ class LiveManager:
                 f"{key}_{time.strftime('%Y%m%d_%H%M%S')}"
             rec = Recorder(out / "buffer", self.cfg.live.segment_seconds, url=url or None,
                            file=Path(file).expanduser() if file else None, realtime=realtime)
+            on_clip = (lambda m, u=url: self.uploads.add_live_moment(m, source_url=u)) if self.uploads else None
             w = _Watch(key, LiveSession(self.cfg, rec, make_chat_source(chat or None, url or None, out), out,
-                                        channel=channel, max_seconds=duration))
+                                        channel=channel, max_seconds=duration, on_clip=on_clip))
             self.watches[key] = w
 
         def run():
@@ -527,8 +530,81 @@ def create_app(cfg: Config):
             raise HTTPException(404, "not rendered yet")
         return FileResponse(f, media_type="application/x-subrip", filename=f.name)
 
+    # ------------------------------------------------------------ uploads (YouTube Shorts)
+    from clipstudio.publish.queue import UploadManager
+
+    uploads = UploadManager(cfg)
+    uploads.start()
+    app.state.uploads = uploads
+
+    @app.get("/api/uploads")
+    def uploads_status():
+        return uploads.status()
+
+    @app.post("/api/uploads")
+    def uploads_add(body: dict = Body(...)):
+        """Queue a rendered workstation clip. Allowlisted channels post automatically; others wait for review."""
+        from clipstudio.live.chat import channel_from_url
+
+        p = proj(body.get("project") or "")
+        c = studio.candidates(p).get(body.get("clip") or "")
+        f = p.clip_dir(c.id) / f"{p.id}_{c.id}.mp4"
+        if not f.exists():
+            raise HTTPException(400, "render this clip first")
+        src = p.state.data.get("source") or {}
+        url = body.get("source_url") or src.get("url")
+        channel = body.get("channel") or (channel_from_url(url) if url else None)
+        st = json.loads((p.clip_dir(c.id) / "state.json").read_text()) if (p.clip_dir(c.id) / "state.json").exists() else {}
+        return asdict_job(uploads.add(f, channel=channel, title=body.get("title") or c.title, source_url=url,
+                                      qc_passed=st.get("qc_passed"), project=p.id, clip_id=c.id,
+                                      force_review=bool(body.get("review"))))
+
+    def asdict_job(j):
+        from dataclasses import asdict
+
+        return asdict(j)
+
+    @app.post("/api/uploads/{jid}/{action}")
+    def uploads_action(jid: str, action: str):
+        fn = {"approve": uploads.approve, "reject": uploads.reject, "retry": uploads.retry}.get(action)
+        if fn is None:
+            raise HTTPException(404, f"unknown action {action!r}")
+        return asdict_job(fn(jid))
+
+    @app.patch("/api/uploads/{jid}")
+    def uploads_edit(jid: str, body: dict = Body(...)):
+        return asdict_job(uploads.edit(jid, body))
+
+    @app.post("/api/youtube/connect")
+    def youtube_connect(request: Request):
+        """Start the one-time sign-in: returns Google's URL, which the workstation opens in a new tab."""
+        base = str(request.base_url).rstrip("/").replace("://localhost", "://127.0.0.1")
+        p = uploads.auth.begin(f"{base}/api/youtube/callback")
+        return {"url": p.url}
+
+    @app.get("/api/youtube/callback")
+    def youtube_callback(state: str = "", code: str | None = None, error: str | None = None):
+        from fastapi.responses import HTMLResponse
+
+        try:
+            tok = uploads.auth.finish(state, code, error)
+            uploads.signed_in_again()
+            who = html.escape((tok.get("channel") or {}).get("title") or "your channel")
+            msg, ok = f"Signed in to YouTube as <b>{who}</b>. You can close this tab.", True
+        except ClipStudioError as e:
+            msg, ok = f"YouTube sign-in failed: {html.escape(str(e))}", False
+        events.publish("youtube_auth", ok=ok)
+        return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>Clip Studio</title>"
+                            f"<body style='font:16px system-ui;background:#1d1d1f;color:#f3efe6;padding:40px'>"
+                            f"<h2>CLIP STUDIO</h2><p>{msg}</p>", status_code=200 if ok else 400)
+
+    @app.post("/api/youtube/disconnect")
+    def youtube_disconnect():
+        uploads.auth.sign_out()
+        return uploads.status()
+
     # ------------------------------------------------------------ live mode
-    live = LiveManager(cfg)
+    live = LiveManager(cfg, uploads)
 
     @app.get("/api/live")
     def live_status(id: str | None = None):

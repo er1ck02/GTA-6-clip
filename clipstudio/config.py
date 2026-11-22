@@ -4,7 +4,8 @@ Precedence (lowest to highest):
   1. Defaults defined in the pydantic models below.
   2. Processing profile (fast / balanced / quality) presets.
   3. YAML files passed with ``--config`` (merged left to right), or
-     ``configs/default.yaml`` when none are given and it exists.
+     ``configs/default.yaml`` when none are given and it exists, then
+     ``~/.clipstudio/config.yaml`` (personal settings: allowlist, uploader) when it exists.
   4. ``--set dotted.key=value`` CLI overrides.
   5. A few environment variables (see ``ENV_OVERRIDES``).
 
@@ -407,11 +408,41 @@ class LiveCfg(_Strict):
     max_parallel_edits: int = Field(1, ge=1, le=8)        # moments edited at the same time across all streams
 
 
+class StreamerCredit(_Strict):
+    """How a streamer is credited in titles and descriptions (both optional; derived from the channel otherwise)."""
+    name: str | None = None   # display name, e.g. "Ludwig"
+    url: str | None = None    # channel link, e.g. "https://www.youtube.com/@ludwig"
+
+
+class YouTubeCfg(_Strict):
+    """Built-in YouTube Shorts uploader (YouTube Data API v3). Off until you turn it on after the one-time sign-in.
+
+    Secrets live outside the repo (``~/.clipstudio`` by default) and are never committed."""
+    enabled: bool = False                              # master switch: nothing is posted while this is false
+    client_secrets: str = "~/.clipstudio/youtube_client_secret.json"  # the OAuth client JSON from Google Cloud
+    token_file: str = "~/.clipstudio/youtube_token.json"              # written by the sign-in
+    privacy: Literal["private", "unlisted", "public"] = "unlisted"
+    category_id: str = "20"                            # 20 = Gaming
+    tags: list[str] = Field(default_factory=lambda: ["GTA 6", "GTA VI", "GTA", "gaming", "shorts"])
+    title_template: str = "{title} | {streamer} #shorts"
+    description_template: str = (
+        "{title}\n\nClipped from {streamer}'s live stream: {source_url}\n"
+        "Go watch the full stream and follow {streamer}: {streamer_url}\n\n{hashtags}")
+    streamers: dict[str, StreamerCredit] = Field(default_factory=dict)  # channel -> credit overrides
+    min_gap_minutes: float = Field(45, ge=0)           # spacing between two posts
+    max_per_day: int = Field(6, ge=1)                  # posts per Pacific day (YouTube's quota day)
+    daily_quota: int = Field(10000, ge=1)              # API units per day for the Google Cloud project
+    upload_cost: int = Field(1600, ge=1)               # units one videos.insert costs (check Google's quota page)
+    max_attempts: int = Field(5, ge=1)                 # retries for network / server errors before giving up
+    chunk_mb: int = Field(8, ge=1, le=256)             # resumable upload chunk size
+
+
 class UploadCfg(_Strict):
     """Publishing is opt-in per streamer. Nothing is ever uploaded for a channel that is not listed here."""
     allow_channels: list[str] = Field(default_factory=list)  # streamers who allow clipping (channel names, lower case)
     platforms: list[str] = Field(default_factory=lambda: ["tiktok", "youtube_shorts", "instagram_reels"])
     require_qc_pass: bool = True
+    youtube: YouTubeCfg = YouTubeCfg()
 
 
 class QualityCfg(_Strict):
@@ -497,6 +528,15 @@ def parse_override(expr: str) -> tuple[str, Any]:
     return key.strip(), yaml.safe_load(raw) if raw.strip() else None
 
 
+def personal_config_path() -> Path | None:
+    """``~/.clipstudio/config.yaml``: personal settings merged after the repo config (CLIPSTUDIO_USER_CONFIG
+    overrides the path; set it empty to skip the file, as the tests do)."""
+    v = os.environ.get("CLIPSTUDIO_USER_CONFIG")
+    if v is not None:
+        return Path(v).expanduser() if v.strip() else None
+    return Path("~/.clipstudio/config.yaml").expanduser()
+
+
 def load_config(
     files: list[str | Path] | None = None,
     overrides: list[str] | None = None,
@@ -505,6 +545,9 @@ def load_config(
     files = [Path(f) for f in (files or [])]
     if not files and Path("configs/default.yaml").exists():
         files = [Path("configs/default.yaml")]
+    personal = personal_config_path()
+    if personal is not None and personal.is_file() and personal not in files:
+        files.append(personal)  # your own settings (allowlist, uploader) survive updates to the repo
 
     user: dict[str, Any] = {}
     for f in files:

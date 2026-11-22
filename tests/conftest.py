@@ -8,6 +8,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+os.environ["CLIPSTUDIO_USER_CONFIG"] = ""  # never read the developer's personal ~/.clipstudio/config.yaml
 
 from clipstudio.config import load_config  # noqa: E402
 from clipstudio.core.models import Segment, Transcript, Word  # noqa: E402

@@ -9,6 +9,7 @@ import { initTimeline, tickTimeline } from './timeline.js';
 import { initDesk, deskEvent, logEmpty } from './desk.js';
 import { startPolling, stopPolling } from './poller.js';
 import { initLive, liveEvent } from './live.js';
+import { initUploads, uploadEvent } from './upload.js';
 
 const BOOT = Date.now();
 const ORDER = ['ingest', 'metadata', 'extract_audio', 'transcribe', 'loudness', 'candidates', 'plan', 'captions', 'render', 'qc'];
@@ -124,6 +125,7 @@ async function handleEvent(ev, historical, replay = false) {
   if (!replay) deskEvent(ev, historical);
   if (historical) return;
   liveEvent(ev);
+  uploadEvent(ev);
   const mine = ev.project === S.pid;
   if (ev.kind === 'stage') {
     activity = ev;
@@ -195,7 +197,7 @@ function frame() {
 
 // ------------------------------------------------------------------ boot
 async function boot() {
-  initHeader(); initProgram(); initOutput(); initBin(); initInspector(); initTimeline(); initDesk(); initLive();
+  initHeader(); initProgram(); initOutput(); initBin(); initInspector(); initTimeline(); initDesk(); initLive(); initUploads();
   on('preview', invalidateCaptionLine);
   on('render', () => {
     const r = S.render, ev = r && finishedJobs.get(r.job);

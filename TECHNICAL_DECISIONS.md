@@ -464,3 +464,20 @@ shared gate keeps clip latency predictable and the PC responsive. A moment shows
 "agreement" meaningless. Now a lone signal (other than "clip" commands) is scaled by 0.8, and the solo-audio path
 needs a jump of twice `audio_jump_db`. Every moment also costs about 23 s of editing on an RTX 4080, so the rate
 matters more as streams are added.
+
+## TD-29 · YouTube uploads: official API, stdlib HTTP, a persistent queue that never posts without a yes
+
+**Decision.** Shorts are posted with the YouTube Data API v3 resumable protocol, called with `urllib` (no Google
+client libraries). Sign-in is the installed-app OAuth flow with PKCE and a loopback redirect; the workstation
+uses its own `/api/youtube/callback` as the redirect, the CLI a temporary local listener. The refresh token
+and the OAuth client file live in `~/.clipstudio`, outside the repo. A queue in `<data_dir>/uploads/queue.json`
+holds every clip with a status; a background thread posts at most one at a time, `min_gap_minutes` apart,
+within `max_per_day` and the daily quota, pausing until midnight Pacific when quota runs out. Auto-post needs
+the uploader switched on, the channel on `upload.allow_channels` and a passing QC; anything else waits for
+review. The resumable session URL is saved after every chunk so a restart resumes the same upload.
+
+**Why.** The owner wants Clip Studio to post by itself with no browser automation, so it has to be the API.
+Standard library HTTP keeps the install unchanged and makes every call easy to fake in tests. Personal
+settings (allowlist, uploader switch) go in `~/.clipstudio/config.yaml`, merged after the repo config, so a
+`git pull` never overwrites them. Unaudited API projects get uploads locked to private by Google; the queue
+records what YouTube actually set and says so instead of pretending it posted unlisted.

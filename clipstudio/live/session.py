@@ -15,6 +15,7 @@ import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from clipstudio.core.compat import write_text_atomic
 from clipstudio.config import Config
@@ -49,6 +50,7 @@ class Moment:
     qc_summary: str | None = None
     upload: str = "review"                # review | allowed | not_allowed
     upload_note: str = ""
+    title: str | None = None              # the clip's title (used for the upload's title)
     error: str | None = None
     created: float = field(default_factory=time.time)
 
@@ -78,7 +80,8 @@ def edit_gate(n: int) -> threading.BoundedSemaphore:
 
 class LiveSession:
     def __init__(self, cfg: Config, recorder: Recorder, chat: ChatSource, out_dir: Path,
-                 channel: str | None = None, process: bool | None = None, max_seconds: float = 0):
+                 channel: str | None = None, process: bool | None = None, max_seconds: float = 0,
+                 on_clip: Callable[[Moment], object] | None = None):
         self.cfg = cfg
         self.lc = cfg.live
         self.rec = recorder
@@ -87,6 +90,7 @@ class LiveSession:
         self.channel = channel
         self.process = self.lc.auto_process if process is None else process
         self.max_seconds = max_seconds
+        self.on_clip = on_clip  # called with each finished clip (the uploader queues it)
         self.ring = Ring(self.lc.buffer_seconds)
         self.det = TriggerDetector(self.lc, cfg.chat)
         self.moments: list[Moment] = []
@@ -241,11 +245,20 @@ class LiveSession:
             if res is None:
                 raise RuntimeError("no clip could be cut from this moment")
             m.clip, m.qc_passed, m.qc_summary = str(res.output), res.qc.passed, res.qc.summary()
+            try:
+                m.title = st.candidates(p).get(ids[0]).title
+            except Exception:
+                m.title = None
             m.upload, m.upload_note = upload_decision(self.cfg, self.channel, m.qc_passed)
             m.status = "done"
             events.publish("stage", stage="upload", status="done" if m.upload == "allowed" else "skipped",
                            moment=m.id, project=m.project, decision=m.upload, note=m.upload_note)
             log.info("clip ready: %s (%s; %s)", Path(m.clip).name, m.qc_summary, m.upload)
+            if self.on_clip is not None:
+                try:
+                    self.on_clip(m)
+                except Exception as e:  # the uploader must never stop the editor
+                    log.error("could not queue %s for upload: %s", m.id, e)
         except Exception as e:
             m.status, m.error = "failed", f"{type(e).__name__}: {e}"
             log.error("editing %s failed: %s", m.id, m.error)

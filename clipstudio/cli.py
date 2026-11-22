@@ -134,7 +134,126 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-moments", type=int, help="stop after this many moments")
     p.add_argument("--no-process", action="store_true", help="only save the moments; don't edit them")
     p.add_argument("--fast", action="store_true", help="with --input: read the file as fast as possible, not in real time")
+    p = sub.add_parser("youtube", help="YouTube account for the Shorts uploader (one-time sign-in)")
+    _common(p)
+    p.add_argument("action", choices=["login", "status", "logout"])
+    p.add_argument("--no-browser", action="store_true", help="only print the sign-in link")
+
+    p = sub.add_parser("uploads", help="the YouTube upload queue: list, approve, reject, retry, or run it")
+    _common(p)
+    p.add_argument("action", choices=["list", "approve", "reject", "retry", "run"])
+    p.add_argument("job", nargs="?", help="upload id (for approve / reject / retry)")
     return ap
+
+
+def cmd_youtube(a) -> int:
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from urllib.parse import parse_qs, urlparse
+
+    from clipstudio.publish.youtube import YouTubeAuth
+
+    yc = _cfg(a).upload.youtube
+    auth = YouTubeAuth(yc.client_secrets, yc.token_file)
+    if a.action == "logout":
+        auth.sign_out()
+        print("signed out of YouTube (token deleted)")
+        return 0
+    if a.action == "status":
+        tok = auth.token() or {}
+        doc = {"client_file": str(auth.client_path), "client_file_found": auth.has_client(),
+               "signed_in": auth.signed_in(), "channel": tok.get("channel"), "uploader_enabled": yc.enabled,
+               "privacy": yc.privacy}
+        if a.json:
+            _emit(a, doc)
+        else:
+            for k, v in doc.items():
+                print(f"  {k:<18} {v}")
+        return 0
+    got: dict = {}
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            q = parse_qs(urlparse(self.path).query)
+            got.update({k: v[0] for k, v in q.items()})
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"<h2>Clip Studio</h2><p>Sign-in received. You can close this tab.</p>")
+
+        def log_message(self, *_):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    pending = auth.begin(f"http://127.0.0.1:{srv.server_port}/")
+    print("Sign in to the YouTube channel Clip Studio should post to:\n\n  " + pending.url + "\n")
+    if not a.no_browser:
+        import webbrowser
+
+        webbrowser.open(pending.url)
+    import time as _time
+
+    srv.timeout = 10
+    deadline = _time.time() + 300
+    while "state" not in got and _time.time() < deadline:
+        srv.handle_request()  # ignores stray requests (favicon) until Google's redirect arrives
+    srv.server_close()
+    if "state" not in got:
+        print("no answer from Google within 5 minutes; run the command again")
+        return 1
+    tok = auth.finish(got.get("state", ""), got.get("code"), got.get("error"))
+    print(f"signed in as {(tok.get('channel') or {}).get('title') or 'your channel'}; token saved to {auth.token_path}")
+    if not yc.enabled:
+        print("turn the uploader on with  upload.youtube.enabled: true  in your config when you're ready")
+    return 0
+
+
+def cmd_uploads(a) -> int:
+    import time as _time
+
+    from clipstudio.publish.queue import UploadManager
+
+    m = UploadManager(_cfg(a))
+    if a.action in ("approve", "reject", "retry"):
+        if not a.job:
+            raise ClipStudioError(f"give the upload id: clipstudio uploads {a.action} <id>")
+        j = getattr(m, a.action)(a.job)
+        print(f"{j.id}: {j.status} ({j.reason})")
+        return 0
+    if a.action == "run":
+        print("upload worker running (Ctrl+C to stop)")
+        m.start()
+        try:
+            while True:
+                _time.sleep(30)
+                w = m.why_waiting()
+                if w:
+                    print(f"  waiting: {w}")
+        except KeyboardInterrupt:
+            m.stop()
+        return 0
+    st = m.status()
+    if a.json:
+        _emit(a, st)
+        return 0
+    print(f"uploader {'ON' if st['enabled'] else 'OFF'} · signed in: {st['signed_in']} · today {st['today']['posts']}/"
+          f"{st['today']['max_posts']} posts" + (f" · waiting: {st['waiting']}" if st["waiting"] else ""))
+    for j in st["jobs"]:
+        print(f"  {j['id']}  {j['status']:<9} {j['channel'] or '-':<12} {j['title'][:60]:<60} {j['url'] or j['reason']}")
+    return 0
+
+
+_UPLOADS = None
+
+
+def _uploads(cfg):
+    """One upload queue for the whole live run (every stream feeds it; it posts in the background)."""
+    global _UPLOADS
+    if _UPLOADS is None:
+        from clipstudio.publish.queue import UploadManager
+
+        _UPLOADS = UploadManager(cfg)
+        _UPLOADS.start()
+    return _UPLOADS
 
 
 def cmd_live(a) -> int:
@@ -145,9 +264,13 @@ def cmd_live(a) -> int:
     if a.all and not urls:
         log.error("live --all: no stream URLs in live.channels")
         return 2
-    if len(urls) > 1:
-        return _live_many(a, cfg, urls)
-    return _live_one(a, cfg, urls[0] if urls else None)
+    try:
+        if len(urls) > 1:
+            return _live_many(a, cfg, urls)
+        return _live_one(a, cfg, urls[0] if urls else None)
+    finally:
+        if _UPLOADS is not None:  # an upload cut off here resumes its session next time
+            _UPLOADS.stop()
 
 
 def _live_session(a, cfg, url: str | None, out: Path | None = None):
@@ -170,8 +293,9 @@ def _live_session(a, cfg, url: str | None, out: Path | None = None):
     log.info("live: %s | channel %s (%s) | chat %s | buffer %gs | moments %gs before + %gs after",
              url or a.input, channel or "unknown", "on the upload allowlist" if allowed else "review only",
              chat.name, cfg.live.buffer_seconds, cfg.live.pre_seconds, cfg.live.post_seconds)
+    up = _uploads(cfg)
     return LiveSession(cfg, rec, chat, out, channel=channel, process=False if a.no_process else None,
-                       max_seconds=a.duration)
+                       max_seconds=a.duration, on_clip=lambda m, u=url: up.add_live_moment(m, source_url=u))
 
 
 def _print_moments(moments, out) -> None:
@@ -483,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
     register_cuda_dlls()
     handlers = {"doctor": cmd_doctor, "process": cmd_process, "review": cmd_review, "export": cmd_export,
                 "resume": cmd_resume, "status": cmd_status, "ui": cmd_ui,
-                "live": cmd_live}
+                "live": cmd_live, "youtube": cmd_youtube, "uploads": cmd_uploads}
     def fail(code: int, msg: str) -> int:
         log.error(msg)
         if getattr(a, "json", False):

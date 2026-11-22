@@ -9,3 +9,6 @@ models/
 node_modules/
 build/
 *.egg-info/
+# YouTube uploader secrets (they belong in ~/.clipstudio, never in the repo)
+*client_secret*.json
+youtube_token*.json
