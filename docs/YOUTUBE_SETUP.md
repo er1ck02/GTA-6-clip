@@ -49,8 +49,8 @@ upload:
     privacy: unlisted        # private | unlisted | public
 ```
 
-Restart Clip Studio. Clips from allowlisted streamers that pass QC now post on their own, at least 45 minutes
-apart and at most 6 a day. Everything else lands in the panel as **NEEDS REVIEW** until you press **APPROVE**.
+Restart Clip Studio. Clips from allowlisted streamers that pass QC now post on their own as soon as they're
+ready, at most 6 a day (set `min_gap_minutes` to space them out). Everything else lands in the panel as **NEEDS REVIEW** until you press **APPROVE**.
 
 ## How it behaves
 - **Titles and descriptions** come from the clip's title and always credit the streamer, with links to the

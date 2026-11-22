@@ -471,7 +471,7 @@ matters more as streams are added.
 client libraries). Sign-in is the installed-app OAuth flow with PKCE and a loopback redirect; the workstation
 uses its own `/api/youtube/callback` as the redirect, the CLI a temporary local listener. The refresh token
 and the OAuth client file live in `~/.clipstudio`, outside the repo. A queue in `<data_dir>/uploads/queue.json`
-holds every clip with a status; a background thread posts at most one at a time, `min_gap_minutes` apart,
+holds every clip with a status; a background thread posts at most one at a time (as soon as ready by default; `min_gap_minutes` adds spacing),
 within `max_per_day` and the daily quota, pausing until midnight Pacific when quota runs out. Auto-post needs
 the uploader switched on, the channel on `upload.allow_channels` and a passing QC; anything else waits for
 review. The resumable session URL is saved after every chunk so a restart resumes the same upload.

@@ -429,7 +429,7 @@ class YouTubeCfg(_Strict):
         "{title}\n\nClipped from {streamer}'s live stream: {source_url}\n"
         "Go watch the full stream and follow {streamer}: {streamer_url}\n\n{hashtags}")
     streamers: dict[str, StreamerCredit] = Field(default_factory=dict)  # channel -> credit overrides
-    min_gap_minutes: float = Field(45, ge=0)           # spacing between two posts
+    min_gap_minutes: float = Field(0, ge=0)            # spacing between two posts (0 = none)
     max_per_day: int = Field(6, ge=1)                  # posts per Pacific day (YouTube's quota day)
     daily_quota: int = Field(10000, ge=1)              # API units per day for the Google Cloud project
     upload_cost: int = Field(1600, ge=1)               # units one videos.insert costs (check Google's quota page)
