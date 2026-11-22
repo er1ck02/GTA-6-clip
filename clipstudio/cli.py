@@ -97,6 +97,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--clear-cuts", action="store_true", help="remove all cuts from --clip")
     _clip_opts(p)
 
+    p = sub.add_parser("supervise", help="supervisor review of rendered clips: list pending, approve or reject")
+    _common(p)
+    p.add_argument("--project", help="project id (with --clip)")
+    p.add_argument("--clip", help="clip id to give a verdict on")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--approve", action="store_true")
+    g.add_argument("--reject", action="store_true")
+    p.add_argument("--reason", default="", help="why (required for a verdict)")
+    p.add_argument("--title", help="burn this title into the clip before approving (re-renders it)")
+    p.add_argument("--post-title", help="caption to post with")
+    p.add_argument("--reviewer", default="supervisor")
+
     p = sub.add_parser("export", help="render clips (accepted ones, given ids, or top N)")
     _common(p)
     p.add_argument("--project", required=True)
@@ -463,6 +475,33 @@ def cmd_resume(a) -> int:
     return _results(a, st.render(p, ids), {"project": p.id})
 
 
+def cmd_supervise(a) -> int:
+    """List the clips waiting for review, or record a verdict on one."""
+    from clipstudio.pipeline.studio import Studio
+    from clipstudio.supervise import pending
+
+    st = Studio(_cfg(a))
+    if not a.clip:
+        rows = pending(st.data_dir)
+        if a.json:
+            _emit(a, {"pending": rows})
+            return 0
+        for d in rows:
+            print(f"{d.get('project', ''):<32} {d.get('clip_id', ''):<10} {d.get('channel') or '':<14} "
+                  f"score {d.get('score', 0):.2f}  QC {d.get('qc', '')}  sheet {d.get('sheet', '')}")
+            print(f"    {d.get('picker', '')[-160:]}")
+        print(f"{len(rows)} clip(s) waiting for review")
+        return 0
+    if not (a.project and (a.approve or a.reject) and a.reason.strip()):
+        raise SystemExit("a verdict needs --project, --clip, --approve or --reject, and --reason")
+    p = st.load(a.project)
+    doc = st.supervise(p, a.clip, bool(a.approve), a.reason.strip(), a.reviewer, a.title, a.post_title)
+    _emit(a, doc)
+    if not a.json:
+        print(f"{doc['status']}: {doc['clip']}")
+    return 0
+
+
 def cmd_status(a) -> int:
     from clipstudio.pipeline.studio import Studio
 
@@ -516,7 +555,7 @@ def main(argv: list[str] | None = None) -> int:
     register_cuda_dlls()
     handlers = {"doctor": cmd_doctor, "process": cmd_process, "review": cmd_review, "export": cmd_export,
                 "resume": cmd_resume, "status": cmd_status, "ui": cmd_ui, "production": cmd_production,
-                "live": cmd_live}
+                "live": cmd_live, "supervise": cmd_supervise}
     def fail(code: int, msg: str) -> int:
         log.error(msg)
         if getattr(a, "json", False):

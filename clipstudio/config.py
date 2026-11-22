@@ -540,6 +540,9 @@ class UploadCfg(_Strict):
     allow_channels: list[str] = Field(default_factory=list)  # streamers who allow clipping (channel names, lower case)
     platforms: list[str] = Field(default_factory=lambda: ["tiktok", "youtube_shorts", "instagram_reels"])
     require_qc_pass: bool = True
+    # nothing is postable until a reviewer has looked at the rendered clip and approved it (see supervise.py):
+    # the picker knows that people reacted, not whether the clip is a moment worth posting
+    require_review: bool = True
 
 
 class QualityCfg(_Strict):

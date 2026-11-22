@@ -54,13 +54,18 @@ class Moment:
     attempts: int = 0                     # edit attempts (a failed edit is retried once on the next production start)
 
 
-def upload_decision(cfg: Config, channel: str | None, qc_passed: bool | None) -> tuple[str, str]:
+def upload_decision(cfg: Config, channel: str | None, qc_passed: bool | None,
+                    clip: str | None = None) -> tuple[str, str]:
     allowed = {c.lower().lstrip("@") for c in cfg.upload.allow_channels}
     if not channel or channel.lower() not in allowed:
         return "review", (f"{channel or 'this channel'} is not on upload.allow_channels: "
                           "review it and only post with the streamer's permission")
     if cfg.upload.require_qc_pass and not qc_passed:
         return "review", "QC did not pass: review before posting"
+    if cfg.upload.require_review:
+        from clipstudio.supervise import is_approved
+        if not is_approved(clip):
+            return "review", "waiting for the supervisor's review (clipstudio supervise); post only from the approved folder"
     return "allowed", f"{channel} allows clipping; ready to upload (connect accounts to publish)"
 
 
@@ -293,7 +298,7 @@ class LiveSession:
             if res is None:
                 raise RuntimeError("no clip could be cut from this moment")
             m.clip, m.qc_passed, m.qc_summary = str(res.output), res.qc.passed, res.qc.summary()
-            m.upload, m.upload_note = upload_decision(self.cfg, self.channel, m.qc_passed)
+            m.upload, m.upload_note = upload_decision(self.cfg, self.channel, m.qc_passed, m.clip)
             m.status = "done"
             events.publish("stage", stage="upload", status="done" if m.upload == "allowed" else "skipped",
                            moment=m.id, project=m.project, decision=m.upload, note=m.upload_note)

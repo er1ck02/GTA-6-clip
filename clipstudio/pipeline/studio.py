@@ -830,6 +830,18 @@ class Studio:
         state.data["qc_passed"] = qc.passed
         state.data["output"] = str(f_out)
         state.save()
+        if cfg.upload.require_review:
+            try:
+                from clipstudio.chat.emotes import channel_from_source
+                from clipstudio.supervise import write_packet
+                write_packet(f_out, k_r, {
+                    "project": p.id, "clip_id": c.id, "channel": channel_from_source(p.source_path()),
+                    "title": c.title if c.title_source != "transcript" else None, "range": [c.start, c.end],
+                    "score": c.score, "picker": c.reason, "transcript": c.transcript[:1500],
+                    "qc_passed": qc.passed, "qc": qc.summary(),
+                    "qc_problems": [f"{x.name}: {x.detail}" for x in qc.checks if x.status in ("fail", "warn")]})
+            except Exception as e:  # noqa: BLE001 - a missing packet only means the clip stays unreviewed
+                log.warning("    review packet could not be written: %s", e)
         level = log.info if qc.passed else log.error
         level("    QC %s (%s) -> %s", "PASSED" if qc.passed else "FAILED", qc.summary(), f_out)
         if not qc.passed:
@@ -1078,6 +1090,24 @@ class Studio:
             st.data["stages"]["captions"]["key"] = None
             st.save()
         return track
+
+    def supervise(self, p: Project, cid: str, approved: bool, reason: str, reviewer: str = "supervisor",
+                  title: str | None = None, post_title: str | None = None):
+        """Record the supervisor's verdict on a rendered clip. ``title``: burn this title in (re-renders the
+        clip) before approving. ``post_title``: the caption to post with, kept in the packet and the MAP."""
+        from clipstudio.supervise import record_verdict
+        c = self.candidates(p).get(cid)
+        f_out = p.clip_dir(c.id) / f"{p.id}_{c.id}.mp4"
+        if approved and title and title.strip() and title.strip() != c.title:
+            self.edit_clip(p, c.id, title=title.strip())
+            res = self.render_one(p, c.id)
+            if not res.qc.passed:
+                raise ClipStudioError("the clip failed QC after the title change; not approved: "
+                                      + "; ".join(x.detail for x in res.qc.checks if x.status == "fail"))
+            f_out = res.output
+        if not f_out.exists():
+            raise ClipStudioError(f"clip {cid} of {p.id} has not been rendered")
+        return record_verdict(f_out, approved, reason, reviewer, self.data_dir, post_title)
 
     def default_selection(self, p: Project, top: int) -> list[str]:
         cs = self.candidates(p)

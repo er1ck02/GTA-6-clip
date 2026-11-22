@@ -109,7 +109,7 @@ def test_cooldown_merges_back_to_back_spikes():
 
 
 def test_upload_needs_allowlist_and_qc():
-    cfg = load_config(overrides=["upload.allow_channels=[Ludwig]"])
+    cfg = load_config(overrides=["upload.allow_channels=[Ludwig]", "upload.require_review=false"])
     assert upload_decision(cfg, "ludwig", True)[0] == "allowed"
     assert upload_decision(cfg, "ludwig", False)[0] == "review"
     assert upload_decision(cfg, "someone_else", True)[0] == "review"
@@ -211,3 +211,30 @@ def test_tiny_chat_spike_is_not_a_reaction():
         det.add_chat(203 + i * 0.1, "no way LUL")
     sig = det.signals_at(200)
     assert sig["chat"] >= 1.0 and sig["hype"] >= 1.0
+
+
+def test_nothing_is_postable_before_the_supervisor_approves(tmp_path):
+    import subprocess
+    from clipstudio.supervise import is_approved, pending, read_packet, record_verdict, write_packet
+    cfg = load_config(overrides=["upload.allow_channels=[Ludwig]"])
+    assert cfg.upload.require_review
+    clip = tmp_path / "projects" / "p1" / "clips" / "c-1" / "p1_c-1.mp4"
+    clip.parent.mkdir(parents=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=270x480:r=10:d=3",
+                    "-pix_fmt", "yuv420p", str(clip)], check=True)
+    # rendered, QC passed, channel allowed, but nobody has looked at it yet
+    assert upload_decision(cfg, "ludwig", True, str(clip))[0] == "review"
+    doc = write_packet(clip, "key1", {"project": "p1", "clip_id": "c-1", "channel": "ludwig", "title": None,
+                                      "picker": "payoff seen in: audio, chat"})
+    assert doc["status"] == "pending" and (clip.parent / "review.jpg").stat().st_size > 0
+    assert [d["clip_id"] for d in pending(tmp_path)] == ["c-1"]
+    assert upload_decision(cfg, "ludwig", True, str(clip))[0] == "review"
+    record_verdict(clip, True, "clear payoff: the crash and the reaction", "tester", tmp_path, "bro what 😭")
+    assert is_approved(clip) and upload_decision(cfg, "ludwig", True, str(clip))[0] == "allowed"
+    assert (tmp_path / "approved" / clip.name).exists()
+    assert "bro what" in (tmp_path / "approved" / "MAP.txt").read_text(encoding="utf-8") and not pending(tmp_path)
+    # the same render keeps its verdict; a new render of the clip has to be looked at again
+    assert write_packet(clip, "key1", {})["status"] == "approved"
+    assert write_packet(clip, "key2", {"clip_id": "c-1"})["status"] == "pending" and not is_approved(clip)
+    record_verdict(clip, False, "nothing happens", "tester", tmp_path)
+    assert read_packet(clip)["status"] == "rejected" and not (tmp_path / "approved" / clip.name).exists()
