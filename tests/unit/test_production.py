@@ -143,6 +143,7 @@ def test_first_start_uses_top_past_streamers_and_resumes_saved_lineup(cfg, tmp_p
 
 
 def test_offline_stream_gets_a_stand_in_and_the_original_takes_it_back(cfg, tmp_path):
+    cfg.production.target_streams = 0  # just the lineup: the stand-in stops when the original returns
     session_dir(tmp_path, "lacy", "20261121_192240", [{"id": "a", "status": "done"}])
     live = FakeLive(tmp_path)
     online = {"ludwig"}
@@ -163,6 +164,47 @@ def test_offline_stream_gets_a_stand_in_and_the_original_takes_it_back(cfg, tmp_
     m._follow()
     assert live.watches["lacy"].session.running is False
     assert live.started[-1] == "ludwig" and m.slots[0]["action"] == "watch"
+
+
+def test_target_keeps_n_streams_with_twitch_stand_ins_and_swaps_back(cfg, tmp_path):
+    cfg.production.target_streams = 3
+    cfg.production.discover_channels = ["bigone", "mid", "notgta"]
+    session_dir(tmp_path, "lacy", "20261121_192240", [{"id": "a", "status": "done"}])
+    live = FakeLive(tmp_path)
+    online = {"ludwig", "lacy", "bigone", "mid", "notgta"}
+    viewers = {"bigone": 50000, "mid": 900, "notgta": 99999}
+    titles = {"notgta": "Just Chatting", "lacy": "GTA 6 story"}
+
+    def check(u):
+        r = checker(online, titles)(u)
+        r.viewers = viewers.get(L.channel_of(u), 0)
+        return r
+    m = mgr(cfg, live, check)
+    m.start(["https://www.twitch.tv/ludwig", "https://www.twitch.tv/kai"])  # kai is offline
+    # ludwig + lacy (past streamer) for kai + the most-watched GTA 6 stream on Twitch; not the Just Chatting one
+    assert sorted(live.started) == ["bigone", "lacy", "ludwig"]
+    acts = {s["channel"]: s["action"] for s in m.slots}
+    assert acts == {"ludwig": "watch", "lacy": "substitute", "bigone": "fill"}
+    assert "Twitch" in next(s["note"] for s in m.slots if s["channel"] == "bigone")
+    assert {"lacy", "bigone"} <= set(cfg.upload.allow_channels)  # stand-ins post like the lineup (credited)
+    assert mgr(cfg, FakeLive(tmp_path), check).state["posted_stand_ins"] == ["lacy", "bigone"]
+    # bigone ends: the next best GTA stream takes its place, still 3 recording
+    online.discard("bigone")
+    live.watches["bigone"].session.stopped_reason = "stream ended"
+    live.watches["bigone"].alive = False
+    m._follow()
+    assert live.started[-1] == "mid" and len(m._recording_slots()) == 3
+    # kai comes back: kai is watched, lacy stays on as an extra, the newest extra (mid) makes room
+    online.add("kai")
+    m._next_recheck = 0
+    m._follow()
+    on = {s["channel"] for s in m._recording_slots()}
+    assert on == {"ludwig", "kai", "lacy"} and live.watches["mid"].session.running is False
+    # nothing changes on a quiet recheck: no stream is restarted or added twice
+    n = len(live.started)
+    m._next_recheck = 0
+    m._follow()
+    assert len(live.started) == n and len(m._recording_slots()) == 3
 
 
 def test_streams_added_or_stopped_by_hand_change_the_lineup(cfg, tmp_path):

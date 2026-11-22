@@ -591,6 +591,15 @@ class ProductionCfg(_Strict):
     # a substitute's live title must mention one of these (empty = any game); originals are resumed regardless
     substitute_keywords: list[str] = Field(default_factory=lambda: ["gta", "grand theft auto"])
     max_candidates: int = Field(12, ge=1, le=50)          # past streamers checked per substitution
+    # keep this many streams recording (0 = just the lineup): offline ones are swapped for live GTA streamers
+    target_streams: int = Field(8, ge=0, le=32)
+    # once your past streamers run out: big Twitch streamers checked for a live stream whose title matches
+    # discover_keywords, most viewers first
+    discover_channels: list[str] = Field(default_factory=lambda: [
+        "summit1g", "buddha", "lirik", "moonmoon", "cyr", "hasanabi", "zackrawrr", "sodapoppin", "nmplol",
+        "tarik", "jynxzi", "caseoh_", "timthetatman", "shroud", "fanum", "papaplatte", "ibai"])
+    post_stand_ins: bool = True  # stand-ins' clips post automatically (credited) like the lineup's, not held for review
+    discover_keywords: list[str] = Field(default_factory=lambda: ["gta 6", "gta vi", "gta6", "grand theft auto vi"])
     recheck_minutes: float = Field(5, ge=1, le=120)       # how often offline channels are checked again
     keep_awake: bool = True                               # stop Windows sleeping while production runs
     backlog_max_age_hours: float = Field(24, ge=0)        # unedited moments older than this are not resumed (0 = all)
