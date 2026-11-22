@@ -71,6 +71,7 @@ def top_streams(game: str, limit: int = 40) -> list[LiveCheck]:
         _token.clear()
         return []
     out = [LiveCheck(True, title=s.get("title", ""), url=f"https://www.twitch.tv/{s['user_login'].lower()}",
-                     viewers=int(s.get("viewer_count") or 0), category=s.get("game_name") or game)
+                     viewers=int(s.get("viewer_count") or 0), category=s.get("game_name") or game,
+                     language=(s.get("language") or "").lower())
            for s in data.get("data", []) if s.get("user_login")]
     return sorted(out, key=lambda r: -r.viewers)

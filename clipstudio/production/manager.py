@@ -241,6 +241,18 @@ class ProductionManager:
         self._still_checks[s["channel"]] = n  # by channel: slots are rebuilt on every re-plan
         return n >= self.pc.idle_motion_checks
 
+    def _stand_in_ok(self, r: L.LiveCheck) -> bool:
+        """Stand-ins must be usable for our English titles and audience, and not on production.blocked_channels."""
+        ch = L.channel_of(r.url or "") or ""
+        if ch in {b.lower().lstrip("@") for b in self.pc.blocked_channels}:
+            return False
+        langs = [x.lower() for x in self.pc.stand_in_languages]
+        if not langs:
+            return True
+        if r.language:
+            return r.language.split("-")[0] in langs
+        return "en" not in langs or L.looks_english(r.title)
+
     def _discover(self) -> list[L.LiveCheck]:
         q = self.pc.discover_youtube_search
         from clipstudio.production import twitch
@@ -261,6 +273,8 @@ class ProductionManager:
         changed = False
         for s, r in zip(slots, res):
             why = self._idle(r) if r.live else ""
+            if not why and r.live and s["action"] in ("substitute", "fill") and not self._stand_in_ok(r):
+                why = "non-English or blocked stream"
             if not why and self._still(s):
                 why = "sleep stream (nothing moving on screen)"
                 self._still_checks.pop(s["channel"], None)
@@ -304,7 +318,8 @@ class ProductionManager:
                                   substitute=self.pc.substitute, keywords=self.pc.substitute_keywords,
                                   max_candidates=self.pc.max_candidates, busy=set(running),
                                   target=max(0, target - len(held)) if target else 0,
-                                  discover=self._discover if target else None, idle=self._idle)
+                                  discover=self._discover if target else None, idle=self._idle,
+                               stand_in_ok=self._stand_in_ok)
             if self.mode != "running":  # a stop arrived while we were checking
                 return [p.to_dict() for p in plans]
             if target:  # an original came back: make room by stopping extra streams, newest first
