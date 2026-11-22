@@ -8,7 +8,8 @@ let snap = null;
 let follow = true;
 let timer = null;
 let followed = new Set();
-let frameTick = 0;
+let lastKeys = {};
+const changed = (name, key) => (lastKeys[name] === key ? false : ((lastKeys[name] = key), true));
 
 export function initLive() {
   try { follow = localStorage.getItem('clipstudio.follow') !== '0'; } catch {}
@@ -26,6 +27,7 @@ export function initLive() {
     const btn = $('#liveStart');
     btn.disabled = true;
     try {
+      lastKeys = {};
       snap = await api('/api/live/start', { method: 'POST', body: {
         url: isUrl ? v : null, file: isUrl ? null : v, channel: $('#liveChannel').value.trim() || null } });
       toast(`Watching ${snap.channel || v}`);
@@ -46,7 +48,8 @@ async function poll() {
   clearTimeout(timer);
   try { snap = await api('/api/live'); } catch { snap = snap || { active: false }; }
   render();
-  timer = setTimeout(poll, snap?.running ? 1000 : 4000);
+  // slower when the tab is hidden; the editor keeps working on the server either way
+  timer = setTimeout(poll, document.hidden ? 5000 : snap?.running ? 1500 : 5000);
 }
 
 // called for every pipeline event (from app.js)
@@ -93,16 +96,17 @@ function render() {
     `chat ${snap.chat_source}`,
     running ? `live ${fmt(snap.head)}` : `stopped: ${snap.error || snap.stopped || ''}`,
   ].filter(Boolean).join(' · ');
-  renderFeed();
-  renderBuffer();
-  drawSignals();
-  renderChat();
-  renderMoments();
+  // redraw only the parts whose data changed since the last poll
+  if (changed('feed', `${snap.segments.at(-1)?.i}|${snap.running}`)) renderFeed();
+  if (changed('buf', `${snap.segments.length}|${snap.segments.at(-1)?.i}|${snap.discarded}|${snap.segments.filter(x => x.pinned).length}`)) renderBuffer();
+  if (changed('sig', `${snap.signals.at(-1)?.t}|${snap.chat_count}|${(snap.triggers || []).length}|${$('#liveSignals').clientWidth}`)) drawSignals();
+  if (changed('chat', `${snap.chat_count}`)) renderChat();
+  if (changed('mom', JSON.stringify((snap.moments || []).map(m => [m.id, m.status, m.qc_passed, m.upload])))) renderMoments();
 }
 
 function renderFeed() {
   const img = $('#liveFrame');
-  if (snap.segments.length && ++frameTick % 2 === 0) img.src = `/api/live/frame?i=${snap.segments.at(-1).i}`;
+  if (snap.segments.length && !document.hidden) img.src = `/api/live/frame?i=${snap.segments.at(-1).i}`;
   $('#liveFeedMsg').hidden = snap.segments.length > 0;
   $('#liveFeedMsg').textContent = snap.running ? 'connecting to the stream…' : 'no video recorded';
   $('#liveHead').textContent = fmt(snap.head);
