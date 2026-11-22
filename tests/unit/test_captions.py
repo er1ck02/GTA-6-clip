@@ -175,3 +175,41 @@ def test_chat_sits_in_the_bottom_left_of_the_streamers_section(tmp_path):
     write_chat_ass(msgs, plan2, cfg.chat_overlay, 10.0, tmp_path / "d.ass")
     ys2 = [int(y) for y in re.findall(r"\\pos\(\d+,(\d+)\)", (tmp_path / "d.ass").read_text(encoding="utf-8"))]
     assert ys2 and min(ys2) > 0.6 * plan2.out_height
+
+
+def test_chat_emotes_are_drawn_as_pictures(tmp_path):
+    from PIL import Image
+    from clipstudio.captions.chat_overlay import render_chat_video
+    from clipstudio.chat.emotes import EmoteIndex, channel_from_source
+    from clipstudio.core.models import ChatMessage
+    from clipstudio.rendering.render import build_video_graph
+    from pathlib import Path
+
+    assert channel_from_source(Path("data/live/some_streamer_20261121_192149/moments/m005_746s.mp4")) == "some_streamer"
+    assert channel_from_source(Path("videos/vod.mp4")) is None
+
+    pic = tmp_path / "omegalul.png"
+    Image.new("RGBA", (56, 56), (200, 40, 40, 255)).save(pic)
+
+    class FakeIndex:                      # stands in for the network-backed index
+        def is_emote(self, w): return w == "OMEGALUL"
+        def image_path(self, w): return pic
+
+    cfg, plan, track, _ = _track()
+    msgs = [ChatMessage(t=0.5, user="@a", text="OMEGALUL he flipped it"), ChatMessage(t=1.0, user="@b", text="no way"),
+            ChatMessage(t=1.5, user="@c", text="OMEGALUL OMEGALUL")]
+    out = tmp_path / "chat.mov"
+    box = render_chat_video(msgs, plan, cfg.chat_overlay, 4.0, out, FakeIndex())
+    assert box and box["lines"] == 3 and box["emotes"] == 3 and out.stat().st_size > 0
+    assert 0 <= box["x"] < plan.out_width * 0.1 and box["y"] + box["h"] <= plan.out_height
+    # without an index the same chat is drawn as text; too little chat draws nothing
+    assert render_chat_video(msgs, plan, cfg.chat_overlay, 4.0, tmp_path / "t.mov", None)["emotes"] == 0
+    assert render_chat_video(msgs[:1], plan, cfg.chat_overlay, 4.0, tmp_path / "n.mov", None) is None
+    # the renderer takes it as one more input, laid over the picture before the captions
+    g = build_video_graph(plan, 60, "captions.ass", chat_input=(1, box["x"], box["y"]))
+    assert f"[1:v]fps=60:start_time=0,format=rgba[chatv]" in g and f"overlay={box['x']}:{box['y']}" in g
+    assert g.index("[chatv]overlay") < g.index("ass=captions.ass")
+
+    # an index with no network and no channel simply knows nothing (words stay words)
+    idx = EmoteIndex(tmp_path / "cache", None, providers=())
+    assert not idx.is_emote("OMEGALUL") and idx.image_path("OMEGALUL") is None

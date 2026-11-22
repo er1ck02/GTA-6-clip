@@ -119,7 +119,8 @@ def keep_expr(cuts: list[tuple[float, float]]) -> str:
 
 def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance: EnhanceCfg | None = None,
                       punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None,
-                      under_ass: str | None = None, face_input: int | None = None) -> str:
+                      under_ass: str | None = None, face_input: int | None = None,
+                      chat_input: tuple[int, int, int] | None = None) -> str:
     """``under_ass``: a second subtitle file drawn before (under) the captions, e.g. the chat overlay.
     ``face_input``: scale factor of a second input that holds the webcam crop already enlarged (AI upscaled),
     aligned to the clip's first frame; the webcam panel is then drawn from it instead of from the source."""
@@ -199,6 +200,11 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
         # crop keyframes and punches live in uncut clip time, so the cut happens after them;
         # captions are already in cut time and burn in after it
         tail += f",select={keep_expr(cuts)},setpts=N/({fps:g}*TB)"
+    if chat_input:
+        # (input index, x, y): a transparent video of the chat block, already in output (cut) time
+        ci, cx, cy = chat_input
+        tail += (f"[basec];[{ci}:v]fps={fps:g}:start_time=0,format=rgba[chatv];"
+                 f"[basec][chatv]overlay={cx}:{cy}:eof_action=pass:format=auto")
     if under_ass:
         tail += f",ass={under_ass}"
     if ass_name:
@@ -285,7 +291,8 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
                 out_path: Path, vcfg: VideoCfg, acfg: AudioCfg, ecfg: ExportCfg, device: str,
                 voice_track: int | None = None, enhance: EnhanceCfg | None = None,
                 punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None,
-                under_ass: Path | None = None, face_video: Path | None = None, face_scale_factor: int = 4) -> Path:
+                under_ass: Path | None = None, face_video: Path | None = None, face_scale_factor: int = 4,
+                chat_video: tuple[Path, int, int] | None = None) -> Path:
     src = Path(media.path)
     dur = end - start
     out_dur = dur - sum(b - a for a, b in (cuts or []))
@@ -304,8 +311,9 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
     if under_ass is not None and under_ass.parent.resolve() != workdir.resolve():
         raise ValueError("overlay subtitle file must live in the clip output folder")
     use_face = face_video is not None and plan.mode == "facecam_split"
+    chat_in = (2 if use_face else 1, chat_video[1], chat_video[2]) if chat_video else None
     graph = build_video_graph(plan, fps, ass_name, enhance, punches, cuts, under_ass.name if under_ass else None,
-                              face_scale_factor if use_face else None)
+                              face_scale_factor if use_face else None, chat_in)
     n_tracks = max(1, len(media.audio_streams)) if acfg.tracks == "all" else 1
     agraph = build_audio_graph(n_tracks, voice_track, acfg, cuts)
     afilt = _audio_filters(acfg, src, start, dur, agraph) if media.has_audio else ""
@@ -317,6 +325,8 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
              "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(src)]
         if use_face:
             c += ["-i", str(face_video)]
+        if chat_video:
+            c += ["-i", str(chat_video[0])]
         c += ["-filter_complex", graph, "-map", "[vout]"]
         if media.has_audio:
             # same for audio: silence-pad a late start and a short end, so both streams are exactly out_dur long

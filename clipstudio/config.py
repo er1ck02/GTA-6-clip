@@ -240,6 +240,9 @@ class ChatOverlayCfg(_Strict):
     # "facecam": bottom-left corner of the streamer's section when the layout has one (off the gameplay and
     # clear of the captions), otherwise as "bottom". "bottom": bottom-left of the whole clip, at ``bottom``.
     position: Literal["facecam", "bottom"] = "facecam"
+    # draw emote words (OMEGALUL, KEKW ...) as their pictures, from the public 7TV, BetterTTV and FrankerFaceZ
+    # sets of the channel plus the classic Twitch globals. Needs internet the first time; false = text only.
+    emotes: bool = True
     font: list[str] = ["Inter", "Roboto", "Segoe UI", "Arial", "DejaVu Sans"]
 
 
