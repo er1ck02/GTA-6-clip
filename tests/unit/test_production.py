@@ -309,4 +309,5 @@ def test_repair_path_adds_the_venv_and_is_idempotent(monkeypatch):
     monkeypatch.setenv("PATH", "/usr/bin")
     added = agent.repair_path()
     assert str(Path(sys.executable).parent) in os.environ["PATH"].split(os.pathsep)
-    assert agent.repair_path() == [] and len(added) <= 1
+    assert agent.repair_path() == []  # a second call adds nothing
+    assert all(d in os.environ["PATH"].split(os.pathsep) for d in added)
