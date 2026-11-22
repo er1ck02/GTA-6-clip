@@ -598,6 +598,10 @@ class ProductionCfg(_Strict):
     discover_channels: list[str] = Field(default_factory=lambda: [
         "summit1g", "buddha", "lirik", "moonmoon", "cyr", "hasanabi", "zackrawrr", "sodapoppin", "nmplol",
         "tarik", "jynxzi", "caseoh_", "timthetatman", "shroud", "fanum", "papaplatte", "ibai"])
+    # a live stream whose title/category says one of these counts as offline and is swapped out (also a stream
+    # whose category is known and isn't GTA); checked every recheck_minutes
+    idle_keywords: list[str] = Field(default_factory=lambda: [
+        "sleep stream", "sleeping", "asleep", "zzz", "afk", "brb", "be right back", "just chatting"])
     post_stand_ins: bool = True  # stand-ins' clips post automatically (credited) like the lineup's, not held for review
     discover_keywords: list[str] = Field(default_factory=lambda: ["gta 6", "gta vi", "gta6", "grand theft auto vi"])
     recheck_minutes: float = Field(5, ge=1, le=120)       # how often offline channels are checked again
