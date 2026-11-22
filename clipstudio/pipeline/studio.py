@@ -54,7 +54,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 15,
-                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 8, "captions": 9, "render": 14, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 6, "game_subs": 2, "face_sr": 1, "title": 2}
+                  "facecam": 5, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 8, "captions": 9, "render": 14, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 6, "game_subs": 2, "face_sr": 1, "title": 2}
 
 
 @dataclass
@@ -461,15 +461,16 @@ class Studio:
         return self._channel_facecam(p, det)
 
     def _channel_facecam(self, p: Project, det: FacecamDetection) -> FacecamDetection:
-        """Use the channel's known camera box when this moment's face sits inside it and detection alone was
-        not sure. A face found elsewhere, or none at all, leaves the detection as it is."""
+        """Use the channel's known camera box when this moment's face sits inside it: the box was set by hand,
+        so it beats a detected one (which can cut the camera short or take in a counter under it). A face found
+        elsewhere, or none at all, leaves the detection as it is."""
         from clipstudio.chat.emotes import channel_from_source
         from clipstudio.core.models import NormRect
         try:
             box = self.cfg.reframing.channel_facecams.get(channel_from_source(p.source_path()) or "")
         except (KeyError, TypeError):
             box = None
-        if box is None or det.face is None or det.confidence >= self.cfg.vision.facecam_min_confidence:
+        if box is None or det.face is None:
             return det
         cx, cy = det.face.x + det.face.w / 2, det.face.y + det.face.h / 2
         if not (box.x <= cx <= box.x + box.w and box.y <= cy <= box.y + box.h):

@@ -218,6 +218,7 @@ class ReframingCfg(_Strict):
         "lacy": Rect(x=0.0, y=0.0, w=0.255, h=0.275),
         "stableronaldo": Rect(x=0.0, y=0.417, w=0.288, h=0.292),
         "theburntpeanut": Rect(x=0.165, y=0.72, w=0.125, h=0.28),
+        "ishowspeed": Rect(x=0.0, y=0.358, w=0.225, h=0.274),      # the sub counter under the camera stays out
     })
     # centre the locked gameplay crop on where the action is over the whole clip (one position, no panning),
     # moving at most this far from gameplay_center_x (fraction of source width). 0 = always the centre.

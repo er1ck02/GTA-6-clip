@@ -231,6 +231,6 @@ def test_channel_camera_box_is_used_only_when_a_face_is_inside_it(tmp_path):
     elsewhere = _fc(0.55, face=(0.6, 0.1, 0.05, 0.09))
     assert st._channel_facecam(P("kaicenat"), elsewhere).confidence == 0.55             # face is not in the box
     sure = _fc(0.95, method="face+border", face=(0.07, 0.42, 0.05, 0.09), region=(0.0, 0.33, 0.21, 0.22))
-    assert st._channel_facecam(P("kaicenat"), sure).region == sure.region               # a sure detection stands
+    assert abs(st._channel_facecam(P("kaicenat"), sure).region.w - 0.22) < 1e-6         # the hand-set box wins
     none = FacecamDetection(region=None, confidence=0.0, method="none")
     assert st._channel_facecam(P("kaicenat"), none).region is None                      # no face at all: no clip
