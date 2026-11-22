@@ -598,6 +598,7 @@ class ProductionCfg(_Strict):
     discover_channels: list[str] = Field(default_factory=lambda: [
         "summit1g", "buddha", "lirik", "moonmoon", "cyr", "hasanabi", "zackrawrr", "sodapoppin", "nmplol",
         "tarik", "jynxzi", "caseoh_", "timthetatman", "shroud", "fanum", "papaplatte", "ibai"])
+    post_stand_ins: bool = True  # stand-ins' clips post automatically (credited) like the lineup's, not held for review
     discover_keywords: list[str] = Field(default_factory=lambda: ["gta 6", "gta vi", "gta6", "grand theft auto vi"])
     recheck_minutes: float = Field(5, ge=1, le=120)       # how often offline channels are checked again
     keep_awake: bool = True                               # stop Windows sleeping while production runs

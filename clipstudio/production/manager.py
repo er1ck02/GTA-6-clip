@@ -78,6 +78,8 @@ class ProductionManager:
         self._next_recheck = 0.0
         self._planning = False
         self.awake = KeepAwake()
+        for ch in self.state.get("posted_stand_ins", []) if self.pc.post_stand_ins else []:
+            self._allow(ch)
         self._unsub = events.subscribe(self._on_event)
         if self.state.get("mode") in ("running", "draining"):
             # the server stopped without a clean stop (crash, window closed): remember that, start nothing
@@ -144,6 +146,16 @@ class ProductionManager:
         if u:
             rec["url"] = u
         rec["last_seen"] = time.time()
+
+    def _allow(self, channel: str) -> None:
+        """production.post_stand_ins: a stand-in's clips post like the lineup's (credited), so add it to the
+        upload allowlist for this run and remember it for the next one."""
+        ch = channel.lower().lstrip("@")
+        if ch not in {c.lower().lstrip("@") for c in self.cfg.upload.allow_channels}:
+            self.cfg.upload.allow_channels.append(ch)
+        posted = self.state.setdefault("posted_stand_ins", [])
+        if ch not in posted:
+            posted.append(ch)
 
     def _running(self) -> dict[str, Any]:
         """channel -> watch, for streams recording right now."""
@@ -253,6 +265,8 @@ class ProductionManager:
                         self.ours.add(key)
                         self._remember(p.channel, p.url)
                         d["key"], d["started_at"] = key, time.time()
+                        if p.action in ("substitute", "fill") and self.pc.post_stand_ins:
+                            self._allow(p.channel)
                     except ClipStudioError as e:
                         if p.action == "fill":
                             continue

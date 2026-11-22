@@ -145,6 +145,7 @@ production:                # `clipstudio production start|stop` (desktop: Start/
   substitute_keywords: ["gta", "grand theft auto"]  # a substitute's stream title must mention one ([] = any game)
   target_streams: 8        # always keep this many streams recording: offline ones are swapped for live GTA streamers
   # (your past streamers first, then the most-watched live GTA 6 streams among discover_channels on Twitch)
+  post_stand_ins: true     # stand-ins' clips post automatically (credited), like the lineup's
   discover_keywords: ["gta 6", "gta vi", "gta6", "grand theft auto vi"]
   recheck_minutes: 5       # offline channels are checked again this often; the original returns when it's live
   keep_awake: true         # Windows won't sleep while production runs

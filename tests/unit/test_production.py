@@ -186,6 +186,8 @@ def test_target_keeps_n_streams_with_twitch_stand_ins_and_swaps_back(cfg, tmp_pa
     acts = {s["channel"]: s["action"] for s in m.slots}
     assert acts == {"ludwig": "watch", "lacy": "substitute", "bigone": "fill"}
     assert "Twitch" in next(s["note"] for s in m.slots if s["channel"] == "bigone")
+    assert {"lacy", "bigone"} <= set(cfg.upload.allow_channels)  # stand-ins post like the lineup (credited)
+    assert mgr(cfg, FakeLive(tmp_path), check).state["posted_stand_ins"] == ["lacy", "bigone"]
     # bigone ends: the next best GTA stream takes its place, still 3 recording
     online.discard("bigone")
     live.watches["bigone"].session.stopped_reason = "stream ended"
