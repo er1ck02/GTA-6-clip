@@ -207,6 +207,16 @@ def test_target_keeps_n_streams_with_twitch_stand_ins_and_swaps_back(cfg, tmp_pa
     assert len(live.started) == n and len(m._recording_slots()) == 3
 
 
+def test_probe_reads_twitch_titles_from_the_description():
+    # yt-dlp on a Twitch live page: title "Lacy (live)", real title in description, viewers in view_count
+    r = L.parse_probe('is_live|12345||"GTA 6 | day 4 \\"heists\\""|Lacy (live)', "https://www.twitch.tv/lacy")
+    assert r.live and r.title == 'GTA 6 | day 4 "heists"' and r.viewers == 12345
+    r = L.parse_probe('is_live|50000|Gaming|"long\\ntext"|DAY 4 GTA VI MARATHON', "https://www.youtube.com/@ludwig/live")
+    assert r.title == "DAY 4 GTA VI MARATHON" and r.viewers == 50000 and r.category == ""
+    assert L.parse_probe("is_live|||NA|Z (live)", "https://www.twitch.tv/z").title == "Z (live)"
+    assert L.parse_probe("not_live|||NA|x").live is False
+
+
 def test_sleep_and_non_gta_streams_count_as_offline(cfg, tmp_path):
     words, games = cfg.production.idle_keywords, cfg.production.substitute_keywords
     assert L.idle_reason(L.LiveCheck(True, "SLEEP STREAM zzz"), words, games) == "sleep stream"

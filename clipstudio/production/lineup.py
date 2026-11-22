@@ -138,27 +138,46 @@ def rank(history: dict[str, PastChannel], allow: list[str] | None = None) -> lis
 
 
 # ------------------------------------------------------------------ live checks
+# Twitch live pages report the title as "Name (live)" and the real stream title as the description, and the
+# viewer count as view_count; YouTube has concurrent_view_count and the real title.
+PROBE_FORMAT = "%(live_status)s|%(concurrent_view_count,view_count|)s|%(categories.0|)s|%(description)j|%(title)s"
+
+
+def parse_probe(line: str, url: str = "") -> LiveCheck:
+    status, _, rest = line.partition("|")
+    viewers, _, rest = rest.partition("|")
+    category, _, rest = rest.partition("|")
+    desc = ""
+    try:
+        val, end = json.JSONDecoder().raw_decode(rest)
+        desc, rest = (val if isinstance(val, str) else ""), rest[end:].removeprefix("|")
+    except ValueError:  # "NA|title"
+        rest = rest.partition("|")[2] if rest.startswith("NA|") else rest
+    title = rest.strip()
+    if desc.strip() and (re.search(r"\((live|rerun)\)$", title) or "twitch.tv" in url):
+        title = desc.strip().splitlines()[0]
+    category = "" if category.strip() in ("NA", "None") else category.strip()
+    if "youtu" in url:  # YouTube categories are "Gaming", "Entertainment"...: not the game being played
+        category = ""
+    return LiveCheck(status == "is_live", title=title, url=url, category=category,
+                     viewers=int(viewers) if viewers.strip().isdigit() else 0)
+
+
 def probe(url: str, timeout: float = 45) -> LiveCheck:
     """Is ``url`` live right now? One yt-dlp metadata request, nothing downloaded."""
     from clipstudio.live.buffer import _ytdlp_cmd
 
     try:
         cmd = _ytdlp_cmd() + ["--quiet", "--no-warnings", "--skip-download", "--no-playlist",
-                              "--print", "%(live_status)s|%(concurrent_view_count)s|%(categories.0|)s|%(title)s", url]
+                              "--print", PROBE_FORMAT, url]
         cp = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return LiveCheck(None, url=url, error="timed out")
     except Exception as e:  # noqa: BLE001 - yt-dlp missing etc.
         return LiveCheck(None, url=url, error=str(e))
     first = (cp.stdout.strip().splitlines() or [""])[0]
-    status, _, rest = first.partition("|")
-    viewers, _, rest = rest.partition("|")
-    category, _, title = rest.partition("|")
-    if category.strip() in ("NA", "None"):
-        category = ""
-    if cp.returncode == 0 and status:
-        return LiveCheck(status == "is_live", title=title.strip(), url=url, category=category.strip(),
-                         viewers=int(viewers) if viewers.strip().isdigit() else 0)
+    if cp.returncode == 0 and first.partition("|")[0]:
+        return parse_probe(first, url)
     err = (cp.stderr or "").strip().splitlines()
     msg = err[-1] if err else f"yt-dlp exit {cp.returncode}"
     low = (cp.stderr or "").lower()
