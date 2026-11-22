@@ -320,7 +320,7 @@ class LiveSession:
         try:
             cp = subprocess.run(_ytdlp_cmd() + ["--quiet", "--no-warnings", "--skip-download", "--print",
                                                 "%(live_status)s", self.rec.url],
-                                capture_output=True, text=True, timeout=60)
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         except (OSError, subprocess.TimeoutExpired):
             return False
         status = (cp.stdout.strip().splitlines() or [""])[0]

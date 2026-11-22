@@ -250,7 +250,7 @@ def youtube_channel(url: str) -> str | None:
     try:
         cp = subprocess.run(_ytdlp_cmd() + ["--quiet", "--no-warnings", "--skip-download", "--print",
                                             "%(uploader_id)s|%(channel)s", url],
-                            capture_output=True, text=True, timeout=60)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return None
     first = (cp.stdout.strip().splitlines() or [""])[0]
@@ -318,7 +318,7 @@ def classify_link(link: str, probe: bool = True) -> str:
     try:
         cp = subprocess.run(_ytdlp_cmd() + ["--quiet", "--no-warnings", "--skip-download", "--no-playlist",
                                             "--print", "%(live_status)s", link],
-                            capture_output=True, text=True, timeout=45)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45)
     except (OSError, subprocess.TimeoutExpired):
         return "vod"
     status = (cp.stdout.strip().splitlines() or [""])[0]

@@ -60,7 +60,7 @@ def resolve_stream_urls(url: str, max_height: int = 1080) -> list[str]:
     """Direct media URLs for a live stream via yt-dlp: one muxed URL, or video + audio (YouTube live HLS)."""
     cmd = _ytdlp_cmd() + ["--quiet", "--no-warnings", "--no-playlist", "-g",
                           "-f", f"bv*[height<={max_height}]+ba/b[height<={max_height}]/b", url]
-    cp = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    cp = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     urls = [u for u in cp.stdout.split() if u.startswith("http")]
     if cp.returncode != 0 or not urls:
         err = "\n".join(cp.stderr.strip().splitlines()[-4:])

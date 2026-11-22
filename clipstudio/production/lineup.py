@@ -170,12 +170,12 @@ def probe(url: str, timeout: float = 45) -> LiveCheck:
     try:
         cmd = _ytdlp_cmd() + ["--quiet", "--no-warnings", "--skip-download", "--no-playlist",
                               "--print", PROBE_FORMAT, url]
-        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        cp = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return LiveCheck(None, url=url, error="timed out")
     except Exception as e:  # noqa: BLE001 - yt-dlp missing etc.
         return LiveCheck(None, url=url, error=str(e))
-    first = (cp.stdout.strip().splitlines() or [""])[0]
+    first = ((cp.stdout or "").strip().splitlines() or [""])[0]
     if cp.returncode == 0 and first.partition("|")[0]:
         return parse_probe(first, url)
     err = (cp.stderr or "").strip().splitlines()
@@ -242,11 +242,11 @@ def youtube_live(query: str, limit: int = 40, timeout: float = 90) -> list[LiveC
         cp = subprocess.run(_ytdlp_cmd() + ["--quiet", "--no-warnings", "--flat-playlist", "--playlist-end",
                                             str(limit), "--print", YT_SEARCH_FORMAT,
                                             YT_LIVE_SEARCH.format(q=quote_plus(query))],
-                            capture_output=True, text=True, timeout=timeout)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as e:
         log.warning("YouTube live search failed: %s", e)
         return []
-    return [r for r in map(parse_search_line, cp.stdout.splitlines()) if r]
+    return [r for r in map(parse_search_line, (cp.stdout or "").splitlines()) if r]
 
 
 def discover_live(channels: list[str], check: Probe, keywords: list[str] | None = None,

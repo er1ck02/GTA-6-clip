@@ -232,6 +232,20 @@ def test_youtube_live_search_feeds_stand_ins():
     assert [L.channel_of(g.url) for g in got] == ["yt", "tw1"]  # most viewers first, non-GTA dropped
 
 
+def test_youtube_search_reads_emoji_titles_as_utf8(monkeypatch):
+    import subprocess as sp
+
+    out = "is_live|98404|@IShowSpeed|\U0001f534EXPLORING VICE CITY - GTA 6 STREAM\n".encode("utf-8")
+
+    def fake_run(cmd, **kw):  # decode the way subprocess would with the kwargs given (Windows default = cp1252)
+        enc = kw.get("encoding") or "cp1252"
+        return sp.CompletedProcess(cmd, 0, out.decode(enc, kw.get("errors") or "strict"), "")
+    monkeypatch.setattr(L.subprocess, "run", fake_run)
+    monkeypatch.setattr("clipstudio.live.buffer._ytdlp_cmd", lambda: ["yt-dlp"])
+    r = L.youtube_live("GTA 6")
+    assert len(r) == 1 and r[0].viewers == 98404 and r[0].title.startswith("\U0001f534EXPLORING")
+
+
 def test_twitch_category_is_picked_first_and_needs_credentials(tmp_path, monkeypatch):
     from clipstudio.production import twitch
 
