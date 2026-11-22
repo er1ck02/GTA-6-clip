@@ -119,6 +119,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8765)
 
+    p = sub.add_parser("production", help="one-command start / safe stop of the whole studio (streams, edits, "
+                       "uploads); remembers the lineup for next time")
+    psub = p.add_subparsers(dest="action", required=True)
+    for name, hlp in (("start", "open the server and browser, resume the last channels (stand-ins for offline "
+                                "ones) and finish what the last stop left"),
+                      ("stop", "stop recording, finish or save every clip in flight, say how long, then close"),
+                      ("status", "what production is doing and what the next start will resume"),
+                      ("supervise", "run the server and restart it if it crashes (used by start)"),
+                      ("shortcuts", "put Start / Stop / Status shortcuts on the Windows desktop")):
+        q = psub.add_parser(name, help=hlp)
+        _common(q)
+        q.add_argument("--port", type=int, help="server port (default: the remembered one, else 8765)")
+        if name == "start":
+            q.add_argument("--channel", action="append", metavar="URL",
+                           help="watch these instead of the saved lineup (repeatable; becomes the new lineup)")
+            q.add_argument("--no-browser", action="store_true", help="don't open the workstation")
+        if name == "stop":
+            q.add_argument("--now", action="store_true", help="finish only the clip being edited; save the rest "
+                           "for the next start")
+            q.add_argument("--no-wait", action="store_true", help="ask it to stop and return the estimate at once")
+            q.add_argument("--keep-server", action="store_true", help="leave the server open after stopping")
+
     p = sub.add_parser("live", help="watch a live stream; keep and edit only the moments that pop off")
     _common(p)
     src = p.add_mutually_exclusive_group(required=True)
@@ -469,6 +491,17 @@ def cmd_status(a) -> int:
     return 0
 
 
+def cmd_production(a) -> int:
+    from clipstudio.production import agent
+
+    res = {"start": agent.start, "stop": agent.stop, "status": agent.status, "supervise": agent.supervise,
+           "shortcuts": agent.shortcuts}[a.action](a)
+    if isinstance(res, int):
+        return res
+    _emit(a, res)
+    return 0
+
+
 def cmd_ui(a) -> int:
     from clipstudio.server.app import serve
 
@@ -482,7 +515,7 @@ def main(argv: list[str] | None = None) -> int:
     install_interrupt_handlers()
     register_cuda_dlls()
     handlers = {"doctor": cmd_doctor, "process": cmd_process, "review": cmd_review, "export": cmd_export,
-                "resume": cmd_resume, "status": cmd_status, "ui": cmd_ui,
+                "resume": cmd_resume, "status": cmd_status, "ui": cmd_ui, "production": cmd_production,
                 "live": cmd_live}
     def fail(code: int, msg: str) -> int:
         log.error(msg)

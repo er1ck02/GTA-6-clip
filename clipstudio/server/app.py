@@ -164,6 +164,12 @@ class LiveManager:
                 key, n = f"{channel or 'stream'}-{n}", n + 1
             out = Path(self.cfg.paths.data_dir).expanduser().resolve() / "live" / \
                 f"{key}_{time.strftime('%Y%m%d_%H%M%S')}"
+            try:  # remembered so `production start` can come back to this channel later
+                out.mkdir(parents=True, exist_ok=True)
+                (out / "source.json").write_text(json.dumps({"url": url, "file": file, "channel": channel,
+                                                             "started": time.time()}), encoding="utf-8")
+            except OSError:
+                pass
             rec = Recorder(out / "buffer", self.cfg.live.segment_seconds, url=url or None,
                            file=Path(file).expanduser() if file else None, realtime=realtime)
             w = _Watch(key, LiveSession(self.cfg, rec, make_chat_source(chat or None, url or None, out), out,
@@ -634,6 +640,35 @@ def create_app(cfg: Config):
         if not jpg:
             raise HTTPException(404, "no frame yet")
         return Response(jpg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    # ------------------------------------------------------------ production: one-command start / safe stop
+    from clipstudio.production.manager import ProductionManager
+
+    production = ProductionManager(cfg, live, jobs, getattr(app.state, "uploads", None), analyze_and_preview)
+    app.state.production = production
+
+    @app.get("/api/production")
+    def production_status():
+        return production.status()
+
+    @app.post("/api/production/start")
+    def production_start(body: dict = Body(default={})):
+        body = body or {}
+        return production.start(body.get("channels") or None, resume_backlog=body.get("backlog", True))
+
+    @app.post("/api/production/stop")
+    def production_stop(body: dict = Body(default={})):
+        return production.stop((body or {}).get("mode") or "safe")
+
+    @app.post("/api/production/shutdown")
+    def production_shutdown(body: dict = Body(default={})):
+        """Close the server once production is safely stopped (``force`` skips the check)."""
+        st = production.status()
+        if not st["safe"] and not (body or {}).get("force"):
+            raise ClipStudioError(st["message"] or "production is still running; stop it first")
+        production.close()
+        threading.Timer(0.5, lambda: __import__("os")._exit(0)).start()
+        return {"ok": True, "message": "Clip Studio is closing"}
 
     # ------------------------------------------------------------ jobs + live events
     @app.get("/api/jobs")

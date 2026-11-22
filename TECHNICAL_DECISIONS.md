@@ -469,3 +469,19 @@ matters more as streams are added.
 chat: against a baseline near zero, any burst is a huge relative lift. Chat now counts only from
 `chat_min_messages` (10 in 5 s) and reaction words from `hype_min_messages` (5), and the baseline used for the lift
 never drops below `chat_min_messages / chat_lift`, so a quiet chat needs a real burst to register.
+
+## TD-29 · Production agent: the server owns the lineup, the CLI only opens and closes it
+
+**Decision.** A `ProductionManager` inside the server holds the lineup, follows the streams (hand-added, stopped,
+ended), picks stand-ins and drains on stop, with its state in `<data_dir>/production/state.json`. The CLI
+(`production start|stop`) only launches a supervisor window that runs the server, calls the HTTP API, opens the
+browser and prints the countdown. A quick stop uses `LiveSession.abandon()`: moments waiting for the editing gate
+stay `saved` on disk; the next start re-edits every saved/queued/processing moment through a `LiveSession`
+reopened on its folder, so a crash and a quick stop recover the same way. Each live session now writes
+`source.json` (its URL) so a channel can be found again; older folders fall back to guessing Twitch, YouTube and
+Kick by name.
+
+**Why.** The server already knows every stream, moment and job, so it can judge "safe" exactly; polling it from
+outside would race the editor. Keeping the CLI thin means the desktop shortcuts, Claude and the workstation all
+drive the same code. Stand-ins are limited to streamers already clipped (history from the session folders) and to
+titles matching `production.substitute_keywords`, so the channel stays on GTA content.

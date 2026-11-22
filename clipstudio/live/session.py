@@ -98,6 +98,7 @@ class LiveSession:
         self.stopped_reason = ""
         self._qlock = threading.Lock()
         self._stop = threading.Event()
+        self._abandon = threading.Event()
         self.running = False
         self.started_at = 0.0
         self.chat_count = 0
@@ -107,6 +108,17 @@ class LiveSession:
     def stop(self) -> None:
         """Ask the loop to finish (pending moments are still saved and edited)."""
         self._stop.set()
+
+    def abandon(self) -> None:
+        """Stop quickly: moments are still saved, but only the edit already running is finished. Moments waiting
+        for an editing slot stay on disk as "saved" so the next production start edits them."""
+        self._abandon.set()
+        self._stop.set()
+
+    def _shelve(self, m: Moment) -> None:
+        m.status, m.upload_note = "saved", "saved for the next production start (stopped before editing)"
+        self.save_queue()
+        events.publish("live_moment", channel=self.channel, moment=m.id, status="saved")
 
     def snapshot(self) -> dict:
         """Everything the workstation's live panel shows, as plain data (safe to call from another thread)."""
@@ -204,10 +216,16 @@ class LiveSession:
             m = self.jobs.get()
             if m is None:
                 return
+            if self._abandon.is_set():
+                self._shelve(m)
+                continue
             m.status = "queued"  # waiting for a free editing slot (shared by every stream being watched)
             self.save_queue()
             events.publish("live_moment", channel=self.channel, moment=m.id, status="queued")
             with edit_gate(self.lc.max_parallel_edits):
+                if self._abandon.is_set():
+                    self._shelve(m)
+                    continue
                 m.status = "processing"
                 self.save_queue()
                 events.publish("live_moment", channel=self.channel, moment=m.id, status="processing")

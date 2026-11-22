@@ -475,6 +475,21 @@ class QualityCfg(_Strict):
     max_crop_speed: float = Field(0.5, gt=0)  # fraction of source width per second
 
 
+class ProductionCfg(_Strict):
+    """One-command start/stop of the whole studio (``clipstudio production start|stop``)."""
+    default_streams: int = Field(3, ge=1, le=32)          # streams to fill on a first start with no saved lineup
+    substitute: bool = True                               # an offline channel is replaced by a past streamer who is live
+    # a substitute's live title must mention one of these (empty = any game); originals are resumed regardless
+    substitute_keywords: list[str] = Field(default_factory=lambda: ["gta", "grand theft auto"])
+    max_candidates: int = Field(12, ge=1, le=50)          # past streamers checked per substitution
+    recheck_minutes: float = Field(5, ge=1, le=120)       # how often offline channels are checked again
+    keep_awake: bool = True                               # stop Windows sleeping while production runs
+    backlog_max_age_hours: float = Field(24, ge=0)        # unedited moments older than this are not resumed (0 = all)
+    edit_seconds_estimate: float = Field(25, gt=0)        # per-moment edit time until real timings are measured
+    vod_seconds_estimate: float = Field(180, gt=0)        # per VOD/file analysis, for the stop countdown
+    open_browser: bool = True                             # open the workstation when production starts
+
+
 class Config(_Strict):
     project: ProjectCfg = ProjectCfg()
     paths: PathsCfg = PathsCfg()
@@ -496,6 +511,7 @@ class Config(_Strict):
     quality: QualityCfg = QualityCfg()
     live: LiveCfg = LiveCfg()
     upload: UploadCfg = UploadCfg()
+    production: ProductionCfg = ProductionCfg()
 
     def section_hash(self, *sections: str) -> str:
         """Stable hash of the given config sections, used for stage cache keys."""
