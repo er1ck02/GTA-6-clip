@@ -447,6 +447,8 @@ class LiveCfg(_Strict):
     chat_lift: float = Field(3.0, gt=1)                   # chat this many times busier than normal counts fully
     chat_min_messages: int = Field(10, ge=1)              # messages in 5 s before chat counts at all (a 3-message
                                                           # "spike" in an empty chat is not a reaction)
+    chat_known_seconds: float = Field(120, ge=0)          # chat read this long before a quiet chat lets a loud
+                                                          # sound count on its own
     hype_min_messages: int = Field(5, ge=1)               # reaction messages (LUL, W, no way...) in 5 s, likewise
     clip_commands: list[str] = Field(default_factory=lambda: ["clip", "clip it", "clip that", "clipit", "!clip"])
     clip_command_count: int = Field(3, ge=1)              # this many viewers asking for a clip within 10 s triggers
