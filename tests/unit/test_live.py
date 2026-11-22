@@ -115,3 +115,30 @@ def test_upload_needs_allowlist_and_qc():
     assert upload_decision(cfg, "someone_else", True)[0] == "review"
     assert upload_decision(cfg, None, True)[0] == "review"
     assert upload_decision(load_config(), "ludwig", True)[0] == "review"  # nobody is allowed by default
+
+
+def test_edit_gate_is_shared_and_limits_parallel_edits():
+    """Every stream's editor waits on the same gate, so N streams never edit more than max_parallel_edits at once."""
+    import threading
+    import time
+
+    from clipstudio.live.session import edit_gate
+
+    assert edit_gate(1) is edit_gate(1) and edit_gate(2) is not edit_gate(1)
+    busy, peak, lock = [0], [0], threading.Lock()
+
+    def edit():
+        with edit_gate(2):
+            with lock:
+                busy[0] += 1
+                peak[0] = max(peak[0], busy[0])
+            time.sleep(0.05)
+            with lock:
+                busy[0] -= 1
+
+    ts = [threading.Thread(target=edit) for _ in range(6)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert peak[0] == 2

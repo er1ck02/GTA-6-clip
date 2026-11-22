@@ -24,6 +24,7 @@ from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from clipstudio.core.compat import write_text_atomic
 from clipstudio.core import events
 from clipstudio.core.errors import Cancelled, ClipStudioError, StageFailed
 from clipstudio.core.logging import get_logger, log_event
@@ -84,10 +85,7 @@ class StateFile:
         self.save()
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.data, indent=2, default=str), encoding="utf-8")
-        tmp.replace(self.path)
+        write_text_atomic(self.path, json.dumps(self.data, indent=2, default=str))
 
 
 @dataclass

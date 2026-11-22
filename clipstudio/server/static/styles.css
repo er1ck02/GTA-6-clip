@@ -449,7 +449,7 @@ button.chip.on { background: var(--teal); border-color: var(--teal); color: #fff
 .live .panel-head { gap: 10px; }
 .live-form { display: flex; gap: 6px; margin-left: auto; align-items: center; }
 .live-form input { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; color: var(--ink); font: 12px var(--mono); }
-#liveUrl { width: 340px; }
+#liveUrl { width: 300px; }
 #liveChannel { width: 120px; }
 .badge-rec { background: var(--coral); color: #fff; animation: recpulse 1.4s ease-in-out infinite; }
 @keyframes recpulse { 50% { opacity: .55; } }
@@ -497,3 +497,21 @@ button.chip.on { background: var(--teal); border-color: var(--teal); color: #fff
 .mo-foot .ok { color: var(--ok); font-weight: 700; } .mo-foot .rev { color: var(--warn); font-weight: 700; }
 .live-mid .mono-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mo-t { white-space: nowrap; }
+
+/* channel grid: one tile per stream being watched */
+.live-channels { display: none; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; padding: 8px 8px 0; }
+.live.has-many .live-channels { display: grid; }
+.lch { display: grid; grid-template-columns: 76px 1fr; gap: 7px; align-items: center; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 4px; padding: 5px; cursor: pointer; text-align: left; font: 11px var(--mono); color: var(--ink); min-width: 0; }
+.lch:hover { border-color: var(--teal); }
+.lch.sel { border-color: var(--coral); box-shadow: inset 0 0 0 1px var(--coral); }
+.lch-thumb { position: relative; width: 76px; height: 43px; background: #000; border-radius: 3px; overflow: hidden; }
+.lch-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lch-thumb .dot { position: absolute; left: 4px; top: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.lch.rec .lch-thumb .dot { background: var(--coral-hi); animation: recpulse 1.4s ease-in-out infinite; }
+.lch.err .lch-thumb .dot { background: var(--fail); }
+.lch-name { font-family: var(--display); font-size: 15px; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lch-stats { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lch-stats b { color: var(--ink); font-weight: 700; }
+.lch-stats .hot { color: var(--coral); font-weight: 700; }
+.lmoment.m-queued { border-left-color: var(--amber); }

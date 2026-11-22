@@ -122,3 +122,37 @@ def font_dirs() -> list[Path]:
         dirs = [home / ".local" / "share" / "fonts", home / ".fonts", Path("/usr/share/fonts"),
                 Path("/usr/local/share/fonts")]
     return [d for d in dirs if d.is_dir()]
+
+
+# --------------------------------------------------------------------------- atomic file replace
+def replace_file(src: Path, dst: Path, attempts: int = 25, delay: float = 0.02) -> None:
+    """``os.replace`` that survives Windows sharing violations.
+
+    On Windows a rename onto a file fails with "Access is denied" (WinError 5) or "being used by another
+    process" (WinError 32) while anything else has the destination open: the workstation server reading
+    project.json, the browser streaming a clip, an antivirus scan. Those holds last milliseconds, so retry
+    with a growing delay (about 2.5 s in total) before giving up. Elsewhere the first attempt succeeds."""
+    import time
+
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(min(delay * (1.5 ** i), 0.25))
+
+
+def write_text_atomic(path: Path, text: str, encoding: str = "utf-8") -> None:
+    """Write ``text`` to ``path`` through a temporary file that is unique to this process and thread, so two
+    writers never share a temp file and a crash never leaves half-written JSON."""
+    import threading
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_text(text, encoding=encoding)
+        replace_file(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)

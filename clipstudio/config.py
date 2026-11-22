@@ -402,6 +402,9 @@ class LiveCfg(_Strict):
     weights: dict[str, float] = Field(default_factory=lambda: {"audio": 0.6, "chat": 0.7, "hype": 0.5, "command": 1.0})
     auto_process: bool = True                             # edit each saved moment right away
     max_moments: int = Field(0, ge=0)                     # stop after this many moments (0 = no limit)
+    channels: list[str] = Field(default_factory=list)     # stream URLs watched together by `live --all` / WATCH ALL
+    max_streams: int = Field(8, ge=1, le=32)              # streams watched at once (recording is cheap; editing is not)
+    max_parallel_edits: int = Field(1, ge=1, le=8)        # moments edited at the same time across all streams
 
 
 class UploadCfg(_Strict):

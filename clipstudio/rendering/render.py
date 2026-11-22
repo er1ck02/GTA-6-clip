@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 
+from clipstudio.core.compat import replace_file
 from clipstudio.config import AudioCfg, EnhanceCfg, ExportCfg, VideoCfg
 from clipstudio.core.errors import MediaError
 from clipstudio.core.logging import get_logger
@@ -294,7 +295,7 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
             _run_in(cmd("libx264"), workdir)
         else:
             raise
-    tmp.replace(out_path)
+    replace_file(tmp, out_path)
     return out_path
 
 

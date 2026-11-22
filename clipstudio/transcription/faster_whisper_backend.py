@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from clipstudio.core.compat import replace_file
 from clipstudio.config import TranscriptionCfg
 from clipstudio.core.errors import DependencyMissing, StageFailed
 from clipstudio.core.logging import get_logger
@@ -102,7 +103,7 @@ class FasterWhisperBackend:
                     tmp = cache.with_suffix(".part")
                     tmp.write_text(json.dumps({"language": language, "language_probability": lang_prob,
                                                "segments": [x.model_dump() for x in segs]}), encoding="utf-8")
-                    tmp.replace(cache)
+                    replace_file(tmp, cache)
                     if len(chunks) > 1:
                         log.info("    chunk %d/%d done (%.0f-%.0fs)", ci + 1, len(chunks), a / sr, b / sr)
             segments.extend(segs)

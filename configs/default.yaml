@@ -114,6 +114,9 @@ live:                      # clipstudio live: watch a stream, keep only the mome
   clip_commands: ["clip", "clip it", "clip that", "clipit", "!clip"]
   clip_command_count: 3    # viewers asking for a clip within 10 s
   auto_process: true       # edit each moment right away
+  channels: []             # stream URLs to watch together (clipstudio live --all, or WATCH ALL in the workstation)
+  max_streams: 8           # streams watched at once
+  max_parallel_edits: 1    # moments edited at the same time across all streams (they queue; the GPU is shared)
 
 upload:                    # nothing is uploaded unless the streamer's channel is listed here
   allow_channels: []       # e.g. ["ludwig"] for streamers who allow clipping

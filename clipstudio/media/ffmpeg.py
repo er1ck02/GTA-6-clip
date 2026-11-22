@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
+from clipstudio.core.compat import replace_file
 from clipstudio.core.errors import DependencyMissing, MediaError
 from clipstudio.core.logging import get_logger
 from clipstudio.core.models import AudioStream, MediaInfo
@@ -179,7 +180,7 @@ def extract_audio_wav(src: Path, dst: Path, tracks: list[int] | None = None, sam
         args = ["-filter_complex", f"{ins}amix=inputs={len(tracks)}:normalize=0:duration=longest{post}[a]", "-map", "[a]"]
     run([ffmpeg_bin(), "-v", "error", "-y", "-i", str(src), "-vn", *args, "-ac", "1",
          "-ar", str(sample_rate), "-c:a", "pcm_s16le", str(tmp)])
-    tmp.replace(dst)
+    replace_file(tmp, dst)
     return dst
 
 

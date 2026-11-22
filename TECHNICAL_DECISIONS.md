@@ -445,3 +445,16 @@ because a loud streamer or a busy chat would otherwise trigger constantly, and a
 pipeline for each moment means live clips get the same reframing, captions and QC as everything else. The
 allowlist exists because reframing and captions don't change who owns the footage: auto-posting is limited to
 streamers the owner says allow it.
+
+## TD-28 · Many streams: independent capture, one shared editing gate
+
+**Decision.** Each watched stream is its own `LiveSession` (recorder, chat reader, trigger detector, editing
+worker) on its own thread. The editors all pass through one process-wide semaphore, `live.max_parallel_edits`
+(default 1), so moments from every channel queue for analysis and rendering instead of competing for the GPU.
+`live.max_streams` (default 8) caps how many streams run. The server keeps a dict of streams keyed by channel;
+`/api/live?id=` returns one stream's full snapshot plus a summary of all, and the LIVE panel shows a tile per
+stream. FOLLOW only follows the stream on screen.
+
+**Why.** Recording is stream copy, so capture scales with bandwidth, not compute: many streams can record at
+once. Editing (transcription, face tracking, render) is the expensive part and bursts when something happens; a
+shared gate keeps clip latency predictable and the PC responsive. A moment shows as "queued" while it waits.

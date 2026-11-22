@@ -5,6 +5,8 @@ resumable: a later stage only needs the JSON, not the earlier stage's code.
 """
 from __future__ import annotations
 
+from clipstudio.core.compat import write_text_atomic
+
 from pathlib import Path
 from typing import Literal, TypeVar
 
@@ -17,10 +19,7 @@ class _M(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(self.model_dump_json(indent=2), encoding="utf-8")
-        tmp.replace(path)  # atomic: a crash never leaves half-written JSON
+        write_text_atomic(path, self.model_dump_json(indent=2))  # atomic: a crash never leaves half-written JSON
 
     @classmethod
     def load(cls: type[T], path: Path) -> T:
