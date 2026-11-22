@@ -281,6 +281,29 @@ def test_twitch_category_is_picked_first_and_needs_credentials(tmp_path, monkeyp
     assert sum("oauth2" in c for c in calls) == 1 and sum("/games?" in c for c in calls) == 1  # cached
 
 
+def test_stand_ins_must_be_english_and_not_blocked(cfg, tmp_path):
+    assert L.looks_english("\U0001f534EXPLORING VICE CITY - GTA 6 STREAM (EASTER EGGS)")
+    assert L.looks_english("GTA 6 Gameplay Walkthrough - DAY 5!!")
+    assert not L.looks_english("MAIN GTA 6 BARENG TEMEN SERU BANGET")
+    assert not L.looks_english("JE DÉCOUVRE GTA 6 EN LIVE 5")
+    assert not L.looks_english("GTA 6 \u0645\u0628\u0627\u0634\u0631 \u0627\u0644\u0622\u0646")
+    cfg.production.target_streams = 3
+    cfg.production.discover_channels = ["deandeankt", "indo1", "good"]
+    live = FakeLive(tmp_path)
+    online = {"deandeankt", "indo1", "good"}
+    titles = {"deandeankt": "GTA 6 story", "indo1": "GTA 6 main bareng", "good": "GTA 6 heists"}
+    m = mgr(cfg, live, lambda u: checker(online, titles)(u))
+    m.start(["https://www.twitch.tv/ludwig"])  # offline: room for 3
+    assert live.started == ["good"]  # blocked and Indonesian ones are never picked
+    assert m._stand_in_ok(L.LiveCheck(True, "anything", "https://www.twitch.tv/x", language="en"))
+    assert not m._stand_in_ok(L.LiveCheck(True, "GTA 6", "https://www.twitch.tv/x", language="id"))
+    # a stand-in whose title turns non-English is swapped out on the next check
+    titles["good"] = "GTA 6 malam ini"
+    m._next_recheck = 0
+    m._follow()
+    assert live.watches["good"].session.running is False
+
+
 def test_sleep_and_non_gta_streams_count_as_offline(cfg, tmp_path):
     words, games = cfg.production.idle_keywords, cfg.production.substitute_keywords
     assert L.idle_reason(L.LiveCheck(True, "SLEEP STREAM zzz"), words, games) == "sleep stream"

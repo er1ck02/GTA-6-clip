@@ -608,6 +608,10 @@ class ProductionCfg(_Strict):
     idle_motion_threshold: float = Field(1.5, ge=0)       # 0 = off
     idle_motion_checks: int = Field(2, ge=1, le=12)
     idle_cooldown_minutes: float = Field(30, ge=0)        # a streamer found asleep isn't tried again before this
+    # stand-ins only: the stream's language (when the site reports it) or its title must be one of these
+    # ([] = any); and channels never to stand in
+    stand_in_languages: list[str] = Field(default_factory=lambda: ["en"])
+    blocked_channels: list[str] = Field(default_factory=lambda: ["deandeankt"])
     post_stand_ins: bool = True  # stand-ins' clips post automatically (credited) like the lineup's, not held for review
     # Twitch's live directory for this game, most viewers first, picked before anything else (needs a free Twitch
     # developer app in ~/.clipstudio/twitch.json; "" = off)

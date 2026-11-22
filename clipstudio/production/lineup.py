@@ -30,6 +30,7 @@ class LiveCheck:
     error: str = ""
     viewers: int = 0
     category: str = ""          # the stream's game/category when the site reports it ("" = unknown)
+    language: str = ""          # the stream's language code when the site reports it ("" = unknown)
 
 
 Probe = Callable[[str], LiveCheck]
@@ -249,6 +250,29 @@ def youtube_live(query: str, limit: int = 40, timeout: float = 90) -> list[LiveC
     return [r for r in map(parse_search_line, (cp.stdout or "").splitlines()) if r]
 
 
+# words that show a stream title is not in English (our titles and audience are English)
+FOREIGN_WORDS = {
+    # Indonesian / Malay
+    "main", "bareng", "indonesia", "indo", "seru", "banget", "gak", "nggak", "yuk", "dan", "yang", "ini", "aku",
+    "kita", "malam", "sampai", "tamat", "mabar", "ngonten", "gimana", "baru", "cerita",
+    # Spanish / Portuguese
+    "vivo", "jugando", "directo", "juego", "jogando", "jogo", "nuevo", "novo", "parte", "español", "espanol",
+    "brasil", "partida", "aventura", "hoy", "hoje", "historia",
+    # French / German / Italian / Turkish / Dutch / Polish
+    "découvre", "decouvre", "je", "avec", "les", "des", "mit", "und", "spielen", "deutsch", "giochiamo",
+    "oynuyoruz", "ile", "türkçe", "turkce", "nederlands", "polska", "gramy",
+}
+
+
+def looks_english(title: str) -> bool:
+    """A title in English: Latin letters only (emoji are fine) and none of the common foreign words above."""
+    letters = [ch for ch in title or "" if ch.isalpha()]
+    if letters and sum(ord(ch) > 0x24F for ch in letters) / len(letters) > 0.1:  # non-Latin script
+        return False
+    words = set(re.findall(r"[^\W\d_]+", (title or "").lower()))
+    return not (words & FOREIGN_WORDS)
+
+
 def discover_live(channels: list[str], check: Probe, keywords: list[str] | None = None,
                   workers: int = 8, idle: Idle | None = None,
                   search: Callable[[], list[LiveCheck]] | None = None,
@@ -296,7 +320,7 @@ def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, 
                 keywords: list[str] | None = None, max_candidates: int = 12,
                 busy: set[str] | None = None, workers: int = 8, target: int = 0,
                 discover: Callable[[], list[LiveCheck]] | None = None,
-                idle: Idle | None = None) -> list[SlotPlan]:
+                idle: Idle | None = None, stand_in_ok: Callable[[LiveCheck], bool] | None = None) -> list[SlotPlan]:
     """For each lineup entry ({channel, url}) decide: watch it (live), stand someone in (offline), or wait.
 
     ``busy`` are channels already being watched (kept as they are, never picked as a substitute twice).
@@ -350,7 +374,8 @@ def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, 
         checks = list(ex.map(lambda c: first_live(c.urls + [u for u in guess_urls(c.channel) if u not in c.urls],
                                                   check), pool))
     live_pool = [(c, r) for c, r in zip(pool, checks)
-                 if r.live and title_matches(r.title, keywords) and not (idle and idle(r))]
+                 if r.live and title_matches(r.title, keywords) and not (idle and idle(r))
+                 and (stand_in_ok is None or stand_in_ok(r))]
     if discover is not None and len(live_pool) < room:
         taken = lineup_names | busy | {c.channel for c, _ in live_pool}
         try:
@@ -360,7 +385,7 @@ def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, 
             found = []
         for r in found:
             ch = channel_of(r.url)
-            if ch and ch not in taken:
+            if ch and ch not in taken and (stand_in_ok is None or stand_in_ok(r)):
                 live_pool.append((PastChannel(ch, [r.url]), r))
                 taken.add(ch)
 
