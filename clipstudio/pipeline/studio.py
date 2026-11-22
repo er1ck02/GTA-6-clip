@@ -54,7 +54,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 11,
-                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 6, "captions": 7, "render": 10, "qc": 5, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 4, "game_subs": 1}
+                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 6, "captions": 7, "render": 10, "qc": 5, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 4, "game_subs": 1, "face_sr": 1}
 
 
 @dataclass
@@ -792,18 +792,20 @@ class Studio:
 
         f_chat = self._chat_overlay(p, c, cfg, plan, state, d, f_caps if caps_on else None, resume, force)
 
+        f_face, k_face = self._face_upscale(p, c, cfg, plan, state, d, resume, force)
+
         voice = self.voice_track(media, cfg, self.speech_tracks_used(p))
         punches = self.punches(p, c, cfg)
         k_r = key_of("render", STAGE_VERSIONS["render"], k_plan, k_cap if caps_on else None, c.start, c.end,
                      p.state.data["source"]["fingerprint"], cfg.section_hash("video", "audio", "export", "enhance"),
                      f_ass.read_text() if caps_on else None, voice, punches, c.cuts,
-                     f_chat.read_text(encoding="utf-8") if f_chat else None)
+                     f_chat.read_text(encoding="utf-8") if f_chat else None, k_face)
         state.data["punches"] = punches
         r = run_stage(state, "render", k_r, [f_out],
                       lambda: render_clip(media, plan, c.start, c.end, f_ass if caps_on else None, f_out,
                                           cfg.video, cfg.audio, cfg.export, self.device,
                                           voice_track=voice, enhance=cfg.enhance, punches=punches,
-                                          cuts=c.rel_cuts(), under_ass=f_chat),
+                                          cuts=c.rel_cuts(), under_ass=f_chat, face_video=f_face),
                       resume=resume, force=force, retries=1)
         cached += [r.name] if r.cached else []
 
@@ -829,6 +831,32 @@ class Studio:
                     log.error("      fail: %s: %s", ch.name, ch.detail)
         plats = self._platforms(state, c, cfg, f_out, qc, platforms, resume, force, k_r)
         return ClipResult(c.id, f_out, qc, round(time.perf_counter() - t0, 2), cached, plats)
+
+    def _face_upscale(self, p: Project, c: Candidate, cfg: Config, plan: CropPlan, state: StateFile, d: Path,
+                      resume: bool, force: bool) -> tuple[Path | None, str | None]:
+        """Per-clip stage: the webcam crop enlarged with Real-ESRGAN (None when off, not installed or it fails)."""
+        e = cfg.enhance
+        crop = plan.keyframes[0].facecam if plan.keyframes else None
+        if e.face_upscale == "off" or plan.mode != "facecam_split" or crop is None:
+            return None, None
+        if e.face_upscale == "auto" and crop.w * crop.h > e.face_upscale_max_pixels:
+            return None, None
+        from clipstudio.rendering.face_upscale import MODEL, find_program, upscale_face
+        exe = find_program(self.models_dir)
+        if exe is None:
+            return None, None
+        f_face = d / "face_sr.mp4"
+        k = key_of("face_sr", STAGE_VERSIONS["face_sr"], p.state.data["source"]["fingerprint"], c.start, c.end,
+                   crop.model_dump(), e.face_upscale_fps, MODEL)
+        try:
+            run_stage(state, "face_sr", k, [f_face],
+                      lambda: upscale_face(p.source_path(), c.start, c.end - c.start, crop, e.face_upscale_fps,
+                                           f_face, exe),
+                      resume=resume, force=force)
+        except StageFailed as ex:
+            log.warning("webcam upscaling failed for %s, using the normal scaler: %s", c.id, ex)
+            return None, None
+        return f_face, k
 
     def _chat_overlay(self, p: Project, c: Candidate, cfg: Config, plan: CropPlan, state: StateFile, d: Path,
                       f_caps: Path | None, resume: bool, force: bool) -> Path | None:

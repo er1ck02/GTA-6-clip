@@ -106,6 +106,7 @@ enhance:
   punch_max: 3
   hook_title: true         # title card on the video (only for titles you or the LLM wrote, never a transcript line)
   hook_title_seconds: 3.5  # then it fades and the captions take its place; 0 = the whole clip
+  face_upscale: auto       # Real-ESRGAN on a small webcam, if installed under models/realesrgan (off | auto | on)
   trim_black_edges: true      # cut black frames at clip edges (not when you set start/end yourself)
 
 export:

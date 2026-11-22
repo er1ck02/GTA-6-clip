@@ -136,3 +136,22 @@ def test_no_facecam_gameplay_is_wide_not_zoomed():
     assert (plan.out_width, plan.out_height) == (1080, 1920)      # the output frame is still exactly 9:16
     graph = build_video_graph(plan, 60, None)
     assert "boxblur" in graph and "overlay=0:" in graph
+
+
+def test_upscaled_webcam_comes_from_a_second_input(tmp_path):
+    from clipstudio.rendering.face_upscale import find_program
+    from clipstudio.rendering.render import build_video_graph
+    cfg = load_config(overrides=["reframing.mode=auto"])
+    small = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions,
+                        _det(0.9, region=(0.039, 0.413, 0.088, 0.175)), None, 0.6)
+    plain = build_video_graph(small, 60, None)
+    sr = build_video_graph(small, 60, None, face_input=4)
+    assert "[1:v]" not in plain and "[0:v]split=2[fsrc][gsrc]" in plain
+    assert "[1:v]fps=60:start_time=0" in sr and "[fsrc]" not in sr and "[0:v]null[gsrc]" in sr
+    # not installed: nothing is found, and nothing is downloaded
+    assert find_program(tmp_path) is None
+    (tmp_path / "realesrgan" / "models").mkdir(parents=True)
+    (tmp_path / "realesrgan" / "realesrgan-ncnn-vulkan.exe").write_bytes(b"")
+    assert find_program(tmp_path) is None                      # the program without its model is not usable
+    (tmp_path / "realesrgan" / "models" / "realesrgan-x4plus.bin").write_bytes(b"")
+    assert find_program(tmp_path) is not None

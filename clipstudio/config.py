@@ -411,6 +411,13 @@ class EnhanceCfg(_Strict):
     # LLM re-rank: the automatic fallback title is a line of the transcript, which is not a hook.
     hook_title: bool = True
     hook_title_seconds: float = Field(3.5, ge=0, le=600)   # then it fades out; 0 = stays up for the whole clip
+    # AI upscaling of the webcam picture with Real-ESRGAN, when the program is installed under
+    # <models_dir>/realesrgan/ (nothing is downloaded by Clip Studio itself). "auto": only for a small webcam
+    # (at most face_upscale_max_pixels in the stream), where it matters and costs about a minute a clip;
+    # "on": for every webcam (a big one can take several minutes); "off": never.
+    face_upscale: Literal["off", "auto", "on"] = "auto"
+    face_upscale_fps: float = Field(24.0, ge=5, le=60)        # the webcam picture's frame rate when upscaled
+    face_upscale_max_pixels: int = Field(60000, ge=1000)       # "auto" limit, e.g. 200x300
     # drop black frames at the very start/end of a clip (loading screens, fades); skipped when you set the bounds
     trim_black_edges: bool = True
 
