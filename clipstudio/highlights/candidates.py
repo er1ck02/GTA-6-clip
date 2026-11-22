@@ -576,6 +576,11 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
             f["dark_share"] = round(float((br < 22).mean()), 3) if br.size else 0.0   # near black, not just night
             if cfg.min_evidence > 0 and f["dark_share"] > cfg.max_dark_share:
                 weak, why_not = True, f"{f['dark_share']:.0%} of it is too dark to read"
+        if sig.game_subs:
+            from clipstudio.visual_analysis.subtitles import share_present
+            f["game_subs_share"] = round(share_present(sig.game_subs, sig.game_subs_fps, start, end), 3)
+            if cfg.min_evidence > 0 and f["game_subs_share"] > cfg.max_game_subs_share:
+                weak, why_not = True, f"game dialogue is on screen for {f['game_subs_share']:.0%} of it (cutscene)"
         held = held_words(" ".join(x.text for s in sents for x in s.words if start - 3 <= x.start <= end + 3), cfg.hold_words)
         if held:
             f["content_hold"] = 1.0

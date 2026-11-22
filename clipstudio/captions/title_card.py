@@ -48,25 +48,33 @@ def _runs(text: str) -> list[tuple[bool, str]]:
 
 
 def render_title(text: str, out: Path, frame_w: int, frame_h: int, size: float = 0.034, max_width: float = 0.9,
-                 max_lines: int = 2) -> tuple[int, int] | None:
+                 max_lines: int = 2, min_scale: float = 0.7) -> tuple[int, int] | None:
     """Write the title picture to ``out`` (PNG with alpha). Returns its (width, height), or None for no text."""
     from PIL import Image, ImageDraw, ImageFont
 
     text = " ".join(text.split())
     if not text:
         return None
-    fs = max(14, int(round(size * frame_h)))
+    fs0 = max(14, int(round(size * frame_h)))
     _, font_file = resolve_font(TEXT_FONTS, True)
-    try:
-        font = ImageFont.truetype(font_file, fs) if font_file else ImageFont.load_default()
-    except OSError:
-        font = ImageFont.load_default()
-    emoji = _emoji_font(fs)
-    stroke = max(3, int(round(fs * 0.11)))
     limit = int(frame_w * max_width)
+
+    def load(px: int):
+        try:
+            return (ImageFont.truetype(font_file, px) if font_file else ImageFont.load_default()), _emoji_font(px)
+        except OSError:
+            return ImageFont.load_default(), _emoji_font(px)
 
     def width(s: str) -> float:
         return sum((emoji.getlength(r) if (e and emoji) else font.getlength(r)) for e, r in _runs(s) if not (e and not emoji))
+
+    # one line keeps the title off the streamer's face: shrink it (down to min_scale) before wrapping
+    fs = fs0
+    font, emoji = load(fs)
+    while width(text) > limit and fs > max(14, int(fs0 * min_scale)):
+        fs -= 2
+        font, emoji = load(fs)
+    stroke = max(3, int(round(fs * 0.11)))
 
     lines: list[str] = []
     cur = ""

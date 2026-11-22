@@ -122,6 +122,8 @@ class HighlightsCfg(_Strict):
     # When the source has a live chat that is actually talking, chat is the judge: its reaction must be one of
     # the signs. The streamer saying "it's insane" in a conversation, with chat not reacting, is not a moment.
     chat_must_react: bool = True
+    # game subtitles on screen for more than this share of the clip: a cutscene or NPC dialogue, not a moment
+    max_game_subs_share: float = Field(0.4, ge=0, le=1)
     # a clip that is dark for most of its length (a night scene, a dark room) is unreadable on a phone
     max_dark_share: float = Field(0.7, ge=0, le=1)
     # Never queue these for posting without a person looking: clips whose words point to nudity or sexual
@@ -456,6 +458,8 @@ class EnhanceCfg(_Strict):
     # LLM re-rank: the automatic fallback title is a line of the transcript, which is not a hook.
     hook_title: bool = True
     hook_title_seconds: float = Field(0, ge=0, le=600)     # 0 = stays up for the whole clip
+    # a webcam that sits inside the gameplay picture is blurred there when it is already shown in the top panel
+    hide_gameplay_cam: bool = True
     title_size: float = Field(0.034, gt=0.01, le=0.1)      # title text height as a fraction of frame height
     # AI upscaling of the webcam picture with Real-ESRGAN, when the program is installed under
     # <models_dir>/realesrgan/ (nothing is downloaded by Clip Studio itself). "auto": only for a small webcam

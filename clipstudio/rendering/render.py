@@ -44,6 +44,17 @@ def gameplay_crop(plan: CropPlan) -> str:
     return f"crop={g0.w}:{g0.h}:{x}:{y}"
 
 
+def _cam_in_gameplay(plan: CropPlan, f: PixelRect) -> bool:
+    """Does at least half of the webcam box lie inside the gameplay crop (in every keyframe)?"""
+    for k in plan.keyframes:
+        g = k.gameplay
+        iw = min(f.x + f.w, g.x + g.w) - max(f.x, g.x)
+        ih = min(f.y + f.h, g.y + g.h) - max(f.y, g.y)
+        if iw <= 0 or ih <= 0 or iw * ih < 0.5 * f.w * f.h:
+            return False
+    return True
+
+
 PUNCH_IN, PUNCH_HOLD, PUNCH_OUT = 0.15, 0.5, 0.35
 
 
@@ -162,6 +173,12 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
         else:
             cam = f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},{pre_fx(enhance, strong=True)}"
             cam_w, head = f.w, "[0:v]split=2[fsrc][gsrc];"
+        if enhance is not None and enhance.hide_gameplay_cam and _cam_in_gameplay(plan, f):
+            # the webcam sits inside the gameplay picture and is already shown on top: blur it there
+            r = max(2, min(16, min(f.w, f.h) // 8))
+            head = (head.replace("[gsrc]", "[graw]") +
+                    f"[graw]split=2[gkeep][gcam];[gcam]crop={f.w}:{f.h}:{f.x}:{f.y},boxblur={r}:3,"
+                    f"eq=brightness=-0.08[gblur];[gkeep][gblur]overlay={f.x}:{f.y}[gsrc];")
         if plan.facecam_fit:
             # the whole camera picture, fitted to the panel height, over a blurred and dimmed copy of itself
             fw = min(top.w, max(2, int(round(top.h * f.w / f.h / 2.0)) * 2))

@@ -177,3 +177,23 @@ def test_title_is_a_picture_above_the_streamer_and_captions_are_off(tmp_path):
     g = build_video_graph(plan, 60, None, title_input=(1, 100, 80, 0.0))
     assert "[1:v]format=rgba[titlev]" in g and "overlay=100:80" in g and "enable" not in g
     assert "enable='lte(t,3.50)'" in build_video_graph(plan, 60, None, title_input=(1, 100, 80, 3.5))
+
+
+def test_long_title_shrinks_to_one_line_before_wrapping(tmp_path):
+    from clipstudio.captions.title_card import render_title
+    short = render_title("tg tried to be nice 😭", tmp_path / "s.png", 1080, 1920)
+    longer = render_title("typical gamer shot through the door 😳", tmp_path / "l.png", 1080, 1920)
+    assert longer[0] <= 1080 * 0.95 and longer[1] <= short[1]       # still one line, in smaller letters
+
+
+def test_webcam_inside_the_gameplay_is_blurred_there_when_shown_on_top():
+    from clipstudio.rendering.render import build_video_graph
+    cfg = load_config()
+    plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6)
+    assert plan.mode == "facecam_split"
+    g = build_video_graph(plan, 60, None, cfg.enhance)
+    f, gp = plan.keyframes[0].facecam, plan.keyframes[0].gameplay
+    inside = gp.x <= f.x and gp.y <= f.y and f.x + f.w <= gp.x + gp.w and f.y + f.h <= gp.y + gp.h
+    assert ("[gblur]" in g) == inside
+    off = cfg.enhance.model_copy(update={"hide_gameplay_cam": False})
+    assert "[gblur]" not in build_video_graph(plan, 60, None, off)
