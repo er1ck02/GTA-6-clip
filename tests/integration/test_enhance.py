@@ -29,7 +29,8 @@ def two_track(tmp_path_factory):
 
 
 def _cfg(*ov):
-    return load_config(overrides=["reframing.mode=gameplay", "reframing.tracking=false", "video.fps=30",
+    # full-frame gameplay: the zoom check below compares against the centre of the whole frame
+    return load_config(overrides=["reframing.mode=gameplay", "reframing.gameplay_fill=full", "reframing.tracking=false", "video.fps=30",
                                   "export.preset=ultrafast", *ov])
 
 
