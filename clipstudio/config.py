@@ -602,6 +602,11 @@ class ProductionCfg(_Strict):
     # whose category is known and isn't GTA); checked every recheck_minutes
     idle_keywords: list[str] = Field(default_factory=lambda: [
         "sleep stream", "sleeping", "asleep", "zzz", "afk", "brb", "be right back", "just chatting"])
+    # a stream whose picture barely changes (a still room: sleep stream with a GTA title) for this many rechecks
+    # in a row counts as offline; mean pixel change between frames 0.5 s apart, 0-255 (gameplay is well above 3)
+    idle_motion_threshold: float = Field(1.5, ge=0)       # 0 = off
+    idle_motion_checks: int = Field(2, ge=1, le=12)
+    idle_cooldown_minutes: float = Field(30, ge=0)        # a streamer found asleep isn't tried again before this
     post_stand_ins: bool = True  # stand-ins' clips post automatically (credited) like the lineup's, not held for review
     discover_keywords: list[str] = Field(default_factory=lambda: ["gta 6", "gta vi", "gta6", "grand theft auto vi"])
     recheck_minutes: float = Field(5, ge=1, le=120)       # how often offline channels are checked again

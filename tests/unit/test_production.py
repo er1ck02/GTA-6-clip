@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from clipstudio.config import load_config
@@ -247,6 +248,48 @@ def test_sleep_and_non_gta_streams_count_as_offline(cfg, tmp_path):
     m._follow()
     assert live.started[-1] == "lacy"
     assert next(s for s in m.slots if s["wanted"] == "lacy")["action"] == "watch"
+
+
+def test_a_still_picture_is_a_sleep_stream_even_with_a_gta_title(cfg, tmp_path, monkeypatch):
+    from clipstudio.production import activity
+
+    # the measure itself, on real ffmpeg frames is covered by activity.motion; here: fake frame reads
+    still = lambda p: np.zeros((3, 36, 64), np.float32)  # noqa: E731
+    moving = lambda p: np.stack([np.zeros((36, 64)), np.full((36, 64), 20.0), np.zeros((36, 64))])  # noqa: E731
+    assert activity.motion([Path("a"), Path("b")], read=still) == 0.0
+    assert activity.motion([Path("a")], read=moving) == 20.0
+    assert activity.motion([], read=still) is None
+
+    cfg.production.target_streams = 2
+    cfg.production.discover_channels = ["big"]
+    live = FakeLive(tmp_path)
+    online = {"lacy", "big"}
+    m = mgr(cfg, live, lambda u: checker(online, {"lacy": "GTA 6 MARATHON 24/7"})(u))
+    m.start(["https://www.twitch.tv/lacy"])
+    seg = tmp_path / "seg.ts"
+    seg.write_bytes(b"x")
+    for w in live.watches.values():
+        w.session.ring = SimpleNamespace(segments=[SimpleNamespace(path=seg, end=10.0)])
+    score = {"lacy": 0.2, "big": 9.0}
+    monkeypatch.setattr(activity, "motion", lambda paths, **kw: score[current[0]])
+    current = [""]
+    orig_still = m._still
+
+    def still_for(s):
+        current[0] = s["channel"]
+        return orig_still(s)
+    monkeypatch.setattr(m, "_still", still_for)
+    m._next_recheck = 0
+    m._follow()  # 1st still reading: not yet
+    assert live.watches["lacy"].session.running is True
+    m._next_recheck = 0
+    m._follow()  # 2nd in a row: asleep, swapped out, not retried during the cooldown
+    assert live.watches["lacy"].session.running is False
+    lacy = next(s for s in m.slots if s["wanted"] == "lacy")
+    assert lacy["action"] == "wait" and "nothing moving" in lacy["note"]
+    m._next_recheck = 0
+    m._follow()
+    assert live.started.count("lacy") == 1 and live.watches["big"].session.running is True
 
 
 def test_streams_added_or_stopped_by_hand_change_the_lineup(cfg, tmp_path):
