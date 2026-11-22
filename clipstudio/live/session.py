@@ -51,6 +51,7 @@ class Moment:
     upload_note: str = ""
     error: str | None = None
     created: float = field(default_factory=time.time)
+    attempts: int = 0                     # edit attempts (a failed edit is retried once on the next production start)
 
 
 def upload_decision(cfg: Config, channel: str | None, qc_passed: bool | None) -> tuple[str, str]:
@@ -249,6 +250,7 @@ class LiveSession:
     def _edit(self, m: Moment) -> None:
         from clipstudio.pipeline.studio import Studio
 
+        m.attempts += 1
         try:
             dur = m.saved[1] - m.saved[0]
             cfg = self.cfg.model_copy(deep=True)

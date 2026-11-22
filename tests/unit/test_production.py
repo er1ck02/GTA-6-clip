@@ -311,3 +311,12 @@ def test_repair_path_adds_the_venv_and_is_idempotent(monkeypatch):
     assert str(Path(sys.executable).parent) in os.environ["PATH"].split(os.pathsep)
     assert agent.repair_path() == []  # a second call adds nothing
     assert all(d in os.environ["PATH"].split(os.pathsep) for d in added)
+
+
+def test_failed_moments_are_retried_once(cfg, tmp_path):
+    session_dir(tmp_path, "a", "20261122_050000", [
+        {"id": "m1", "status": "failed", "path": "make", "created": time.time()},
+        {"id": "m2", "status": "failed", "path": "make", "created": time.time(), "attempts": 2},
+        {"id": "m3", "status": "done", "path": "make", "created": time.time(), "clip": "x.mp4"}])
+    m = mgr(cfg, FakeLive(tmp_path), checker(set()))
+    assert [x["id"] for _d, x in m.backlog()] == ["m1"]
