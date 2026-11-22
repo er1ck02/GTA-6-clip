@@ -181,7 +181,7 @@ espeak-ng commentary with a loud reaction section). Requires `espeak-ng`.
 | `resume --project P` | Re-run analysis (cached stages skip) and re-render previously requested clips. |
 | `status [--project P]` | Stage status, timings, errors, QC results. |
 | `ui [--host --port]` | Start the workstation. |
-| `live --url URL \| --input FILE` | Watch a live stream and keep only the moments that trigger (see below). Options: `--chat auto\|none\|twitch:NAME\|youtube\|FILE --channel NAME --duration S --max-moments N --no-process --out DIR --fast`. |
+| `live --url URL [--url URL2 ...] \| --all \| --input FILE` | Watch one or several live streams at once and keep only the moments that trigger (see below). `--all` watches every URL in `live.channels`. Options: `--chat auto\|none\|twitch:NAME\|youtube\|FILE --channel NAME --duration S --max-moments N --no-process --out DIR --fast`. |
 
 Every command accepts `--config FILE` (repeatable), `--profile fast|balanced|quality`,
 `--set key.path=value` (repeatable), `-v`, and `--json`: one JSON document on

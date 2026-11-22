@@ -109,24 +109,39 @@ class JobRunner:
             return sorted(self.jobs.values(), key=lambda j: -j["created"])[:50]
 
 
+class _Watch:
+    """One stream being watched: its session, the thread running it, and the newest frame."""
+
+    def __init__(self, key: str, session):
+        self.key, self.session = key, session
+        self.thread: threading.Thread | None = None
+        self.error: str | None = None
+        self.frame: tuple[int, bytes] | None = None
+        self.started = time.time()
+
+    @property
+    def running(self) -> bool:
+        return self.thread is not None and self.thread.is_alive()
+
+
 class LiveManager:
-    """At most one live session, run on its own thread so the API stays responsive."""
+    """Any number of streams watched at once (up to ``live.max_streams``), each on its own thread so the API
+    stays responsive. Every stream records and scores on its own; their editors share one gate
+    (``live.max_parallel_edits``), so moments from many channels queue for the GPU instead of piling onto it."""
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.session = None
-        self.thread: threading.Thread | None = None
+        self.watches: dict[str, _Watch] = {}
         self.error: str | None = None
-        self._frame: tuple[int, bytes] | None = None
+        self._lock = threading.Lock()
 
+    # ------------------------------------------------------------ control
     def start(self, url: str | None, file: str | None, channel: str | None, chat: str | None,
               duration: float, realtime: bool = True):
         from clipstudio.live.buffer import Recorder
         from clipstudio.live.chat import channel_from_url, make_chat_source, youtube_channel
         from clipstudio.live.session import LiveSession
 
-        if self.session is not None and self.session.running:
-            raise ClipStudioError("a live session is already running; stop it first")
         if bool(url) == bool(file):
             raise ClipStudioError("give a stream URL (or a file path for a dry run)")
         if file and not Path(file).expanduser().is_file():
@@ -134,51 +149,115 @@ class LiveManager:
         if not channel and url:
             channel = channel_from_url(url) or (youtube_channel(url) if "youtu" in url else None)
         channel = channel.lower().lstrip("@") if channel else None
-        out = Path(self.cfg.paths.data_dir).expanduser().resolve() / "live" / \
-            f"{channel or 'stream'}_{time.strftime('%Y%m%d_%H%M%S')}"
-        rec = Recorder(out / "buffer", self.cfg.live.segment_seconds, url=url or None,
-                       file=Path(file).expanduser() if file else None, realtime=realtime)
-        self.session = LiveSession(self.cfg, rec, make_chat_source(chat or None, url or None, out), out,
-                                   channel=channel, max_seconds=duration)
-        self.error = None
+        with self._lock:
+            src = url or str(Path(file).expanduser())
+            for w in self.watches.values():
+                if w.running and str(w.session.rec.url or w.session.rec.file) == src:
+                    raise ClipStudioError(f"already watching {src}")
+            running = sum(w.running for w in self.watches.values())
+            if running >= self.cfg.live.max_streams:
+                raise ClipStudioError(f"already watching {running} streams (live.max_streams); stop one first")
+            key = channel or "stream"
+            n = 2
+            while key in self.watches and self.watches[key].running:
+                key, n = f"{channel or 'stream'}-{n}", n + 1
+            out = Path(self.cfg.paths.data_dir).expanduser().resolve() / "live" / \
+                f"{key}_{time.strftime('%Y%m%d_%H%M%S')}"
+            rec = Recorder(out / "buffer", self.cfg.live.segment_seconds, url=url or None,
+                           file=Path(file).expanduser() if file else None, realtime=realtime)
+            w = _Watch(key, LiveSession(self.cfg, rec, make_chat_source(chat or None, url or None, out), out,
+                                        channel=channel, max_seconds=duration))
+            self.watches[key] = w
 
         def run():
             try:
-                self.session.run()
+                w.session.run()
             except Exception as e:
-                self.error = str(e)
-                log.error("live session failed: %s", e)
+                w.error = str(e)
+                log.error("live session %s failed: %s", key, e)
 
-        self.thread = threading.Thread(target=run, daemon=True, name="clipstudio-live")
-        self.thread.start()
+        w.thread = threading.Thread(target=run, daemon=True, name=f"clipstudio-live-{key}")
+        w.thread.start()
+        return self.status(key)
+
+    def start_all(self, urls: list[str] | None = None) -> dict:
+        """Start every stream in ``urls`` (default: ``live.channels``); one bad URL does not stop the rest."""
+        urls = [u for u in (urls if urls is not None else self.cfg.live.channels) if u and u.strip()]
+        if not urls:
+            raise ClipStudioError("no channels listed: add stream URLs to live.channels in your config")
+        started, failed = [], {}
+        for u in urls:
+            try:
+                started.append(self.start(u.strip(), None, None, None, 0)["id"])
+            except ClipStudioError as e:
+                failed[u] = str(e)
+        return {"started": started, "failed": failed, **self.status()}
+
+    def stop(self, key: str | None = None):
+        for k, w in list(self.watches.items()):
+            if key is None or k == key:
+                w.session.stop()
+        return self.status(key)
+
+    def remove(self, key: str) -> dict:
+        w = self.watches.get(key)
+        if w is None:
+            raise ClipStudioError(f"no stream {key!r}")
+        if w.running:
+            raise ClipStudioError("stop it first (moments still being edited are finished before it ends)")
+        del self.watches[key]
         return self.status()
 
-    def stop(self):
-        if self.session is not None:
-            self.session.stop()
-        return self.status()
+    # ------------------------------------------------------------ state
+    def _summary(self, w: _Watch) -> dict:
+        s = w.session
+        ms = list(s.moments)
+        return {"id": w.key, "channel": s.channel, "source": str(s.rec.url or s.rec.file), "running": w.running,
+                "recording": s.running, "stopped": s.stopped_reason, "error": w.error, "head": round(s.ring.head, 1),
+                "chat_count": s.chat_count, "moments": len(ms),
+                "done": sum(m.status == "done" for m in ms), "editing": sum(m.status == "processing" for m in ms),
+                "queued": sum(m.status in ("queued", "saved", "pending") for m in ms),
+                "failed": sum(m.status == "failed" for m in ms),
+                "allowed": sum(m.upload == "allowed" for m in ms), "started_at": w.started,
+                "last_trigger": (s.triggers[-1] if s.triggers else None)}
 
-    def status(self) -> dict:
-        if self.session is None:
-            return {"active": False, "error": self.error}
-        snap = self.session.snapshot()
-        snap["active"] = True
-        snap["error"] = self.error
+    def status(self, key: str | None = None) -> dict:
+        """The detail snapshot of one stream (``key``, else the newest running one) plus a summary of all."""
+        ws = list(self.watches.values())
+        sessions = [self._summary(w) for w in ws]
+        if not ws:
+            return {"active": False, "error": self.error, "sessions": [], "id": None}
+        w = self.watches.get(key) if key else None
+        if w is None:
+            live_ws = [x for x in ws if x.running] or ws
+            w = max(live_ws, key=lambda x: x.started)
+        snap = w.session.snapshot()
+        snap.update(active=True, error=w.error, id=w.key, sessions=sessions,
+                    max_streams=self.cfg.live.max_streams, max_parallel_edits=self.cfg.live.max_parallel_edits)
         return snap
 
-    def frame(self) -> bytes | None:
-        """JPEG of the newest recorded segment (what the recorder is seeing now)."""
-        if self.session is None or not self.session.ring.segments:
+    @property
+    def session(self):  # the newest stream (kept for callers that know only one)
+        ws = list(self.watches.values())
+        return max(ws, key=lambda x: x.started).session if ws else None
+
+    def frame(self, key: str | None = None) -> bytes | None:
+        """JPEG of the newest recorded segment of a stream (what its recorder is seeing now)."""
+        w = self.watches.get(key) if key else None
+        if w is None:
+            ws = list(self.watches.values())
+            w = max(ws, key=lambda x: x.started) if ws else None
+        if w is None or not w.session.ring.segments:
             return None
-        seg = self.session.ring.segments[-1]
-        if self._frame and self._frame[0] == seg.index:
-            return self._frame[1]
+        seg = w.session.ring.segments[-1]
+        if w.frame and w.frame[0] == seg.index:
+            return w.frame[1]
         try:
             cp = run([ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-i", str(seg.path), "-frames:v", "1",
                       "-vf", "scale=640:-2", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "-"])
         except Exception:
-            return self._frame[1] if self._frame else None
-        self._frame = (seg.index, cp.stdout)
+            return w.frame[1] if w.frame else None
+        w.frame = (seg.index, cp.stdout)
         return cp.stdout
 
 
@@ -452,8 +531,8 @@ def create_app(cfg: Config):
     live = LiveManager(cfg)
 
     @app.get("/api/live")
-    def live_status():
-        return live.status()
+    def live_status(id: str | None = None):
+        return live.status(id)
 
     @app.post("/api/live/start")
     def live_start(body: dict = Body(...)):
@@ -461,13 +540,21 @@ def create_app(cfg: Config):
                           body.get("chat") or None, float(body.get("duration") or 0),
                           realtime=not body.get("fast", False))
 
+    @app.post("/api/live/start-all")
+    def live_start_all(body: dict = Body(default={})):
+        return live.start_all(body.get("urls"))
+
     @app.post("/api/live/stop")
-    def live_stop():
-        return live.stop()
+    def live_stop(body: dict = Body(default={})):
+        return live.stop((body or {}).get("id"))
+
+    @app.delete("/api/live/{key}")
+    def live_remove(key: str):
+        return live.remove(key)
 
     @app.get("/api/live/frame")
-    def live_frame():
-        jpg = live.frame()
+    def live_frame(id: str | None = None):
+        jpg = live.frame(id)
         if not jpg:
             raise HTTPException(404, "no frame yet")
         return Response(jpg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})

@@ -145,10 +145,12 @@ def test_live_panel_api(tmp_path):
     r = c.post("/api/live/start", json={"file": str(src), "channel": "tester", "chat": str(tmp_path / "s.chat.json"),
                                         "fast": True})
     assert r.status_code == 200, r.text
-    assert c.post("/api/live/start", json={"file": str(src)}).status_code in (200, 400)
+    key = r.json()["id"]
+    dup = c.post("/api/live/start", json={"file": str(src)})  # the same source twice is refused while it runs
+    assert dup.status_code == 400 or not c.get(f"/api/live?id={key}").json()["running"]
     deadline = time.time() + 60
     while time.time() < deadline:
-        s = c.get("/api/live").json()
+        s = c.get(f"/api/live?id={key}").json()
         if s["active"] and not s["running"] and s["started_at"]:
             break
         time.sleep(0.5)
@@ -158,3 +160,47 @@ def test_live_panel_api(tmp_path):
     assert c.post("/api/live/start", json={}).status_code == 400
     sysinfo = c.get("/api/system").json()
     assert {"live_record", "live_chat", "live_trigger", "upload"} <= {t["stage"] for t in sysinfo["tools"]}
+
+
+def test_live_many_streams(tmp_path):
+    """Several streams watched at once: each gets its own session and tile, stop/remove work per stream."""
+    import subprocess
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from clipstudio.server.app import create_app
+
+    srcs = []
+    for i, f in enumerate((300, 500, 700)):
+        src = tmp_path / f"s{i}.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=40",
+                        "-f", "lavfi", "-i", f"sine=frequency={f}:sample_rate=48000:duration=40",
+                        "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-c:a", "aac", str(src)], check=True)
+        srcs.append(src)
+    cfg = load_config(overrides=[f"paths.data_dir={tmp_path / 'data'}", "live.auto_process=false", "live.max_streams=2"])
+    c = TestClient(create_app(cfg))
+    a = c.post("/api/live/start", json={"file": str(srcs[0]), "channel": "alpha"}).json()
+    b = c.post("/api/live/start", json={"file": str(srcs[1]), "channel": "beta"}).json()
+    assert {a["id"], b["id"]} == {"alpha", "beta"}
+    over = c.post("/api/live/start", json={"file": str(srcs[2]), "channel": "gamma"})
+    assert over.status_code == 400 and "max_streams" in over.text
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        s = c.get("/api/live").json()
+        if all(x["head"] > 6 for x in s["sessions"]):
+            break
+        time.sleep(0.5)
+    assert {x["id"] for x in s["sessions"]} == {"alpha", "beta"} and all(x["running"] for x in s["sessions"])
+    assert c.get("/api/live?id=beta").json()["channel"] == "beta"
+    assert c.get("/api/live/frame?id=alpha").headers["content-type"] == "image/jpeg"
+    assert c.delete("/api/live/alpha").status_code == 400  # still running
+    c.post("/api/live/stop", json={"id": "alpha"})
+    deadline = time.time() + 30
+    while time.time() < deadline and c.get("/api/live?id=alpha").json()["running"]:
+        time.sleep(0.3)
+    assert c.get("/api/live?id=beta").json()["running"]  # stopping one leaves the other recording
+    assert c.delete("/api/live/alpha").status_code == 200
+    assert [x["id"] for x in c.get("/api/live").json()["sessions"]] == ["beta"]
+    c.post("/api/live/stop", json={})
+    assert c.post("/api/live/start-all", json={}).status_code == 400  # live.channels is empty
