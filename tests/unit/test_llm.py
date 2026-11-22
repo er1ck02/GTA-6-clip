@@ -141,3 +141,13 @@ def test_refusal_moves_to_next_provider(monkeypatch):
     cfg = LLMCfg(enabled=True, providers=[LLMProvider(kind="anthropic", model="claude-opus-5-5")])
     with pytest.raises(llm.ProviderError, match="declined"):
         llm.rerank(_set(), cfg, 0.55)
+
+
+def test_llm_auto_turns_on_with_a_key(monkeypatch):
+    from clipstudio.config import load_config
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = load_config().llm
+    assert cfg.enabled == "auto" and not cfg.active()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    assert cfg.active()
+    assert not load_config(overrides=["llm.enabled=false"]).llm.active()

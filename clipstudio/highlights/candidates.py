@@ -44,6 +44,8 @@ class Signals:
     chat_hype: np.ndarray | None = None
     chat_window: float = 5.0
     snap_to_cuts: bool = True
+    # live mode: the moment (source seconds) the trigger fired for, already corrected for chat lag
+    anchor: float | None = None
 
     @property
     def has_chat(self) -> bool:
@@ -187,6 +189,56 @@ def compute_features(sents: list[Sentence], loud: LoudnessTrack, start: float, e
     }
 
 
+def payoff_time(sents: list[Sentence], loud: LoudnessTrack, start: float, end: float) -> float:
+    """The strongest moment inside [start, end]: a clear loudness jump, else the most reactive sentence."""
+    db = slice_db(loud, start, end)
+    if db.size and float(db.max()) - loud.median_db >= 6.0:
+        return start + (int(np.argmax(db)) + 0.5) * loud.window
+    return _peak_sentence(sents, loud).start if sents else start + 0.5 * (end - start)
+
+
+def position_score(t: float, start: float, end: float) -> float:
+    """1 when ``t`` sits where a payoff belongs (35-80 % into the clip: a setup before, a reaction after),
+    falling to 0 at the very start (no setup) and the very end (no reaction)."""
+    pos = (t - start) / max(1e-6, end - start)
+    if pos < 0 or pos > 1:
+        return 0.0
+    if pos < 0.35:
+        return _clip01((pos - 0.03) / 0.32)
+    if pos > 0.80:
+        return _clip01((0.98 - pos) / 0.18)
+    return 1.0
+
+
+def tighten(start: float, end: float, sents: list[Sentence], loud: LoudnessTrack, keep: float, min_dur: float,
+            protect: float | None = None) -> tuple[float, float]:
+    """Cut quiet, speechless seconds off both ends (leaving ``keep`` s), never below ``min_dur``."""
+    w = loud.window
+    db = slice_db(loud, start, end)
+    if not db.size:
+        return start, end
+    quiet = db < loud.median_db + 3.0
+    lead = 0
+    while lead < len(quiet) and quiet[lead]:
+        lead += 1
+    trail = 0
+    while trail < len(quiet) - lead and quiet[len(quiet) - 1 - trail]:
+        trail += 1
+    s2, e2 = start + max(0.0, lead * w - keep), end - max(0.0, trail * w - keep)
+    words = [x for s in sents for x in s.words if x.end > start and x.start < end]
+    if words:  # speech is never trimmed
+        s2, e2 = min(s2, words[0].start - 0.25), max(e2, words[-1].end + 0.6)
+    if protect is not None:
+        s2, e2 = min(s2, protect - 2.0), max(e2, protect + 2.0)
+    s2, e2 = max(start, s2), min(end, e2)
+    short = min_dur - (e2 - s2)
+    if short > 0:  # give back what the minimum length needs, the start first (the setup)
+        back = min(short, s2 - start)
+        s2 -= back
+        e2 = min(end, e2 + short - back)
+    return s2, e2
+
+
 def _category(text: str, f: dict[str, float]) -> str:
     toks = set(_norm(text).split())
     if toks & LAUGH_WORDS:
@@ -259,6 +311,8 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
         weights.pop("visual_action"), weights.pop("game_event")
     if not sig.has_chat:
         weights.pop("chat_activity")
+    if sig.anchor is None:
+        weights.pop("trigger_moment")
     wsum = sum(weights.values()) or 1.0
     cuts = sig.visual.scene_cuts if (sig.visual is not None and sig.snap_to_cuts) else []
     sents = build_sentences(tr)
@@ -272,6 +326,12 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
             e2 = _snap(end, cuts, -0.8, 1.5, sents)
             if cfg.minimum_duration - 1e-6 <= e2 - s2 <= cfg.maximum_duration + 1e-6 and (peak is None or s2 <= peak <= e2):
                 start, end = s2, e2
+        if cfg.tighten_edges and end - start <= cfg.maximum_duration + 1e-6:
+            inside = [s for s in sents if s.start >= start - 1e-3 and s.end <= end + 1e-3]
+            keep_pt = peak if peak is not None else (sig.anchor if sig.anchor is not None and start <= sig.anchor <= end
+                                                     else None)
+            floor = max(cfg.minimum_duration, 0.75 * cfg.target_duration)
+            start, end = tighten(start, end, inside, loud, cfg.edge_keep, floor, keep_pt)
         dur = end - start
         if dur < cfg.minimum_duration - 1e-6 or dur > cfg.maximum_duration + 1e-6:
             return
@@ -284,6 +344,10 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
         if sig.has_chat:
             from clipstudio.chat.replay import chat_score
             f["chat_activity"] = round(chat_score(sig.chat_rate, sig.chat_hype, start, end, sig.chat_window), 4)
+        pay = peak if peak is not None else payoff_time(group, loud, start, end)
+        f["payoff_position"] = round(position_score(pay, start, end), 4)
+        if sig.anchor is not None:
+            f["trigger_moment"] = round(position_score(sig.anchor, start, end), 4)
         contrib = {k: round(weights[k] * f[k] / wsum, 4) for k in weights}
         score = sum(contrib.values())
         score *= 1.0 - 0.15 * abs(dur - cfg.target_duration) / span
@@ -354,8 +418,11 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
     if sig.has_chat:
         from clipstudio.chat.replay import chat_peaks
         seeds += [(t, "chat") for t in chat_peaks(sig.chat_rate, sig.chat_window)]
+    if sig.anchor is not None and 0 <= sig.anchor <= media_duration:
+        seeds.append((sig.anchor, "trigger"))
     for pk, src in seeds:
-        start = pk - 0.4 * cfg.target_duration
+        # the moment sits ~60 % in: room for the setup before it and the reaction after it
+        start = pk - (0.6 if src == "trigger" else 0.4) * cfg.target_duration
         # a scene cut in the pre-roll is a natural start: the shot that leads into the moment
         pre = [c for c in cuts if start <= c <= pk - 1.0]
         if pre:

@@ -53,8 +53,8 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
-STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 6,
-                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 3, "captions": 6, "render": 6, "qc": 5, "platforms": 1, "edges": 1}
+STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 7,
+                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 3, "captions": 6, "render": 6, "qc": 5, "platforms": 1, "edges": 1, "framing": 1}
 
 
 @dataclass
@@ -148,7 +148,8 @@ class Studio:
         return p
 
     def open_or_create(self, input_path: Path | None = None, url: str | None = None,
-                       chat: Path | None = None) -> Project:
+                       chat: Path | None = None, anchor: float | None = None) -> Project:
+        """``anchor``: source time of the moment a live trigger fired for; clips are framed around it."""
         if (input_path is None) == (url is None):
             raise ClipStudioError("give exactly one of --input or --url")
         if input_path is not None:
@@ -168,6 +169,8 @@ class Studio:
             if not chat.is_file():
                 raise ClipStudioError(f"chat file not found: {chat}")
             state.data["chat_path"] = str(chat)
+        if anchor is not None:
+            state.data["anchor"] = round(float(anchor), 3)
         state.data["config"] = self.cfg.model_dump(mode="json")
         state.save()
         log.info("project %s (%s)", pid, src.name)
@@ -253,7 +256,7 @@ class Studio:
         k_vis = self._visual(p, media, resume, force)
         k_chat = self._chat(p, media, resume, force)
         k_c = key_of("candidates", STAGE_VERSIONS["candidates"], k_tr, k_ld, cfg.section_hash("highlights"),
-                     k_vis, k_chat, cfg.chat.window_seconds, cfg.visual.snap_to_cuts)
+                     k_vis, k_chat, cfg.chat.window_seconds, cfg.visual.snap_to_cuts, p.state.data.get("anchor"))
 
         def do_candidates() -> None:
             generate_candidates(Transcript.load(p.p("transcript")), LoudnessTrack.load(p.p("loudness")),
@@ -262,11 +265,12 @@ class Studio:
         run_stage(p.state, "candidates", k_c, [p.p("candidates_raw")], do_candidates, resume=resume, force=force)
 
         # optional LLM re-rank; without it (or if every provider fails) the heuristic order is used
-        k_r = key_of("rank", STAGE_VERSIONS["rank"], k_c, cfg.section_hash("llm") if cfg.llm.enabled else None)
+        use_llm = cfg.llm.active()
+        k_r = key_of("rank", STAGE_VERSIONS["rank"], k_c, cfg.section_hash("llm") if use_llm else None)
 
         def do_rank() -> None:
             cs = CandidateSet.load(p.p("candidates_raw"))
-            if cfg.llm.enabled:
+            if use_llm:
                 from clipstudio.highlights.llm import ProviderError, rerank
                 try:
                     cs, note = rerank(cs, cfg.llm, cfg.highlights.minimum_score)
@@ -276,7 +280,7 @@ class Studio:
                     log.warning("LLM re-rank skipped, keeping the heuristic ranking: %s", e)
                     p.state.data["rank_note"] = f"heuristic only ({e})"
             else:
-                p.state.data["rank_note"] = "heuristic only (llm.enabled is false)"
+                p.state.data["rank_note"] = "heuristic only (no LLM key set; llm.enabled is auto)"
             cs.save(p.p("candidates"))
 
         run_stage(p.state, "rank", k_r, [p.p("candidates")], do_rank, resume=resume, force=force)
@@ -339,7 +343,8 @@ class Studio:
     def signals(self, p: Project):
         from clipstudio.highlights.candidates import Signals
         from clipstudio.core.models import ChatTrack
-        sig = Signals(chat_window=self.cfg.chat.window_seconds, snap_to_cuts=self.cfg.visual.snap_to_cuts)
+        sig = Signals(chat_window=self.cfg.chat.window_seconds, snap_to_cuts=self.cfg.visual.snap_to_cuts,
+                      anchor=p.state.data.get("anchor"))
         if self.cfg.visual.enabled and p.p("visual").exists() and p.state.stage("visual").status == "done":
             sig.visual = VisualTrack.load(p.p("visual"))
         if (self.cfg.chat.enabled and self.chat_source(p) is not None and p.p("chat").exists()
@@ -462,6 +467,40 @@ class Studio:
             log.warning("tracking failed for %s, using a static crop: %s", c.id, e)
             return None, None
         return ActionTrack.load(f_tr), k
+
+    def _framing(self, p: Project, c: Candidate, cfg: Config, media: MediaInfo, state: StateFile,
+                 resume: bool, force: bool) -> tuple[dict | None, str | None]:
+        """Per-clip stage: where the locked gameplay crop should sit to keep stream overlays out of it."""
+        r, v = cfg.reframing, cfg.vision
+        if not (v.enabled and r.avoid_overlays) or r.tracking or r.mode == "fit_blur":
+            return None, None
+        fc = self.facecam(p)
+        probe_plan = plan_layout(media, r, cfg.video, cfg.captions, fc, None, v.facecam_min_confidence)
+        if probe_plan.mode == "fit_blur":
+            return None, None
+        g = probe_plan.keyframes[0].gameplay
+        f_fr = p.clip_dir(c.id) / "framing.json"
+        k = key_of("framing", STAGE_VERSIONS["framing"], p.state.stage("metadata").key, c.start, c.end,
+                   g.model_dump(), r.overlay_max_zoom, r.gameplay_center_x)
+
+        def do() -> None:
+            from clipstudio.vision.frames import sample_range
+            from clipstudio.vision.overlays import best_framing, overlay_mask
+            fps = min(2.0, max(0.5, 40.0 / max(1.0, c.end - c.start)))
+            _, frames = sample_range(p.source_path(), c.start, c.end, fps, media.width, media.height, width=320)
+            fr = best_framing(overlay_mask(frames), g.w / media.width, g.h / media.height, r.overlay_max_zoom,
+                              r.gameplay_center_x)
+            if fr:
+                log.info("    overlays cover %.0f%% of the gameplay crop; reframed (zoom %.2f) to %.0f%%",
+                         100 * fr["cover_before"], fr["zoom"], 100 * fr["cover_after"])
+            f_fr.write_text(json.dumps(fr))
+
+        try:
+            run_stage(state, "framing", k, [f_fr], do, resume=resume, force=force)
+        except StageFailed as e:
+            log.warning("overlay check failed for %s, using the default crop: %s", c.id, e)
+            return None, None
+        return json.loads(f_fr.read_text()), k
 
     BROWSER_CODECS = {"h264", "vp8", "vp9", "av1"}
 
@@ -654,13 +693,14 @@ class Studio:
         f_out, f_qc = d / f"{p.id}_{c.id}.mp4", d / "qc.json"
 
         track, k_track = self._track(p, c, cfg, media, state, resume, force)
+        framing, k_framing = self._framing(p, c, cfg, media, state, resume, force)
         fc = self.facecam(p)
         margins = {k: getattr(cfg.captions, k) for k in ("safe_margin_x", "safe_margin_top", "safe_margin_bottom")}
         k_plan = key_of("plan", STAGE_VERSIONS["plan"], media.model_dump(), cfg.section_hash("reframing", "video"), margins,
-                        k_track, fc.model_dump() if fc else None, cfg.vision.facecam_min_confidence)
+                        k_track, fc.model_dump() if fc else None, cfg.vision.facecam_min_confidence, k_framing)
         r = run_stage(state, "plan", k_plan, [f_plan],
                       lambda: plan_layout(media, cfg.reframing, cfg.video, cfg.captions, fc, track,
-                                          cfg.vision.facecam_min_confidence).save(f_plan),
+                                          cfg.vision.facecam_min_confidence, framing).save(f_plan),
                       resume=resume, force=force)
         cached += [r.name] if r.cached else []
         plan = CropPlan.load(f_plan)
@@ -820,8 +860,9 @@ class Studio:
         state = StateFile(d / "state.json", {"clip_id": c.id})
         resume = self.cfg.processing.resume_enabled and self.cfg.processing.cache_enabled
         track, _ = self._track(p, c, cfg, media, state, resume, False)
+        framing, _ = self._framing(p, c, cfg, media, state, resume, False)
         plan = plan_layout(media, cfg.reframing, cfg.video, cfg.captions, self.facecam(p), track,
-                           cfg.vision.facecam_min_confidence)
+                           cfg.vision.facecam_min_confidence, framing)
         f_caps = p.clip_dir(c.id) / "captions.json"
         track = None
         if cfg.captions.enabled:

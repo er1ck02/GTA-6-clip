@@ -88,7 +88,7 @@ def test_signals_create_and_lift_candidates():
                           (200, "okay let me check the map real quick")])
     base = generate_candidates(tr, _loud(), cfg, 300)
     assert set(base.weights) == {"audio_intensity", "audio_spike", "reaction_language", "speech_energy",
-                                 "opening_hook", "completeness"}
+                                 "opening_hook", "completeness", "payoff_position"}
     vis = VisualTrack(sample_fps=4, motion=[1.0] * 1200, motion_median=1.0, scene_cuts=[118.0],
                       events=[VisualEvent(kind="desaturation", start=120, end=124, strength=0.9),
                               VisualEvent(kind="hud_text", start=120.6, end=121.6, strength=1, label="WASTED")])
@@ -99,3 +99,31 @@ def test_signals_create_and_lift_candidates():
     assert top.start <= 120.6 <= top.end and top.features["game_event"] == 1.0 and top.features["chat_activity"] > 0.5
     assert "WASTED" in top.title or "WASTED" in top.reason
     assert top.start == 118.0  # snapped to the scene cut just before the event
+
+
+def test_live_anchor_frames_the_clip_on_the_trigger_moment():
+    from clipstudio.highlights.candidates import position_score
+    cfg = load_config(overrides=["highlights.minimum_duration=10", "highlights.maximum_duration=30",
+                                 "highlights.target_duration=20"]).highlights
+    # chatter at the start of the saved moment, the thing chat reacted to much later
+    tr = make_transcript([(2, "okay so where are we going now let me look"), (41, "oh my god no way")])
+    plain = generate_candidates(tr, _loud(60), cfg, 60)
+    assert "trigger_moment" not in plain.weights
+    cs = generate_candidates(tr, _loud(60), cfg, 60, Signals(anchor=40.0))
+    best = cs.candidates[0]
+    assert best.start < 40.0 < best.end and best.features["trigger_moment"] == 1.0
+    # setup before, reaction after: the moment is neither the first nor the last thing in the clip
+    assert 0.3 <= (40.0 - best.start) / best.duration <= 0.85
+    assert position_score(1.0, 0, 20) < 0.2 and position_score(19.8, 0, 20) == 0.0 and position_score(12, 0, 20) == 1.0
+
+
+def test_tighten_trims_quiet_edges_but_not_speech_or_the_minimum():
+    from clipstudio.highlights.candidates import build_sentences, tighten
+    loud = LoudnessTrack(window=0.5, rms_db=[-40.0] * 20 + [-20.0] * 20 + [-40.0] * 20, median_db=-40.0, p90_db=-20.0)
+    s, e = tighten(0.0, 30.0, [], loud, keep=1.0, min_dur=5.0)
+    assert (s, e) == (9.0, 21.0)                       # 1 s of quiet kept around the loud part
+    s, e = tighten(0.0, 30.0, [], loud, keep=1.0, min_dur=20.0)
+    assert e - s >= 20.0 - 1e-6                        # never shorter than the minimum
+    sents = build_sentences(make_transcript([(3, "wait what is that")]))
+    s, e = tighten(0.0, 30.0, sents, loud, keep=1.0, min_dur=5.0)
+    assert s <= 3.0 - 0.25 + 1e-6                      # words are never cut off

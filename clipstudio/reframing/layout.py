@@ -88,7 +88,9 @@ def _avoid(g: PixelRect, fr: PixelRect | None, sw: int, max_shift: float) -> Pix
 
 def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: CaptionsCfg,
                 facecam: FacecamDetection | None = None, track: ActionTrack | None = None,
-                min_facecam_conf: float = 0.6) -> CropPlan:
+                min_facecam_conf: float = 0.6, framing: dict | None = None) -> CropPlan:
+    """``framing``: ``{"cx", "cy", "zoom"}`` for the locked gameplay crop (see ``vision.overlays``); ignored
+    when the crop follows the action."""
     W, H = vcfg.width, vcfg.height
     sw, sh = media.width, media.height
     safe_top = int(H * ccfg.safe_margin_top)
@@ -120,7 +122,20 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
         path = list(track.smoothed)
         notes.append(f"gameplay crop follows the action: {len(path)} keyframes ({track.method})")
 
+    tracked = len(path) > 1
+    if framing and not tracked and mode != "fit_blur":
+        notes.append(f"gameplay crop moved off stream overlays: zoom {framing['zoom']:.2f}, centre "
+                     f"({framing['cx']:.2f}, {framing['cy']:.2f}); overlay share {framing.get('cover_before', 0):.0%}"
+                     f" -> {framing.get('cover_after', 0):.0%}")
+
     def gameplay_keys(aspect: float, avoid: bool) -> list[PixelRect]:
+        if framing and not tracked:
+            base = _crop_for_aspect(sw, sh, aspect, sw / 2, sh / 2)
+            w, h = _even(base.w / framing["zoom"]), _even(base.h / framing["zoom"])
+            x = min(max(0, int(round(framing["cx"] * sw - w / 2))), sw - w)
+            y = min(max(0, int(round(framing["cy"] * sh - h / 2))), sh - h)
+            rects = [PixelRect(x=x, y=y, w=w, h=h)]
+            return [_avoid(r, fr_px, sw, rcfg.avoid_facecam_shift) for r in rects] if avoid else rects
         rects = [_crop_for_aspect(sw, sh, aspect, cx * sw, sh / 2) for _, cx in path]
         if avoid:
             rects = [_avoid(r, fr_px, sw, rcfg.avoid_facecam_shift) for r in rects]

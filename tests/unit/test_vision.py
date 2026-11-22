@@ -163,3 +163,25 @@ def test_session_prior_confirms_a_webcam_seen_in_other_moments():
 def test_lerp_expr_eases():
     e = lerp_expr([0.0, 2.0], [100, 300])
     assert "(3-2*" in e  # smoothstep, not a linear ramp
+
+
+def test_overlay_mask_finds_a_banner_and_the_crop_steps_off_it():
+    from clipstudio.vision.overlays import best_framing, overlay_mask
+    rng = np.random.default_rng(3)
+    h, w, n = 180, 320, 16
+    frames = np.zeros((n, h, w, 3), np.uint8)
+    banner = rng.integers(0, 255, (50, 130, 3), dtype=np.uint8)
+    banner = np.repeat(np.repeat(banner[::5, ::5], 5, 0), 5, 1)          # blocky art: strong, fixed edges
+    for i in range(n):
+        game = rng.integers(0, 255, (h // 6, w // 8, 3), dtype=np.uint8)  # the game picture changes every sample
+        frames[i] = np.roll(np.repeat(np.repeat(game, 6, 0), 8, 1)[:h, :w], (i * 5, i * 7), (0, 1))  # and moves
+        frames[i, h - 50:, :130] = banner                                 # bottom-left sponsor banner
+    mask = overlay_mask(frames)
+    assert mask is not None and mask[h - 30:, :110].mean() > 0.9 and mask[:100, 150:].mean() < 0.05
+    crop_w = 912 / 1920
+    fr = best_framing(mask, crop_w, 1.0, 1.3)
+    assert fr is not None and fr["cover_after"] < 0.25 * fr["cover_before"] and 1.0 <= fr["zoom"] <= 1.3
+    # nothing in the way: the default crop is kept
+    assert best_framing(np.zeros((h, w), bool), crop_w) is None
+    # a still scene (everything "persistent") is not mistaken for overlays
+    assert overlay_mask(np.repeat(frames[:1], n, 0)) is None

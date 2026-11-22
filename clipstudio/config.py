@@ -81,10 +81,15 @@ class ScoringWeights(_Strict):
     visual_action: float = Field(0.10, ge=0)
     game_event: float = Field(0.20, ge=0)
     chat_activity: float = Field(0.20, ge=0)
+    # where the strongest moment sits in the clip: best with a setup before it and a reaction after it
+    payoff_position: float = Field(0.15, ge=0)
+    # live mode only: how well the clip frames the moment that set off the trigger
+    trigger_moment: float = Field(0.40, ge=0)
 
     @model_validator(mode="after")
     def _not_all_zero(self) -> "ScoringWeights":
-        base = {k: v for k, v in self.model_dump().items() if k not in ("visual_action", "game_event", "chat_activity")}
+        base = {k: v for k, v in self.model_dump().items()
+                if k not in ("visual_action", "game_event", "chat_activity", "payoff_position", "trigger_moment")}
         if sum(base.values()) <= 0:
             raise ValueError("at least one transcript/audio highlight weight must be > 0 "
                              "(visual and chat signals are not available for every source)")
@@ -102,6 +107,10 @@ class HighlightsCfg(_Strict):
     max_internal_silence: float = Field(4.0, gt=0)
     lead_in: float = Field(0.25, ge=0, le=3)
     tail: float = Field(0.6, ge=0, le=3)
+    # cut quiet, speechless seconds off the start and end of a candidate (never below three quarters of
+    # target_duration: quiet gameplay is often the setup; never the peak moment), so a clip opens on something happening and ends when the reaction does
+    tighten_edges: bool = True
+    edge_keep: float = Field(2.5, ge=0, le=5)   # quiet seconds left at each edge after tightening
     weights: ScoringWeights = ScoringWeights()
 
     @model_validator(mode="after")
@@ -146,6 +155,10 @@ class ReframingCfg(_Strict):
     pip_corner: Literal["top_left", "top_right"] = "top_left"
     # keep the gameplay crop off the facecam overlay when that costs at most this much horizontal shift
     avoid_facecam_shift: float = Field(0.12, ge=0, le=0.5)
+    # move and slightly zoom the locked gameplay crop so stream overlays (sponsor banners, alert boxes, a second
+    # camera) stay out of the picture; the zoom never exceeds overlay_max_zoom on top of the normal crop
+    avoid_overlays: bool = True
+    overlay_max_zoom: float = Field(1.3, ge=1.0, le=1.6)
 
 
 class VisualCfg(_Strict):
@@ -188,7 +201,8 @@ class LLMCfg(_Strict):
     Off by default. When on, the top candidates' transcripts and signal summaries are sent to the
     first provider that answers; if every provider fails, the heuristic ranking is kept.
     """
-    enabled: bool = False
+    # "auto": on as soon as a provider's API key is set in the environment (off without one)
+    enabled: bool | Literal["auto"] = "auto"
     providers: list[LLMProvider] = Field(default_factory=lambda: [
         LLMProvider(kind="anthropic", model="claude-opus-5-5", api_key_env="ANTHROPIC_API_KEY"),
         LLMProvider(kind="ollama", model="llama3.1:8b", base_url="http://localhost:11434"),
@@ -198,6 +212,12 @@ class LLMCfg(_Strict):
     effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"  # Anthropic models only
     timeout_seconds: float = Field(180, gt=0)
     retitle: bool = True                     # use the model's short title for each clip
+
+    def active(self) -> bool:
+        """Should the LLM pass run? ``auto`` means: only when a provider's key is present."""
+        if self.enabled != "auto":
+            return bool(self.enabled)
+        return any(p.api_key_env and os.environ.get(p.api_key_env) for p in self.providers)
 
 
 class VisionCfg(_Strict):
@@ -401,6 +421,10 @@ class LiveCfg(_Strict):
     clip_command_count: int = Field(3, ge=1)              # this many viewers asking for a clip within 10 s triggers
     weights: dict[str, float] = Field(default_factory=lambda: {"audio": 0.6, "chat": 0.7, "hype": 0.5, "command": 1.0})
     auto_process: bool = True                             # edit each saved moment right away
+    # chat reacts a few seconds after the thing it reacts to; the clip is framed on trigger time minus this
+    chat_lag_seconds: float = Field(6.0, ge=0, le=30)
+    # a moment whose best clip scores below this is kept on disk but not edited or queued (0 = edit everything)
+    min_clip_score: float = Field(0.35, ge=0, le=1)
     max_moments: int = Field(0, ge=0)                     # stop after this many moments (0 = no limit)
     channels: list[str] = Field(default_factory=list)     # stream URLs watched together by `live --all` / WATCH ALL
     max_streams: int = Field(8, ge=1, le=32)              # streams watched at once (recording is cheap; editing is not)

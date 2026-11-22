@@ -105,8 +105,8 @@ def _key(p: LLMProvider) -> str | None:
 def _call_anthropic(p: LLMProvider, cfg: LLMCfg, prompt: str) -> str:
     try:
         import anthropic
-    except ImportError as e:
-        raise ProviderError("the anthropic package is not installed (pip install -r requirements/llm.txt)") from e
+    except ImportError:
+        return _call_anthropic_http(p, cfg, prompt)  # no SDK installed: plain HTTPS, same request
     key = _key(p)
     client = anthropic.Anthropic(api_key=key, timeout=cfg.timeout_seconds) if key else \
         anthropic.Anthropic(timeout=cfg.timeout_seconds)  # SDK resolves other credentials itself
@@ -133,6 +133,25 @@ def _call_anthropic(p: LLMProvider, cfg: LLMCfg, prompt: str) -> str:
     text = next((b.text for b in resp.content if getattr(b, "type", "") == "text"), None)
     if not text:
         raise ProviderError("empty answer")
+    return text
+
+
+def _call_anthropic_http(p: LLMProvider, cfg: LLMCfg, prompt: str) -> str:
+    """The Messages API over plain HTTPS, for installs without the ``anthropic`` package."""
+    key = _key(p)
+    if not key:
+        raise ProviderError(f"no API key ({p.api_key_env} is not set) and the anthropic package is not installed")
+    base = (p.base_url or "https://api.anthropic.com").rstrip("/")
+    d = _post(f"{base}/v1/messages", {
+        "model": p.model, "max_tokens": 16000, "system": SYSTEM,
+        "messages": [{"role": "user", "content": prompt}],
+        "output_config": {"format": {"type": "json_schema", "schema": SCHEMA}},
+    }, {"x-api-key": key, "anthropic-version": "2023-06-01"}, cfg.timeout_seconds)
+    if d.get("stop_reason") in ("refusal", "max_tokens"):
+        raise ProviderError(f"no usable answer (stop_reason {d.get('stop_reason')})")
+    text = next((b.get("text") for b in d.get("content", []) if b.get("type") == "text"), None)
+    if not text:
+        raise ProviderError(f"unexpected response shape: {str(d)[:200]}")
     return text
 
 

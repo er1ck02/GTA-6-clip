@@ -227,14 +227,25 @@ class LiveSession:
             h.minimum_duration = min(h.minimum_duration, h.maximum_duration * 0.6)
             h.target_duration = min(max(h.target_duration, h.minimum_duration), h.maximum_duration)
             st = Studio(cfg)
-            p = st.open_or_create(input_path=Path(m.path), chat=Path(m.chat_path) if m.chat_path else None)
+            # frame the clip on what chat reacted to: the trigger time, minus chat's lag when chat set it off
+            lag = self.lc.chat_lag_seconds if {"chat", "hype", "command"} & set(m.trigger.get("reasons", [])) else 1.0
+            anchor = min(max(0.0, float(m.trigger.get("t", m.saved[0])) - lag - m.saved[0]), dur)
+            p = st.open_or_create(input_path=Path(m.path), chat=Path(m.chat_path) if m.chat_path else None,
+                                  anchor=anchor)
             m.project = p.id
             self.save_queue()
             token = events.context.set({"project": p.id, "moment": m.id})
             try:
                 events.publish("live_moment", channel=self.channel, moment=m.id, status="processing", project=p.id)
-                st.analyze(p)
+                cs = st.analyze(p)
                 ids = st.default_selection(p, 1)
+                best = cs.get(ids[0]) if ids else None
+                if best is not None and best.score < self.lc.min_clip_score and best.status != "accepted":
+                    m.status, m.upload = "skipped", "review"
+                    m.upload_note = (f"weak moment: best clip scores {best.score:.2f}, under live.min_clip_score "
+                                     f"{self.lc.min_clip_score:.2f}; the footage is kept, nothing was edited")
+                    log.info("moment %s skipped: %s", m.id, m.upload_note)
+                    return
                 res = st.render(p, ids)[0] if ids else None
             finally:
                 events.context.reset(token)

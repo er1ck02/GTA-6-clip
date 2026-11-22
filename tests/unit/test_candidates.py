@@ -58,7 +58,7 @@ def test_weights_change_ranking():
     tr, loud = _setup()
     base = ["highlights.minimum_duration=12", "highlights.maximum_duration=30", "highlights.target_duration=20"]
     only_speech = load_config(overrides=base + [
-        "highlights.weights={audio_intensity: 0, audio_spike: 0, reaction_language: 0, speech_energy: 1, opening_hook: 0, completeness: 0}"
+        "highlights.weights={audio_intensity: 0, audio_spike: 0, reaction_language: 0, speech_energy: 1, opening_hook: 0, completeness: 0, payoff_position: 0}"
     ]).highlights
     cs = generate_candidates(tr, loud, only_speech, tr.duration)
     assert all(abs(c.contributions["speech_energy"] - c.features["speech_energy"]) < 1e-3 for c in cs.candidates)

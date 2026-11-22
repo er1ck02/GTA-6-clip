@@ -94,3 +94,12 @@ def test_crop_is_locked_by_default_and_split_is_a_top_third():
     assert (face.h, game.h) == (640, 1280)
     # the gameplay crop is enlarged far less than a full-screen 9:16 crop (608 px wide) would be
     assert plan.keyframes[0].gameplay.w >= 900
+
+
+def test_framing_moves_and_zooms_the_locked_crop():
+    cfg = load_config(overrides=["reframing.mode=auto"])
+    fr = {"cx": 0.56, "cy": 0.4, "zoom": 1.25, "cover_before": 0.09, "cover_after": 0.0}
+    plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6, fr)
+    g = plan.keyframes[0].gameplay
+    assert len(plan.keyframes) == 1 and abs(g.h - 1080 / 1.25) <= 2 and g.y == 0
+    assert abs(g.w / g.h - 1080 / 1280) < 0.01 and any("overlays" in n for n in plan.notes)
