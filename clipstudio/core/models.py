@@ -103,6 +103,8 @@ class Candidate(_M):
     duration: float
     peak_time: float  # the moment the clip is 'about'; used for de-duplication
     title: str
+    # where the title came from: a transcript line (fallback), the LLM re-rank, or the user
+    title_source: Literal["transcript", "llm", "user"] = "transcript"
     description: str
     category: Literal["reaction", "funny", "action", "commentary"]
     score: float

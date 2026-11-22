@@ -89,3 +89,7 @@ def test_hook_title_event(tmp_path):
     assert len(hook) == 1 and hook[0].startswith("Dialogue: 1,0:00:00.00,0:00:02.00")
     assert "CAR EXPLODES" in hook[0] and "{mid}" not in hook[0]
     assert ",Hook,," not in write_ass(track, cfg.captions.resolved_style(), plan, tmp_path / "n.ass").read_text()
+    # hook_seconds 0: the title card stays up for the whole clip
+    whole = write_ass(track, cfg.captions.resolved_style(), plan, tmp_path / "w.ass", hook="Stays up",
+                      hook_seconds=0, clip_duration=12.5).read_text()
+    assert [ln for ln in whole.splitlines() if ",Hook,," in ln][0].startswith("Dialogue: 1,0:00:00.00,0:00:12.50")

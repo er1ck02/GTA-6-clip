@@ -135,3 +135,31 @@ def test_lerp_expr():
     assert lerp_expr([0, 1], [10, 10]) == "10"
     e = lerp_expr([0.0, 2.0, 4.0], [100, 300, 300])
     assert e.startswith("'2*trunc(") and "lt(t,2.000)" in e
+
+
+def _fc(conf, method="face", face=(0.10, 0.44, 0.05, 0.09), region=(0.04, 0.36, 0.18, 0.28)):
+    from clipstudio.core.models import FacecamDetection
+    return FacecamDetection(region=NormRect(x=region[0], y=region[1], w=region[2], h=region[3]),
+                            face=NormRect(x=face[0], y=face[1], w=face[2], h=face[3]), confidence=conf, method=method,
+                            face_hit_rate=1.0)
+
+
+def test_session_prior_confirms_a_webcam_seen_in_other_moments():
+    from clipstudio.vision.facecam import apply_session_prior
+    weak = _fc(0.55)
+    # alone, or with a face somewhere else in the other moments (an in-game character), nothing changes
+    assert apply_session_prior(weak, []).confidence == 0.55
+    assert apply_session_prior(weak, [_fc(0.55, face=(0.5, 0.2, 0.05, 0.09))] * 3).confidence == 0.55
+    # the same spot in two other moments: confirmed
+    out = apply_session_prior(weak, [_fc(0.55), _fc(0.55)])
+    assert out.confidence >= 0.6 and "other moment" in out.notes[-1]
+    # a moment that found the border lends its box, so every clip of the stream gets the same framing
+    good = _fc(0.95, method="face+border", region=(0.0, 0.35, 0.22, 0.29))
+    out = apply_session_prior(weak, [good])
+    assert out.confidence >= 0.9 and out.region == good.region
+    assert apply_session_prior(good, [weak, weak]).region == good.region
+
+
+def test_lerp_expr_eases():
+    e = lerp_expr([0.0, 2.0], [100, 300])
+    assert "(3-2*" in e  # smoothstep, not a linear ramp

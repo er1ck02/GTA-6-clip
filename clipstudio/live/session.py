@@ -43,7 +43,7 @@ class Moment:
     path: str = ""
     chat_path: str | None = None
     channel: str | None = None
-    status: str = "pending"               # pending | saved | processing | done | failed
+    status: str = "pending"               # pending | saved | queued | processing | done | failed
     clip: str | None = None
     project: str | None = None
     qc_passed: bool | None = None
@@ -63,6 +63,19 @@ def upload_decision(cfg: Config, channel: str | None, qc_passed: bool | None) ->
     if cfg.upload.require_qc_pass and not qc_passed:
         return "review", "QC did not pass: review before posting"
     return "allowed", f"{channel} allows clipping; ready to upload (connect accounts to publish)"
+
+
+_gates: dict[int, threading.BoundedSemaphore] = {}
+_gates_lock = threading.Lock()
+
+
+def edit_gate(n: int) -> threading.BoundedSemaphore:
+    """One process-wide gate per size: every stream's editor waits here, so watching many channels never runs
+    more than ``live.max_parallel_edits`` analyses/renders at once (the GPU and CPU are shared)."""
+    with _gates_lock:
+        if n not in _gates:
+            _gates[n] = threading.BoundedSemaphore(n)
+        return _gates[n]
 
 
 class LiveSession:
@@ -176,7 +189,7 @@ class LiveSession:
                 log.error("could not save %s: %s", m.id, e)
             finally:
                 self.ring.unpin(m.id)
-            events.publish("live_moment", moment=m.id, status=m.status)
+            events.publish("live_moment", channel=self.channel, moment=m.id, status=m.status)
             self.save_queue()
 
     def _write_chat(self, m: Moment, video: Path) -> str | None:
@@ -191,57 +204,64 @@ class LiveSession:
 
     # ------------------------------------------------------------ editing worker
     def _worker(self) -> None:
-        from clipstudio.pipeline.studio import Studio
-
         while True:
             m = self.jobs.get()
             if m is None:
                 return
-            m.status = "processing"
+            m.status = "queued"  # waiting for a free editing slot (shared by every stream being watched)
             self.save_queue()
-            events.publish("live_moment", moment=m.id, status="processing")
-            try:
-                dur = m.saved[1] - m.saved[0]
-                cfg = self.cfg.model_copy(deep=True)
-                h = cfg.highlights
-                h.minimum_score = 0.0  # the trigger already decided this moment is worth a clip
-                h.maximum_duration = max(6.0, min(h.maximum_duration, dur - 1))
-                h.minimum_duration = min(h.minimum_duration, h.maximum_duration * 0.6)
-                h.target_duration = min(max(h.target_duration, h.minimum_duration), h.maximum_duration)
-                st = Studio(cfg)
-                p = st.open_or_create(input_path=Path(m.path), chat=Path(m.chat_path) if m.chat_path else None)
-                m.project = p.id
+            events.publish("live_moment", channel=self.channel, moment=m.id, status="queued")
+            with edit_gate(self.lc.max_parallel_edits):
+                m.status = "processing"
                 self.save_queue()
-                token = events.context.set({"project": p.id, "moment": m.id})
-                try:
-                    events.publish("live_moment", moment=m.id, status="processing", project=p.id)
-                    st.analyze(p)
-                    ids = st.default_selection(p, 1)
-                    res = st.render(p, ids)[0] if ids else None
-                finally:
-                    events.context.reset(token)
-                if res is None:
-                    raise RuntimeError("no clip could be cut from this moment")
-                m.clip, m.qc_passed, m.qc_summary = str(res.output), res.qc.passed, res.qc.summary()
-                try:
-                    m.title = st.candidates(p).get(ids[0]).title
-                except Exception:
-                    m.title = None
-                m.upload, m.upload_note = upload_decision(self.cfg, self.channel, m.qc_passed)
-                m.status = "done"
-                events.publish("stage", stage="upload", status="done" if m.upload == "allowed" else "skipped",
-                               moment=m.id, project=m.project, decision=m.upload, note=m.upload_note)
-                log.info("clip ready: %s (%s; %s)", Path(m.clip).name, m.qc_summary, m.upload)
-                if self.on_clip is not None:
-                    try:
-                        self.on_clip(m)
-                    except Exception as e:  # the uploader must never stop the editor
-                        log.error("could not queue %s for upload: %s", m.id, e)
-            except Exception as e:
-                m.status, m.error = "failed", f"{type(e).__name__}: {e}"
-                log.error("editing %s failed: %s", m.id, m.error)
+                events.publish("live_moment", channel=self.channel, moment=m.id, status="processing")
+                self._edit(m)
             self.save_queue()
-            events.publish("live_moment", moment=m.id, status=m.status, clip=m.clip, upload=m.upload)
+            events.publish("live_moment", channel=self.channel, moment=m.id, status=m.status, clip=m.clip, upload=m.upload)
+
+    def _edit(self, m: Moment) -> None:
+        from clipstudio.pipeline.studio import Studio
+
+        try:
+            dur = m.saved[1] - m.saved[0]
+            cfg = self.cfg.model_copy(deep=True)
+            h = cfg.highlights
+            h.minimum_score = 0.0  # the trigger already decided this moment is worth a clip
+            h.maximum_duration = max(6.0, min(h.maximum_duration, dur - 1))
+            h.minimum_duration = min(h.minimum_duration, h.maximum_duration * 0.6)
+            h.target_duration = min(max(h.target_duration, h.minimum_duration), h.maximum_duration)
+            st = Studio(cfg)
+            p = st.open_or_create(input_path=Path(m.path), chat=Path(m.chat_path) if m.chat_path else None)
+            m.project = p.id
+            self.save_queue()
+            token = events.context.set({"project": p.id, "moment": m.id})
+            try:
+                events.publish("live_moment", channel=self.channel, moment=m.id, status="processing", project=p.id)
+                st.analyze(p)
+                ids = st.default_selection(p, 1)
+                res = st.render(p, ids)[0] if ids else None
+            finally:
+                events.context.reset(token)
+            if res is None:
+                raise RuntimeError("no clip could be cut from this moment")
+            m.clip, m.qc_passed, m.qc_summary = str(res.output), res.qc.passed, res.qc.summary()
+            try:
+                m.title = st.candidates(p).get(ids[0]).title
+            except Exception:
+                m.title = None
+            m.upload, m.upload_note = upload_decision(self.cfg, self.channel, m.qc_passed)
+            m.status = "done"
+            events.publish("stage", stage="upload", status="done" if m.upload == "allowed" else "skipped",
+                           moment=m.id, project=m.project, decision=m.upload, note=m.upload_note)
+            log.info("clip ready: %s (%s; %s)", Path(m.clip).name, m.qc_summary, m.upload)
+            if self.on_clip is not None:
+                try:
+                    self.on_clip(m)
+                except Exception as e:  # the uploader must never stop the editor
+                    log.error("could not queue %s for upload: %s", m.id, e)
+        except Exception as e:
+            m.status, m.error = "failed", f"{type(e).__name__}: {e}"
+            log.error("editing %s failed: %s", m.id, m.error)
 
     def _stream_over(self) -> bool:
         """Ask yt-dlp whether a dropped stream is still live (False when unsure, so we try to reconnect)."""

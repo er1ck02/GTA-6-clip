@@ -115,3 +115,47 @@ def test_upload_needs_allowlist_and_qc():
     assert upload_decision(cfg, "someone_else", True)[0] == "review"
     assert upload_decision(cfg, None, True)[0] == "review"
     assert upload_decision(load_config(), "ludwig", True)[0] == "review"  # nobody is allowed by default
+
+
+def test_edit_gate_is_shared_and_limits_parallel_edits():
+    """Every stream's editor waits on the same gate, so N streams never edit more than max_parallel_edits at once."""
+    import threading
+    import time
+
+    from clipstudio.live.session import edit_gate
+
+    assert edit_gate(1) is edit_gate(1) and edit_gate(2) is not edit_gate(1)
+    busy, peak, lock = [0], [0], threading.Lock()
+
+    def edit():
+        with edit_gate(2):
+            with lock:
+                busy[0] += 1
+                peak[0] = max(peak[0], busy[0])
+            time.sleep(0.05)
+            with lock:
+                busy[0] -= 1
+
+    ts = [threading.Thread(target=edit) for _ in range(6)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert peak[0] == 2
+
+
+def test_one_signal_alone_needs_agreement():
+    """A busy chat or a loud sound on its own stays under the threshold; together, or a clip command, they fire."""
+    from clipstudio.config import load_config
+    from clipstudio.live.triggers import TriggerDetector
+
+    cfg = load_config()
+    det = TriggerDetector(cfg.live, cfg.chat)
+    det.has_chat = True
+    z = {"audio": 0.0, "chat": 0.0, "hype": 0.0, "command": 0.0}
+    assert det.score({**z, "chat": 1.5}) < cfg.live.threshold          # chat alone, maxed out
+    assert det.score({**z, "audio": 1.5}) < cfg.live.threshold         # a 13 dB jump alone
+    assert det.score({**z, "chat": 1.0, "audio": 0.8}) >= cfg.live.threshold
+    assert det.score({**z, "chat": 1.0, "hype": 1.0}) >= cfg.live.threshold
+    assert det.score({**z, "command": 1.0}) >= cfg.live.threshold      # viewers asking for a clip
+    assert det.score({**z, "audio": 2.0}) >= cfg.live.threshold        # a huge jump still counts alone

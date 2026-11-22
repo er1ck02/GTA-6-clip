@@ -8,7 +8,10 @@ trigger all the time):
 * hype: messages with reaction words / emotes (LUL, KEKW, W, "no way"...) in that window;
 * command: viewers typing "clip" / "clip it" (several within 10 s).
 
-score = sum(weight x signal). A moment is saved when the score reaches ``live.threshold``, outside the cooldown.
+score = sum(weight x signal), scaled down when only one signal is present (except "clip" commands), or half the
+audio signal for a very big jump. A moment is saved when the score reaches ``live.threshold``, outside the
+cooldown. On a real 50-minute stream the previous rule (no agreement needed) saved 38 moments an hour, most of them
+from chat or audio alone.
 """
 from __future__ import annotations
 
@@ -27,6 +30,7 @@ CHAT_WINDOW = 5
 COMMAND_BACK, COMMAND_AHEAD = 4, 6  # "clip it" comes a few seconds after the moment
 PEAK_HOLD = 5   # after the score first crosses the threshold, wait this long and fire at the strongest second
 SETTLE = 6  # seconds of chat that must have arrived after a second before it is judged (reactions lag)
+SOLO_MIN, SOLO_FACTOR = 0.3, 0.8  # a signal counts as present from 0.3; alone it is scaled down by 0.8
 
 
 @dataclass
@@ -103,7 +107,7 @@ class TriggerDetector:
         near = [self.audio[i] for i in range(s - 1, s + 2) if i in self.audio]
         if len(base_audio) >= 10 and near:
             jump = max(near) - float(np.median(base_audio))
-            sig["audio"] = float(np.clip(jump / c.audio_jump_db, 0.0, 1.5))
+            sig["audio"] = float(np.clip(jump / c.audio_jump_db, 0.0, 2.0))
         if self.has_chat:
             span = max(1, s - base_from)
             rate5 = self._window(self.chat, base_from, s) / span * CHAT_WINDOW
@@ -122,8 +126,13 @@ class TriggerDetector:
         if not self.has_chat:  # audio is the only signal: a jump of audio_jump_db alone reaches threshold 1.0
             return sig["audio"]
         combined = sum(self.cfg.weights.get(k, 0.0) * v for k, v in sig.items())
-        # a very big audio jump (1.5 x audio_jump_db) still counts when chat is quiet or lagging
-        return max(combined, 0.75 * sig["audio"])
+        # one signal on its own is weak evidence (a busy chat, a loud game sound): it has to be agreed with,
+        # except viewers asking for a clip, which is the most direct signal there is
+        active = [k for k, v in sig.items() if v >= SOLO_MIN]
+        if len(active) == 1 and active[0] != "command":
+            combined *= SOLO_FACTOR
+        # a huge audio jump (2 x audio_jump_db) still counts when chat is quiet or lagging
+        return max(combined, 0.5 * sig["audio"])
 
     def evaluate(self, head: float) -> list[Trigger]:
         """Judge every second whose chat and audio have settled; return the triggers found.

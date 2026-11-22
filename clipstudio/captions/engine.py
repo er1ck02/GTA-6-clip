@@ -228,11 +228,15 @@ def _merge_orphans(groups: list[list[CaptionWord]], style: CaptionStyle) -> list
 
 # ------------------------------------------------------------------ writers
 def write_ass(track: CaptionTrack, style: CaptionStyle, plan: CropPlan, path: Path,
-              hook: str | None = None, hook_seconds: float = 2.5) -> Path:
-    """Write the ASS file. ``hook`` adds a large title at the top for the first ``hook_seconds``."""
+              hook: str | None = None, hook_seconds: float = 0, clip_duration: float | None = None) -> Path:
+    """Write the ASS file. ``hook`` adds a title card (dark text on a white box) at the top of the gameplay
+    picture for the first ``hook_seconds``, or for the whole clip when that is 0."""
     L = track.layout
     outline = max(0.0, style.outline * plan.out_height)
     shadow = max(0.0, style.shadow * plan.out_height)
+    hook_fs = int(round(L.font_size_px * 0.62))
+    hook_pad = max(4.0, hook_fs * 0.22)                 # box padding around the text
+    hook_margin = int(plan.out_width * 0.09)
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {plan.out_width}
@@ -243,7 +247,7 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hook,{L.font_family},{int(L.font_size_px * 0.8)},{_ass_color(style.primary_color)},{_ass_color(style.highlight_color)},{_ass_color(style.outline_color)},&HA0000000,-1,0,0,0,100,100,0,0,1,{outline * 1.2:.1f},{shadow:.1f},8,60,60,0,1
+Style: Hook,{L.font_family},{hook_fs},&H00101010,&H00101010,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,{hook_pad:.1f},0,8,{hook_margin},{hook_margin},0,1
 Style: Cap,{L.font_family},{L.font_size_px},{_ass_color(style.primary_color)},{_ass_color(style.highlight_color)},{_ass_color(style.outline_color)},&H80000000,{-1 if style.bold else 0},0,0,0,100,100,0,0,1,{outline:.1f},{shadow:.1f},2,0,0,0,1
 
 [Events]
@@ -281,15 +285,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if hook:
         # top of the gameplay picture, so the title never sits on the facecam panel of a split layout
         game = next((p.dest for p in plan.panels if p.name == "gameplay"), None)
-        y = (game.y if game else 0) + int(plan.out_height * 0.06)
-        block = int(L.font_size_px * 0.8 * 2.6)  # up to two lines of hook text
+        # a split layout puts it right under the seam; a full-screen picture keeps it below the apps' top bar
+        y = (game.y + int(plan.out_height * 0.018) if game and game.y > 0 else plan.caption_band[0])
+        block = int(hook_fs * 2.9)  # up to two lines of hook text
         for pr in plan.protected_regions:  # e.g. a PiP facecam in a top corner: go below it
             if pr.y < y + block and pr.y + pr.h > y:
                 y = pr.y + pr.h + int(plan.out_height * 0.02)
         text = _ass_escape(hook.strip().upper())
-        events.insert(0, f"Dialogue: 1,{_ts_ass(0)},{_ts_ass(hook_seconds)},Hook,,0,0,0,,"
-                         f"{{\\an8\\pos({plan.out_width // 2},{y})\\q0\\fscx70\\fscy70\\t(0,140,\\fscx100\\fscy100)"
-                         f"\\fad(0,250)}}{text}")
+        end = hook_seconds if hook_seconds > 0 else (clip_duration or max([c.end for c in track.chunks] + [3600.0]))
+        fade = "\\fad(0,250)" if hook_seconds > 0 else ""
+        events.insert(0, f"Dialogue: 1,{_ts_ass(0)},{_ts_ass(end)},Hook,,0,0,0,,"
+                         f"{{\\an8\\pos({plan.out_width // 2},{y})\\q0\\fscx80\\fscy80\\t(0,140,\\fscx100\\fscy100)"
+                         f"{fade}}}{text}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
     return path

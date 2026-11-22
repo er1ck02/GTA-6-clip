@@ -136,11 +136,12 @@ class ReframingCfg(_Strict):
     # auto:          facecam_split when a facecam is detected (or configured), else gameplay.
     mode: Literal["auto", "gameplay", "fit_blur", "facecam_split", "facecam_pip"] = "auto"
     gameplay_center_x: float = Field(0.5, ge=0, le=1)
-    # follow the action with the gameplay crop (needs vision.enabled); off = static crop at gameplay_center_x
-    tracking: bool = True
+    # follow the action with the gameplay crop (needs vision.enabled); off = locked crop at gameplay_center_x.
+    # Off by default: games keep the player centred, and stream overlays (ads, alerts, chat) attract the tracker.
+    tracking: bool = False
     # manual facecam box; overrides automatic detection
     facecam_region: Rect | None = None
-    facecam_panel_ratio: float = Field(0.38, ge=0.2, le=0.6)
+    facecam_panel_ratio: float = Field(0.3334, ge=0.2, le=0.6)  # top third: 1080x640 over 1080x1280
     pip_width_ratio: float = Field(0.40, ge=0.2, le=0.6)
     pip_corner: Literal["top_left", "top_right"] = "top_left"
     # keep the gameplay crop off the facecam overlay when that costs at most this much horizontal shift
@@ -261,8 +262,9 @@ class CaptionStyle(_Strict):
 
 BUILTIN_CAPTION_PRESETS: dict[str, dict[str, Any]] = {
     "clean_gaming": {"size": 0.042, "uppercase": False, "max_words": 4, "highlight_color": "#7CF7FF"},
-    "bold_viral": {"size": 0.055, "uppercase": True, "max_words": 3, "max_chars_per_line": 14,
-                   "highlight_color": "#FFD400", "outline": 0.006, "active_word_scale": 1.15},
+    "bold_viral": {"size": 0.058, "uppercase": True, "max_words": 3, "max_chars_per_line": 14,
+                   "font": ["Montserrat ExtraBold", "Montserrat", "Arial Black", "Impact", "Arial", "DejaVu Sans"],
+                   "highlight_color": "#FFD400", "outline": 0.007, "shadow": 0.004, "active_word_scale": 1.15},
     "minimal": {"size": 0.034, "bold": False, "highlight_active_word": False, "pop_in": False,
                 "max_words": 7, "max_chars_per_line": 30, "outline": 0.0025},
     "high_energy": {"size": 0.058, "uppercase": True, "max_words": 2, "max_chars_per_line": 12,
@@ -312,15 +314,19 @@ class AudioCfg(_Strict):
 
 class EnhanceCfg(_Strict):
     """Visual polish applied to the gameplay picture at render time."""
-    sharpen: float = Field(0.35, ge=0, le=1.5)        # unsharp-mask amount after scaling (0 = off)
+    sharpen: float = Field(0.3, ge=0, le=1.0)         # contrast-adaptive sharpening after scaling (0 = off)
+    # smooth the source's compression blocks before the crop is enlarged, so the upscale and the sharpening
+    # do not magnify them (stream recordings are heavily compressed; fast motion shows it first)
+    deblock: bool = True
     vibrance: float = Field(0.06, ge=0, le=0.5)      # saturation boost (0 = off)
     contrast: float = Field(0.03, ge=0, le=0.3)
     # quick zoom on the clip's peak moment and on on-screen events (scale factor, 1.0 = off)
     punch_zoom: float = Field(1.10, ge=1.0, le=1.5)
     punch_max: int = Field(3, ge=0, le=10)           # at most this many punches per clip
-    # big title at the top for the first seconds (uses the clip title; off by default)
-    hook_title: bool = False
-    hook_title_seconds: float = Field(2.5, gt=0, le=10)
+    # title card at the top of the gameplay picture. Shown only for a title written by a person or by the
+    # LLM re-rank: the automatic fallback title is a line of the transcript, which is not a hook.
+    hook_title: bool = True
+    hook_title_seconds: float = Field(0, ge=0, le=600)   # 0 = stays up for the whole clip
     # drop black frames at the very start/end of a clip (loading screens, fades); skipped when you set the bounds
     trim_black_edges: bool = True
 
@@ -349,8 +355,10 @@ class ExportCfg(_Strict):
     encoder: Literal["auto", "libx264", "h264_nvenc"] = "auto"
     audio_codec: Literal["aac"] = "aac"
     audio_bitrate: str = "192k"
-    crf: int = Field(19, ge=10, le=35)
+    crf: int = Field(18, ge=10, le=35)
     preset: str = "medium"
+    # ceiling for the master file; platforms re-encode every upload, and anything above this is wasted on them
+    max_bitrate: str = "16M"
     auto_render_top: int = Field(3, ge=0, le=50)
     # per-platform copies written next to each rendered clip ([] = master file only)
     platforms: list[str] = Field(default_factory=list)
@@ -394,6 +402,9 @@ class LiveCfg(_Strict):
     weights: dict[str, float] = Field(default_factory=lambda: {"audio": 0.6, "chat": 0.7, "hype": 0.5, "command": 1.0})
     auto_process: bool = True                             # edit each saved moment right away
     max_moments: int = Field(0, ge=0)                     # stop after this many moments (0 = no limit)
+    channels: list[str] = Field(default_factory=list)     # stream URLs watched together by `live --all` / WATCH ALL
+    max_streams: int = Field(8, ge=1, le=32)              # streams watched at once (recording is cheap; editing is not)
+    max_parallel_edits: int = Field(1, ge=1, le=8)        # moments edited at the same time across all streams
 
 
 class StreamerCredit(_Strict):
@@ -474,7 +485,7 @@ class Config(_Strict):
 PROFILES: dict[str, dict[str, Any]] = {
     "fast": {"transcription": {"model": "base", "beam_size": 1}, "export": {"preset": "veryfast", "crf": 22},
              "video": {"fps": 30}},
-    "balanced": {"transcription": {"model": "small", "beam_size": 5}, "export": {"preset": "medium", "crf": 19}},
+    "balanced": {"transcription": {"model": "small", "beam_size": 5}, "export": {"preset": "medium", "crf": 18}},
     "quality": {"transcription": {"model": "large-v3-turbo", "beam_size": 5},
                 "export": {"preset": "slow", "crf": 17}},
 }

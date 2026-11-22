@@ -28,6 +28,8 @@ EDGE_THR = 18.0        # grey-level step that counts as an edge
 LINE_MIN = 0.7         # persistence a border line needs (texture/noise scores about 0.5)
 FULLFRAME_FACE = 0.06  # face area (fraction of frame) above which this is a face-cam-only stream, not an overlay
 MAX_OVERLAY_AREA = 0.2  # a webcam overlay larger than this share of the frame is really gameplay
+EDGE_SNAP = 1.5        # a borderless side this many face widths from the frame edge is taken to be the edge
+SESSION_AGREE = 2      # earlier moments of the same stream that must show the same camera to confirm it
 
 
 def _gray(frames: np.ndarray) -> np.ndarray:
@@ -131,12 +133,14 @@ def _box_around_face(fb: FaceBox, pv: np.ndarray, ph: np.ndarray) -> tuple[tuple
     found = [s for p, s in ((x0, s0), (x1, s1), (y0, s2), (y1, s3)) if p >= 0]
     # default extents for sides without a line: a typical webcam framing around a face,
     # or the frame edge when the face is close to it
+    # A side with no line is usually the frame edge itself (an overlay docked to the side of the screen has
+    # no visible border there), so the box snaps to the edge when the default extent ends near it.
     if x0 < 0:
         x0 = max(0, fx0 - int(1.3 * fw))
-        x0 = 0 if x0 < 0.6 * fw else x0
+        x0 = 0 if x0 < EDGE_SNAP * fw else x0
     if x1 < 0:
         x1 = min(W, fx1 + int(1.3 * fw))
-        x1 = W if W - x1 < 0.6 * fw else x1
+        x1 = W if W - x1 < EDGE_SNAP * fw else x1
     if y0 < 0:
         y0 = max(0, fy0 - int(0.9 * fh))
         y0 = 0 if y0 < 0.6 * fh else y0
@@ -243,6 +247,13 @@ def detect_facecam(frames: np.ndarray, detector: FaceDetector | None) -> Facecam
             # (capped below the 0.6 auto-apply default: with fine edge tiles, HUD text and logos can pass for a
             # small face; the box is still offered in the UI as a suggestion)
             conf = 0.30 + 0.25 * min(1.0, hit / 0.8)
+            # one clear border line, a face that is there in (almost) every sample and a picture inside the box
+            # that keeps changing: a small docked webcam whose other sides blend into the stream layout
+            bx0, by0, bx1, by1 = box
+            inner = std[by0 + 2:by1 - 2, bx0 + 2:bx1 - 2]
+            if sides == 1 and bscore >= 0.8 and hit >= 0.9 and inner.size and float(inner.mean()) > 4.0:
+                conf = 0.62
+                notes.append("one strong border, a face in nearly every sample and a moving picture: taken as a webcam")
         method = "face+border" if sides >= 2 else "face"
         notes.append(f"face in {hit:.0%} of {n} samples; {sides}/4 border lines found (score {bscore:.2f})")
         if prior < 1.0:
@@ -267,3 +278,36 @@ def detect_facecam(frames: np.ndarray, detector: FaceDetector | None) -> Facecam
     notes.append("no facecam found")
     return FacecamDetection(region=None, confidence=0.0, method="none", detector=detector.name if detector else "none",
                             samples=n, face_hit_rate=round(hit, 3), notes=notes)
+
+
+def _same_camera(a: FacecamDetection, b: FacecamDetection) -> bool:
+    """Do two detections show a face in the same place (the same docked webcam)?"""
+    if a.face is None or b.face is None:
+        return False
+    tol = max(0.03, 0.8 * max(a.face.w, a.face.h, b.face.w, b.face.h))
+    return (abs((a.face.x + a.face.w / 2) - (b.face.x + b.face.w / 2)) < tol
+            and abs((a.face.y + a.face.h / 2) - (b.face.y + b.face.h / 2)) < tol)
+
+
+def apply_session_prior(det: FacecamDetection, history: list[FacecamDetection],
+                        min_conf: float = 0.6) -> FacecamDetection:
+    """Use the other moments of the same stream to settle an uncertain detection.
+
+    A webcam overlay stays in the same place for the whole stream; an in-game face (a cutscene, a character
+    creator) shows up in one moment and is gone in the next. So a face seen at the same spot in several
+    moments is the webcam even when this moment alone could not prove it, and the best-bordered box seen
+    there is used for every moment, which keeps the layout identical from clip to clip.
+    """
+    if det.region is None or det.face is None or det.method == "fullframe_face":
+        return det
+    same = [h for h in history if h.region is not None and _same_camera(det, h)]
+    if len(same) < SESSION_AGREE and not (same and max(h.confidence for h in same) >= min_conf):
+        return det
+    out = det.model_copy(deep=True)
+    best = max(same + [det], key=lambda h: (h.method == "face+border", h.confidence))
+    if best is not det:
+        out.region = best.region
+    if out.confidence < min_conf or best is not det:
+        out.confidence = round(max(out.confidence, min(0.95, min_conf + 0.05 * len(same)), best.confidence), 3)
+        out.notes = out.notes + [f"same camera position in {len(same)} other moment(s) of this stream: confirmed as the webcam"]
+    return out

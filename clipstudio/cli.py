@@ -27,6 +27,7 @@ def _common(p: argparse.ArgumentParser) -> None:
 def _clip_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--layout", choices=["auto", "gameplay", "fit_blur", "facecam_split", "facecam_pip"])
     p.add_argument("--caption-preset")
+    p.add_argument("--title", help="clip title, also burned in as the on-screen hook")
     p.add_argument("--facecam", metavar="X,Y,W,H", help="facecam region in normalised coords, e.g. 0.02,0.05,0.25,0.3")
 
 
@@ -121,7 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("live", help="watch a live stream; keep and edit only the moments that pop off")
     _common(p)
     src = p.add_mutually_exclusive_group(required=True)
-    src.add_argument("--url", help="live stream URL (Twitch, YouTube, Kick...)")
+    src.add_argument("--url", action="append", help="live stream URL (Twitch, YouTube, Kick...); repeat to watch "
+                                                    "several streams at once")
+    src.add_argument("--all", action="store_true", help="watch every stream URL listed in live.channels")
     src.add_argument("--input", type=Path, help="a recorded file played back in real time (dry run / test)")
     p.add_argument("--chat", help="auto (from the URL, default), none, twitch:<channel>, youtube, or a chat export "
                                   "file (played back with --input)")
@@ -239,49 +242,129 @@ def cmd_uploads(a) -> int:
     return 0
 
 
+_UPLOADS = None
+
+
+def _uploads(cfg):
+    """One upload queue for the whole live run (every stream feeds it; it posts in the background)."""
+    global _UPLOADS
+    if _UPLOADS is None:
+        from clipstudio.publish.queue import UploadManager
+
+        _UPLOADS = UploadManager(cfg)
+        _UPLOADS.start()
+    return _UPLOADS
+
+
 def cmd_live(a) -> int:
+    cfg = _cfg(a)
+    if a.max_moments is not None:
+        cfg.live.max_moments = a.max_moments
+    urls = list(cfg.live.channels) if a.all else (a.url or [])
+    if a.all and not urls:
+        log.error("live --all: no stream URLs in live.channels")
+        return 2
+    try:
+        if len(urls) > 1:
+            return _live_many(a, cfg, urls)
+        return _live_one(a, cfg, urls[0] if urls else None)
+    finally:
+        if _UPLOADS is not None:  # an upload cut off here resumes its session next time
+            _UPLOADS.stop()
+
+
+def _live_session(a, cfg, url: str | None, out: Path | None = None):
     import time as _time
 
     from clipstudio.live.buffer import Recorder
     from clipstudio.live.chat import channel_from_url, make_chat_source, youtube_channel
     from clipstudio.live.session import LiveSession
 
-    cfg = _cfg(a)
-    if a.max_moments is not None:
-        cfg.live.max_moments = a.max_moments
-    channel = a.channel
-    if channel is None and a.url:
-        channel = channel_from_url(a.url) or (youtube_channel(a.url) if "youtu" in a.url else None)
+    channel = a.channel if len(a.url or []) <= 1 and not a.all else None
+    if channel is None and url:
+        channel = channel_from_url(url) or (youtube_channel(url) if "youtu" in url else None)
     channel = channel.lower().lstrip("@") if channel else None
     base = Path(cfg.paths.data_dir).expanduser().resolve() / "live"
-    out = a.out or base / f"{channel or 'stream'}_{_time.strftime('%Y%m%d_%H%M%S')}"
-    rec = Recorder(out / "buffer", cfg.live.segment_seconds, file=a.input, url=a.url, realtime=not a.fast)
-    chat = make_chat_source(a.chat, a.url, out)
+    out = out or base / f"{channel or 'stream'}_{_time.strftime('%Y%m%d_%H%M%S')}"
+    rec = Recorder(out / "buffer", cfg.live.segment_seconds, file=None if url else a.input, url=url,
+                   realtime=not a.fast)
+    chat = make_chat_source(a.chat if not a.all and len(a.url or []) <= 1 else None, url, out)
     allowed = channel in {c.lower().lstrip("@") for c in cfg.upload.allow_channels} if channel else False
     log.info("live: %s | channel %s (%s) | chat %s | buffer %gs | moments %gs before + %gs after",
-             a.url or a.input, channel or "unknown", "on the upload allowlist" if allowed else "review only",
+             url or a.input, channel or "unknown", "on the upload allowlist" if allowed else "review only",
              chat.name, cfg.live.buffer_seconds, cfg.live.pre_seconds, cfg.live.post_seconds)
-    from clipstudio.publish.queue import UploadManager
+    up = _uploads(cfg)
+    return LiveSession(cfg, rec, chat, out, channel=channel, process=False if a.no_process else None,
+                       max_seconds=a.duration, on_clip=lambda m, u=url: up.add_live_moment(m, source_url=u))
 
-    uploads = UploadManager(cfg)
-    uploads.start()  # posts allowlisted clips in the background while recording (when the uploader is on)
-    sess = LiveSession(cfg, rec, chat, out, channel=channel, process=False if a.no_process else None,
-                       max_seconds=a.duration, on_clip=lambda m: uploads.add_live_moment(m, source_url=a.url))
-    try:
-        moments = sess.run()
-    finally:
-        uploads.stop()
-    doc = {"out": str(out), "channel": channel, "stopped": sess.stopped_reason,
+
+def _print_moments(moments, out) -> None:
+    for m in moments:
+        print(f"{m.id}  {m.status:10s}  score {m.trigger['score']:.2f}  {', '.join(m.trigger['reasons'])}  "
+              f"{m.clip or m.path or ''}  [{m.upload}]")
+    print(f"queue: {out / 'queue.json'}")
+
+
+def _live_one(a, cfg, url: str | None) -> int:
+    sess = _live_session(a, cfg, url, a.out)
+    moments = sess.run()
+    doc = {"out": str(sess.out), "channel": sess.channel, "stopped": sess.stopped_reason,
            "segments_discarded": sess.ring.deleted, "peak_buffer_mb": round(sess.peak_disk / 1e6, 1),
            "moments": [m.__dict__ for m in moments]}
     if a.json:
         _emit(a, doc)
     else:
-        for m in moments:
-            print(f"{m.id}  {m.status:10s}  score {m.trigger['score']:.2f}  {', '.join(m.trigger['reasons'])}  "
-                  f"{m.clip or m.path or ''}  [{m.upload}]")
-        print(f"queue: {out / 'queue.json'}")
+        _print_moments(moments, sess.out)
     return 0 if all(m.status in ("done", "saved") for m in moments) else 1
+
+
+def _live_many(a, cfg, urls: list[str]) -> int:
+    """Several streams at once: one recorder + trigger per stream, editors sharing live.max_parallel_edits."""
+    import threading
+
+    if len(urls) > cfg.live.max_streams:
+        log.error("%d streams asked for; live.max_streams is %d", len(urls), cfg.live.max_streams)
+        return 2
+    sessions, threads, errors = [], [], {}
+    for u in urls:
+        try:
+            sessions.append(_live_session(a, cfg, u))
+        except Exception as e:  # one bad URL does not stop the others
+            errors[u] = str(e)
+            log.error("could not start %s: %s", u, e)
+
+    def run(s):
+        try:
+            s.run()
+        except Exception as e:
+            errors[str(s.rec.url)] = str(e)
+            log.error("%s stopped: %s", s.rec.url, e)
+
+    for s in sessions:
+        t = threading.Thread(target=run, args=(s,), daemon=True, name=f"live-{s.channel}")
+        t.start()
+        threads.append(t)
+    try:
+        while any(t.is_alive() for t in threads):
+            for t in threads:
+                t.join(0.5)
+    except KeyboardInterrupt:
+        for s in sessions:
+            s.stop()
+        for t in threads:
+            t.join()
+    docs = [{"out": str(s.out), "channel": s.channel, "stopped": s.stopped_reason,
+             "moments": [m.__dict__ for m in s.moments]} for s in sessions]
+    if a.json:
+        _emit(a, {"streams": docs, "errors": errors})
+    else:
+        for s in sessions:
+            print(f"== {s.channel or s.rec.url}: {s.stopped_reason}")
+            _print_moments(s.moments, s.out)
+        for u, e in errors.items():
+            print(f"!! {u}: {e}")
+    ok = all(m.status in ("done", "saved") for s in sessions for m in s.moments)
+    return 0 if ok and not errors else 1
 
 
 def _cfg(a: argparse.Namespace):
@@ -437,7 +520,7 @@ def cmd_review(a) -> int:
                 cuts.append((float(lo), float(hi)))
         c = st.edit_clip(p, a.clip, clear=("cuts",) if a.clear_cuts and not a.cut else (), start=a.start, end=a.end,
                          crop_center_x=a.crop_x, layout=a.layout, caption_preset=a.caption_preset,
-                         facecam_region=fr, cuts=cuts)
+                         facecam_region=fr, cuts=cuts, title=getattr(a, "title", None))
         log.info("updated %s: %.2f-%.2fs%s", c.id, c.start, c.end, f", {len(c.cuts)} cut(s)" if c.cuts else "")
     cs = st.candidates(p)
     if a.json:

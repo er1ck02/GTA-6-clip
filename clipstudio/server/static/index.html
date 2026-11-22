@@ -45,11 +45,14 @@
       <form id="liveForm" class="live-form" autocomplete="off">
         <input id="liveUrl" type="text" spellcheck="false" placeholder="Stream URL (or a file path for a dry run)" aria-label="Stream URL">
         <input id="liveChannel" type="text" spellcheck="false" placeholder="channel (auto)" aria-label="Channel name">
-        <button type="submit" class="btn btn-accent btn-sm" id="liveStart">WATCH LIVE</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="liveStop" disabled>STOP</button>
+        <button type="submit" class="btn btn-accent btn-sm" id="liveStart" title="Add this stream; every stream is watched at the same time">WATCH LIVE</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="liveAll" title="Watch every stream listed in live.channels">WATCH ALL</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="liveStop" disabled title="Stop the selected stream">STOP</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="liveStopAll" disabled title="Stop every stream">STOP ALL</button>
         <button type="button" class="ibtn toggle" id="liveFollow" title="Open each moment in the workstation while it is being edited">FOLLOW</button>
       </form>
     </div>
+    <div class="live-channels" id="liveChannels" aria-label="Streams being watched"></div>
     <div class="live-body">
       <div class="live-feed">
         <img id="liveFrame" alt="Newest recorded frame">

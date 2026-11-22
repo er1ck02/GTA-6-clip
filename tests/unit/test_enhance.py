@@ -57,7 +57,7 @@ def test_zoom_expr_values():
 def test_gameplay_fx():
     ecfg = load_config().enhance
     fx = gameplay_fx(1080, 1920, ecfg, [3.0])
-    assert "eval=frame" in fx and "crop=1080:1920" in fx and "unsharp" in fx and "eq=contrast" in fx
+    assert "eval=frame" in fx and "crop=1080:1920" in fx and "cas=" in fx and "eq=contrast" in fx
     assert "eval=frame" not in gameplay_fx(1080, 1920, ecfg, [])
     off = load_config(overrides=["enhance.sharpen=0", "enhance.vibrance=0", "enhance.contrast=0"]).enhance
     assert gameplay_fx(1080, 1920, off, None) == ""

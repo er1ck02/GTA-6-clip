@@ -5,6 +5,7 @@ import { S, $, h, api, toast } from './core.js';
 import { loadProjects, loadProject, selectClip } from './actions.js';
 
 let snap = null;
+let selected = null;   // which stream the detail panel shows (null = the newest running one)
 let follow = true;
 let timer = null;
 let followed = new Set();
@@ -30,7 +31,9 @@ export function initLive() {
       lastKeys = {};
       snap = await api('/api/live/start', { method: 'POST', body: {
         url: isUrl ? v : null, file: isUrl ? null : v, channel: $('#liveChannel').value.trim() || null } });
-      toast(`Watching ${snap.channel || v}`);
+      selected = snap.id;
+      $('#liveUrl').value = ''; $('#liveChannel').value = '';
+      toast(`Watching ${snap.channel || v}${snap.sessions?.length > 1 ? ` · ${snap.sessions.filter(x => x.running).length} streams` : ''}`);
       followed = new Set();
       render();
       poll();
@@ -38,15 +41,29 @@ export function initLive() {
     btn.disabled = false;
   };
   $('#liveStop').onclick = async () => {
-    try { snap = await api('/api/live/stop', { method: 'POST' }); render(); toast('Stopping: pending moments are still saved and edited'); }
+    try { snap = await api('/api/live/stop', { method: 'POST', body: { id: snap?.id } }); render(); toast(`Stopping ${snap?.channel || 'stream'}: pending moments are still saved and edited`); }
     catch (err) { toast(err.message, 'err'); }
+  };
+  $('#liveStopAll').onclick = async () => {
+    try { snap = await api('/api/live/stop', { method: 'POST', body: {} }); render(); toast('Stopping every stream: pending moments are still saved and edited'); }
+    catch (err) { toast(err.message, 'err'); }
+  };
+  $('#liveAll').onclick = async () => {
+    try {
+      const r = await api('/api/live/start-all', { method: 'POST', body: {} });
+      const bad = Object.keys(r.failed || {}).length;
+      toast(`Watching ${r.started.length} stream${r.started.length === 1 ? '' : 's'}${bad ? ` · ${bad} could not start` : ''}`, bad ? 'err' : undefined, bad ? 8000 : undefined);
+      lastKeys = {}; poll();
+    } catch (err) { toast(`Watch all: ${err.message}`, 'err', 8000); }
   };
   poll();
 }
 
 async function poll() {
   clearTimeout(timer);
-  try { snap = await api('/api/live'); } catch { snap = snap || { active: false }; }
+  try { snap = await api(selected ? `/api/live?id=${encodeURIComponent(selected)}` : '/api/live'); }
+  catch { snap = snap || { active: false }; }
+  if (snap?.id && selected && snap.id !== selected) selected = snap.id;  // the selected stream was removed
   render();
   // slower when the tab is hidden; the editor keeps working on the server either way
   timer = setTimeout(poll, document.hidden ? 5000 : snap?.running ? 1500 : 5000);
@@ -55,6 +72,8 @@ async function poll() {
 // called for every pipeline event (from app.js)
 export function liveEvent(ev) {
   if (ev.kind !== 'live_moment' || !follow) return;
+  // with several streams, only the one on screen takes over the workstation
+  if (snap?.sessions?.length > 1 && ev.channel !== snap.channel) return;
   if (ev.status === 'processing' && ev.project && !followed.has(ev.moment)) {
     followed.add(ev.moment);
     loadProjects().then(() => loadProject(ev.project)).catch(() => {});
@@ -81,11 +100,15 @@ function render() {
   const running = !!(snap && snap.running);
   panel.classList.toggle('is-active', active);
   panel.classList.toggle('is-running', running);
+  const sessions = snap?.sessions || [];
   $('#liveStop').disabled = !running;
-  $('#liveStart').disabled = running;
+  $('#liveStopAll').disabled = !sessions.some(x => x.running);
+  panel.classList.toggle('has-many', sessions.length > 1);
+  if (changed('tiles', JSON.stringify(sessions.map(x => [x.id, x.running, x.error, Math.floor(x.head / 6), x.moments, x.done, x.editing, x.queued, x.chat_count])) + snap?.id)) renderTiles(sessions);
   const badge = $('#liveBadge');
-  badge.textContent = running ? '● REC' : active ? 'ENDED' : 'OFF';
-  badge.className = `badge ${running ? 'badge-rec' : 'badge-dim'}`;
+  const nrun = sessions.filter(x => x.running).length;
+  badge.textContent = nrun > 1 ? `● REC ×${nrun}` : running ? '● REC' : active ? 'ENDED' : 'OFF';
+  badge.className = `badge ${nrun ? 'badge-rec' : 'badge-dim'}`;
   if (!active) {
     $('#liveMeta').textContent = snap?.error ? `last session failed: ${snap.error}` : 'paste a Twitch / YouTube / Kick stream URL';
     return;
@@ -104,9 +127,31 @@ function render() {
   if (changed('mom', JSON.stringify((snap.moments || []).map(m => [m.id, m.status, m.qc_passed, m.upload])))) renderMoments();
 }
 
+function renderTiles(sessions) {
+  const box = $('#liveChannels');
+  box.replaceChildren(...sessions.map(x => {
+    const stats = [h('b', {}, fmt(x.head)), ` · ${x.moments} moment${x.moments === 1 ? '' : 's'}`];
+    if (x.editing) stats.push(' · ', h('span', { class: 'hot' }, 'editing'));
+    else if (x.queued) stats.push(` · ${x.queued} queued`);
+    if (x.done) stats.push(` · ${x.done} ready`);
+    return h('button', {
+      type: 'button', class: `lch${x.running ? ' rec' : ''}${x.error ? ' err' : ''}${x.id === snap.id ? ' sel' : ''}`,
+      title: `${x.source}${x.error ? `\n${x.error}` : x.stopped ? `\nstopped: ${x.stopped}` : ''}`,
+      onclick: () => { selected = x.id; lastKeys = {}; poll(); },
+    },
+      h('span', { class: 'lch-thumb' },
+        x.head > 0 && !document.hidden ? h('img', { src: `/api/live/frame?id=${encodeURIComponent(x.id)}&t=${Math.floor(x.head / 6)}`, alt: '' }) : null,
+        h('i', { class: 'dot' })),
+      h('span', { style: { minWidth: 0 } },
+        h('div', { class: 'lch-name' }, `@${x.channel || x.id}`),
+        h('div', { class: 'lch-stats' }, ...stats),
+        h('div', { class: 'lch-stats' }, x.running ? `${x.chat_count} chat` : (x.error ? 'failed' : 'stopped'))));
+  }));
+}
+
 function renderFeed() {
   const img = $('#liveFrame');
-  if (snap.segments.length && !document.hidden) img.src = `/api/live/frame?i=${snap.segments.at(-1).i}`;
+  if (snap.segments.length && !document.hidden) img.src = `/api/live/frame?id=${encodeURIComponent(snap.id)}&i=${snap.segments.at(-1).i}`;
   $('#liveFeedMsg').hidden = snap.segments.length > 0;
   $('#liveFeedMsg').textContent = snap.running ? 'connecting to the stream…' : 'no video recorded';
   $('#liveHead').textContent = fmt(snap.head);
@@ -188,7 +233,7 @@ function stepState(m) {
   const st = {};
   st.capture = m.status === 'pending' ? 'running' : m.status === 'failed' && !m.path ? 'failed' : 'done';
   if (['pending'].includes(m.status)) return st;
-  st.edit = m.status === 'saved' ? 'queued' : m.status === 'processing' ? 'running' : m.status === 'failed' ? 'failed' : 'done';
+  st.edit = ['saved', 'queued'].includes(m.status) ? 'queued' : m.status === 'processing' ? 'running' : m.status === 'failed' ? 'failed' : 'done';
   if (m.status !== 'done') return st;
   st.render = 'done';
   st.qc = m.qc_passed ? 'done' : 'failed';

@@ -32,8 +32,12 @@ SYSTEM = (
     "on-screen events such as death screens or explosions, chat activity). Judge each one as a standalone short: "
     "is there a clear moment (setup, payoff, reaction), would it hook a viewer in the first two seconds without "
     "context, is it funny, surprising or impressive? Penalise dead air, filler talk, menus and clips that only make "
-    "sense with earlier context. Score 0-10. Give a punchy title under 60 characters in the streamer's voice, "
-    "a one-line hook, and a short reason. Return every candidate id exactly once."
+    "sense with earlier context. Score 0-10. The title is burned into the video as the on-screen hook, so write it like the "
+    "caption of a top gaming short: 3 to 7 words, under 38 characters, plain words, says what happens or raises "
+    "a question the clip answers (e.g. 'He stole a forklift in GTA 6', 'The cashier knew his name'). Name the "
+    "game or the streamer when it helps a stranger. No clickbait the clip does not pay off, no hashtags, no emoji, "
+    "never a bare quote of a few transcript words. Also give a one-line hook for the post text and a short "
+    "reason. Return every candidate id exactly once."
 )
 
 SCHEMA = {
@@ -216,6 +220,7 @@ def rerank(cs: CandidateSet, cfg: LLMCfg, minimum_score: float) -> tuple[Candida
             c.passes_threshold = c.score >= minimum_score
             if cfg.retitle and j.title.strip():
                 c.title = j.title.strip()[:80]
+                c.title_source = "llm"
             c.reason = f"{c.reason}; LLM ({used}) {j.score}/10: {j.reason.strip()}"
             if j.hook.strip():
                 c.description = f"Hook: {j.hook.strip()} | {c.description}"
