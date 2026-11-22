@@ -185,3 +185,12 @@ def test_overlay_mask_finds_a_banner_and_the_crop_steps_off_it():
     assert best_framing(np.zeros((h, w), bool), crop_w) is None
     # a still scene (everything "persistent") is not mistaken for overlays
     assert overlay_mask(np.repeat(frames[:1], n, 0)) is None
+
+
+def test_a_still_graphic_mid_screen_is_content_not_an_overlay():
+    from clipstudio.vision.overlays import _touching_border
+    m = np.zeros((90, 160), bool)
+    m[30:60, 50:110] = True      # a results table in the middle of the game picture
+    m[70:, :40] = True           # a banner docked to the bottom-left corner
+    out = _touching_border(m)
+    assert out[80, 10] and not out[45, 80]

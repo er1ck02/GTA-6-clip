@@ -105,7 +105,9 @@ def keep_expr(cuts: list[tuple[float, float]]) -> str:
 
 
 def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance: EnhanceCfg | None = None,
-                      punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None) -> str:
+                      punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None,
+                      under_ass: str | None = None) -> str:
+    """``under_ass``: a second subtitle file drawn before (under) the captions, e.g. the chat overlay."""
     kf = plan.keyframes[0]
     W, H = plan.out_width, plan.out_height
     crop = gameplay_crop(plan)
@@ -156,6 +158,8 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
         # crop keyframes and punches live in uncut clip time, so the cut happens after them;
         # captions are already in cut time and burn in after it
         tail += f",select={keep_expr(cuts)},setpts=N/({fps:g}*TB)"
+    if under_ass:
+        tail += f",ass={under_ass}"
     if ass_name:
         tail += f",ass={ass_name}"
     # hold the last frame if the source runs out of video before the clip ends; the output is cut with -t
@@ -239,7 +243,8 @@ def choose_encoder(ecfg: ExportCfg, device: str) -> str:
 def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_path: Path | None,
                 out_path: Path, vcfg: VideoCfg, acfg: AudioCfg, ecfg: ExportCfg, device: str,
                 voice_track: int | None = None, enhance: EnhanceCfg | None = None,
-                punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None) -> Path:
+                punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None,
+                under_ass: Path | None = None) -> Path:
     src = Path(media.path)
     dur = end - start
     out_dur = dur - sum(b - a for a, b in (cuts or []))
@@ -255,7 +260,9 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
         ass_name = ass_path.name
         if ass_path.parent.resolve() != workdir.resolve():
             raise ValueError("captions file must live in the clip output folder")
-    graph = build_video_graph(plan, fps, ass_name, enhance, punches, cuts)
+    if under_ass is not None and under_ass.parent.resolve() != workdir.resolve():
+        raise ValueError("overlay subtitle file must live in the clip output folder")
+    graph = build_video_graph(plan, fps, ass_name, enhance, punches, cuts, under_ass.name if under_ass else None)
     n_tracks = max(1, len(media.audio_streams)) if acfg.tracks == "all" else 1
     agraph = build_audio_graph(n_tracks, voice_track, acfg, cuts)
     afilt = _audio_filters(acfg, src, start, dur, agraph) if media.has_audio else ""

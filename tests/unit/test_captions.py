@@ -93,3 +93,35 @@ def test_hook_title_event(tmp_path):
     whole = write_ass(track, cfg.captions.resolved_style(), plan, tmp_path / "w.ass", hook="Stays up",
                       hook_seconds=0, clip_duration=12.5).read_text()
     assert [ln for ln in whole.splitlines() if ",Hook,," in ln][0].startswith("Dialogue: 1,0:00:00.00,0:00:12.50")
+
+
+def test_chat_overlay_lines_roll_up_bottom_left(tmp_path):
+    from clipstudio.captions.chat_overlay import clean_text, schedule, write_chat_ass
+    from clipstudio.core.models import ChatMessage
+    cfg, plan, track, _ = _track()
+    co = cfg.chat_overlay
+    msgs = [ChatMessage(t=-2.0, user="@early", text="here before the clip"),
+            ChatMessage(t=1.0, user="@a", text="NO WAY :face-blue-smiling:"),
+            ChatMessage(t=1.05, user="@b", text="LMAO"), ChatMessage(t=1.1, user="@c", text="clip it"),
+            ChatMessage(t=4.0, user="@d", text="x" * 300), ChatMessage(t=99.0, user="@late", text="after the clip")]
+    assert clean_text("NO WAY :face-blue-smiling: \U0001F602") == "NO WAY"
+    sch = schedule(msgs, 10.0)
+    assert [round(t, 2) for t, _ in sch] == [0.0, 1.0, 1.3, 1.6, 4.0]       # a burst is spaced out, late ones dropped
+    n = write_chat_ass(msgs, plan, co, 10.0, tmp_path / "chat.ass", caption_bottom=track.layout.baseline_y)
+    ass = (tmp_path / "chat.ass").read_text(encoding="utf-8")
+    ev = [ln for ln in ass.splitlines() if ln.startswith("Dialogue:")]
+    assert n == 5 and ev and all(",Chat,," in e for e in ev)
+    assert "face-blue" not in ass and "after the clip" not in ass and "early" in ass and "…" in ass
+    import re
+    ys = [int(y) for y in re.findall(r"\\pos\(\d+,(\d+)\)", ass)]
+    xs = [int(x) for x in re.findall(r"\\pos\((\d+),", ass)]
+    # under the captions, above the bottom safe margin, on the left
+    assert ys and all(track.layout.baseline_y < y <= plan.caption_band[1] for y in ys) and max(xs) < plan.out_width * 0.1
+    # too few messages: no box
+    assert write_chat_ass(msgs[:2], plan, co, 10.0, tmp_path / "none.ass") == 0
+
+
+def test_chat_overlay_skips_bots_and_commands():
+    from clipstudio.captions.chat_overlay import is_noise
+    assert is_noise("@Fossabot", "JOIN THE OFFICIAL DISCORD") and is_noise("@someone", "!giveaway")
+    assert not is_noise("@abbot_fan", "LMAO") and not is_noise("@viewer", "no way!")

@@ -41,7 +41,31 @@ def overlay_mask(frames: np.ndarray) -> np.ndarray | None:
     mask = _box_mean(e >= PERSIST, k) > 0.10
     if mask.mean() > STATIC_SCENE:
         return None
-    return mask
+    return _touching_border(mask)
+
+
+def _touching_border(mask: np.ndarray) -> np.ndarray:
+    """Keep only the parts of ``mask`` connected to the frame edge.
+
+    Stream overlays are docked to an edge or a corner. A still graphic in the middle of the picture is the
+    game's own screen (a results table, a menu, a dialogue box): that is content, and the crop must not run
+    away from it."""
+    h, w = mask.shape
+    band_y, band_x = max(1, h // 30), max(1, w // 30)
+    seed = np.zeros_like(mask)
+    seed[:band_y], seed[-band_y:], seed[:, :band_x], seed[:, -band_x:] = True, True, True, True
+    seed &= mask
+    for _ in range(h + w):
+        grown = seed.copy()
+        grown[1:] |= seed[:-1]
+        grown[:-1] |= seed[1:]
+        grown[:, 1:] |= seed[:, :-1]
+        grown[:, :-1] |= seed[:, 1:]
+        grown &= mask
+        if (grown == seed).all():
+            break
+        seed = grown
+    return seed
 
 
 def _cover(ii: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> float:

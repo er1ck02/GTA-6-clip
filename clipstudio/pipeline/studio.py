@@ -54,7 +54,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 8,
-                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 3, "captions": 6, "render": 6, "qc": 5, "platforms": 1, "edges": 1, "framing": 1}
+                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 3, "captions": 6, "render": 7, "qc": 5, "platforms": 1, "edges": 1, "framing": 2, "chat_overlay": 2}
 
 
 @dataclass
@@ -729,17 +729,20 @@ class Studio:
             r = run_stage(state, "captions", k_cap, [f_caps, f_ass], do_captions, resume=resume, force=force)
             cached += [r.name] if r.cached else []
 
+        f_chat = self._chat_overlay(p, c, cfg, plan, state, d, f_caps if caps_on else None, resume, force)
+
         voice = self.voice_track(media, cfg, self.speech_tracks_used(p))
         punches = self.punches(p, c, cfg)
         k_r = key_of("render", STAGE_VERSIONS["render"], k_plan, k_cap if caps_on else None, c.start, c.end,
                      p.state.data["source"]["fingerprint"], cfg.section_hash("video", "audio", "export", "enhance"),
-                     f_ass.read_text() if caps_on else None, voice, punches, c.cuts)
+                     f_ass.read_text() if caps_on else None, voice, punches, c.cuts,
+                     f_chat.read_text(encoding="utf-8") if f_chat else None)
         state.data["punches"] = punches
         r = run_stage(state, "render", k_r, [f_out],
                       lambda: render_clip(media, plan, c.start, c.end, f_ass if caps_on else None, f_out,
                                           cfg.video, cfg.audio, cfg.export, self.device,
                                           voice_track=voice, enhance=cfg.enhance, punches=punches,
-                                          cuts=c.rel_cuts()),
+                                          cuts=c.rel_cuts(), under_ass=f_chat),
                       resume=resume, force=force, retries=1)
         cached += [r.name] if r.cached else []
 
@@ -765,6 +768,37 @@ class Studio:
                     log.error("      fail: %s: %s", ch.name, ch.detail)
         plats = self._platforms(state, c, cfg, f_out, qc, platforms, resume, force, k_r)
         return ClipResult(c.id, f_out, qc, round(time.perf_counter() - t0, 2), cached, plats)
+
+    def _chat_overlay(self, p: Project, c: Candidate, cfg: Config, plan: CropPlan, state: StateFile, d: Path,
+                      f_caps: Path | None, resume: bool, force: bool) -> Path | None:
+        """Per-clip stage: the chat messages of the clip's time window as an ASS overlay (None = no chat to show)."""
+        co = cfg.chat_overlay
+        if not (co.enabled and cfg.chat.enabled and p.p("chat").exists() and p.state.stage("chat").status == "done"):
+            return None
+        from clipstudio.core.models import ChatMessage, ChatTrack, cut_time
+        f_chat, f_meta = d / "chat.ass", d / "chat_overlay.json"
+        cap_y = CaptionTrack.load(f_caps).layout.baseline_y if f_caps is not None and f_caps.exists() else None
+        k = key_of("chat_overlay", STAGE_VERSIONS["chat_overlay"], p.state.stage("chat").key, c.start, c.end, c.cuts,
+                   cfg.section_hash("chat_overlay"), plan.caption_band, plan.out_width, plan.out_height, cap_y)
+
+        def do() -> None:
+            from clipstudio.captions.chat_overlay import write_chat_ass
+            msgs = []
+            for m in ChatTrack.load(p.p("chat")).messages:
+                if not (c.start - 8.0 <= m.t < c.end) or any(a <= m.t < b for a, b in c.cuts):
+                    continue
+                t = (cut_time(m.t, c.cuts) if c.cuts and m.t >= c.start else m.t) - c.start
+                msgs.append(ChatMessage(t=round(t, 3), user=m.user, text=m.text))
+            n = write_chat_ass(msgs, plan, co, c.output_duration, f_chat, cap_y)
+            f_meta.write_text(json.dumps({"lines": n, "messages_in_window": len(msgs)}))
+            log.info("    chat overlay: %d line(s) from %d message(s)", n, len(msgs))
+
+        try:
+            run_stage(state, "chat_overlay", k, [f_chat, f_meta], do, resume=resume, force=force)
+        except StageFailed as e:
+            log.warning("chat overlay failed for %s, rendering without it: %s", c.id, e)
+            return None
+        return f_chat if json.loads(f_meta.read_text()).get("lines") else None
 
     def _platforms(self, state: StateFile, c: Candidate, cfg: Config, f_out: Path, qc: QCReport,
                    platforms: list[str] | None, resume: bool, force: bool, k_r: str) -> list[dict]:

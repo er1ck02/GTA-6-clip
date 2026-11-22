@@ -47,6 +47,10 @@ chat:                      # used when a chat replay file sits next to the video
   enabled: true
   window_seconds: 5
 
+chat_overlay:              # the last few chat messages, bottom-left of the clip (text only, no emote images)
+  enabled: true
+  lines: 4
+
 reframing:
   mode: auto               # auto | gameplay | fit_blur | facecam_split | facecam_pip
   gameplay_center_x: 0.5   # default crop centre (0..1)

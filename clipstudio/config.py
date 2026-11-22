@@ -193,6 +193,18 @@ class ChatCfg(_Strict):
         "w", "ww", "www", "no way", "wtf", "holy", "insane", "oof", "f", "ez", "gg", "monkas", "pepelaugh"])
 
 
+class ChatOverlayCfg(_Strict):
+    """Stream chat drawn on the clip (needs a chat replay for the source; live mode records one)."""
+    enabled: bool = True
+    lines: int = Field(4, ge=1, le=10)                 # messages visible at once
+    size: float = Field(0.0175, gt=0.008, le=0.05)     # font size as a fraction of frame height
+    width: float = Field(0.62, gt=0.2, le=0.95)        # widest a line may be, as a fraction of frame width
+    margin_x: float = Field(0.04, ge=0, le=0.3)
+    max_age: float = Field(9.0, gt=1, le=60)           # seconds a message stays up when chat is slow
+    min_messages: int = Field(3, ge=1)                 # fewer than this in the clip: no chat box at all
+    font: list[str] = ["Inter", "Roboto", "Segoe UI", "Arial", "DejaVu Sans"]
+
+
 class LLMProvider(_Strict):
     kind: Literal["anthropic", "openai_compatible", "ollama"]
     model: str
@@ -465,6 +477,7 @@ class Config(_Strict):
     vision: VisionCfg = VisionCfg()
     visual: VisualCfg = VisualCfg()
     chat: ChatCfg = ChatCfg()
+    chat_overlay: ChatOverlayCfg = ChatOverlayCfg()
     llm: LLMCfg = LLMCfg()
     video: VideoCfg = VideoCfg()
     captions: CaptionsCfg = CaptionsCfg()
