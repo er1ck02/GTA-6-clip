@@ -25,6 +25,7 @@ from clipstudio.production import lineup as L
 log = get_logger("production")
 
 EDITABLE = ("saved", "queued", "processing")   # moment states that still need an edit after a stop or crash
+MAX_ATTEMPTS = 2                               # a failed edit is retried once (e.g. after a fix lands)
 
 
 class KeepAwake:
@@ -324,7 +325,8 @@ class ProductionManager:
             except (OSError, ValueError):
                 continue
             for m in doc.get("moments") or []:
-                if (m.get("status") in EDITABLE and not m.get("clip") and m.get("path")
+                retry = m.get("status") == "failed" and int(m.get("attempts") or 0) < MAX_ATTEMPTS
+                if ((m.get("status") in EDITABLE or retry) and not m.get("clip") and m.get("path")
                         and Path(m["path"]).is_file() and float(m.get("created") or 0) >= cutoff):
                     out.append((d, m))
         return out
