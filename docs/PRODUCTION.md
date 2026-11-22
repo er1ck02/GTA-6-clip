@@ -56,6 +56,10 @@ HTTP: `GET /api/production`, `POST /api/production/start {"channels": [...]}`,
   recording as an extra unless that would go over the target; then the newest extra stops. An extra that goes
   offline is replaced on the next check. Stand-ins' clips post automatically with credit, like the lineup's
   (`production.post_stand_ins`; set it to false to hold them for review).
+* **Sleep / AFK streams**: every `production.recheck_minutes` the streams being recorded are checked again. A
+  title or category matching `production.idle_keywords` (sleep stream, AFK, BRB, Just Chatting...) or a known
+  category that isn't GTA counts as offline: the stream stops, a stand-in takes the slot, and the streamer
+  comes back once they're playing again.
 * **A stream that ends** mid-session is replaced the same way within a few seconds.
 
 ## Stopping safely

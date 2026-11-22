@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
@@ -214,8 +215,39 @@ class ProductionManager:
         top = self.history()[: self.pc.default_streams]
         return [{"channel": c.channel, "url": c.urls[0] if c.urls else None} for c in top]
 
+    def _idle(self, r: L.LiveCheck) -> str:
+        return L.idle_reason(r, self.pc.idle_keywords, self.pc.substitute_keywords)
+
     def _discover(self) -> list[L.LiveCheck]:
-        return L.discover_live(self.pc.discover_channels, self.check, self.pc.discover_keywords)
+        return L.discover_live(self.pc.discover_channels, self.check, self.pc.discover_keywords, idle=self._idle)
+
+    def _drop_idle(self) -> bool:
+        """Streams recording right now that turned into a sleep/AFK/Just Chatting (or non-GTA) stream are stopped;
+        their slot waits for the original to be back for real, and a stand-in takes over meanwhile."""
+        slots = [s for s in self._recording_slots() if s.get("url")]
+        if not slots:
+            return False
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            res = list(ex.map(lambda s: self.check(s["url"]), slots))
+        changed = False
+        for s, r in zip(slots, res):
+            why = self._idle(r) if r.live else ""
+            if not why:
+                continue
+            log.info("%s is on a %s; swapping it out", s["channel"], why)
+            key = s["key"]
+            with self.lock:
+                if s["action"] == "fill":
+                    self.slots.remove(s)
+                else:
+                    s["action"], s["key"] = "wait", None
+                    s["note"] = f"{s['channel']} is {'on a ' + why if why.endswith('stream') else why}; swapped out"
+            try:
+                self.live.stop(key)
+            except ClipStudioError:
+                pass
+            changed = True
+        return changed
 
     def _recording_slots(self) -> list[dict]:
         running = set(self._running().values())
@@ -238,7 +270,7 @@ class ProductionManager:
                                   substitute=self.pc.substitute, keywords=self.pc.substitute_keywords,
                                   max_candidates=self.pc.max_candidates, busy=set(running),
                                   target=max(0, target - len(held)) if target else 0,
-                                  discover=self._discover if target else None)
+                                  discover=self._discover if target else None, idle=self._idle)
             if self.mode != "running":  # a stop arrived while we were checking
                 return [p.to_dict() for p in plans]
             if target:  # an original came back: make room by stopping extra streams, newest first
@@ -336,6 +368,8 @@ class ProductionManager:
             if changed:
                 self.save()
         due = time.time() >= self._next_recheck
+        if due and self.pc.idle_keywords and self._drop_idle():
+            changed = True
         needs = (any(s["action"] in ("wait", "substitute", "fill") for s in self.slots)
                  or (self.pc.target_streams and len(self._recording_slots()) < self.pc.target_streams))
         if (changed or due) and needs:
@@ -353,6 +387,8 @@ class ProductionManager:
                 continue
             r = L.first_live([u for u in [L.resume_url(s.get("wanted_url"), s["wanted"])] if u]
                              + L.guess_urls(s["wanted"]), self.check)
+            if r.live and self._idle(r):
+                continue  # live, but still asleep/AFK: the stand-in stays
             if r.live and self.pc.target_streams:
                 # the original gets its slot back; the stand-in keeps recording as an extra stream unless that
                 # would go over target_streams (then _apply_plan stops it)

@@ -207,6 +207,38 @@ def test_target_keeps_n_streams_with_twitch_stand_ins_and_swaps_back(cfg, tmp_pa
     assert len(live.started) == n and len(m._recording_slots()) == 3
 
 
+def test_sleep_and_non_gta_streams_count_as_offline(cfg, tmp_path):
+    words, games = cfg.production.idle_keywords, cfg.production.substitute_keywords
+    assert L.idle_reason(L.LiveCheck(True, "SLEEP STREAM zzz"), words, games) == "sleep stream"
+    assert L.idle_reason(L.LiveCheck(True, "GTA 6 no sleep till 100%"), words, games) == ""
+    assert L.idle_reason(L.LiveCheck(True, "hi", category="Just Chatting"), words, games) == "just chatting stream"
+    assert "not GTA" in L.idle_reason(L.LiveCheck(True, "chill", category="Minecraft"), words, games)
+    assert L.idle_reason(L.LiveCheck(True, "chill", category="Grand Theft Auto VI"), words, games) == ""
+
+    cfg.production.target_streams = 2
+    cfg.production.discover_channels = ["big"]
+    live = FakeLive(tmp_path)
+    online = {"lacy", "big"}
+    titles = {"lacy": "GTA 6 day 4", "big": "GTA 6 heists"}
+    m = mgr(cfg, live, lambda u: checker(online, titles)(u))
+    m.start(["https://www.twitch.tv/lacy"])
+    assert sorted(live.started) == ["big", "lacy"]
+    # lacy falls asleep on stream: on the next check she is swapped out; the slot waits for her
+    titles["lacy"] = "sleep stream zzz"
+    m._next_recheck = 0
+    m._follow()
+    assert live.watches["lacy"].session.running is False
+    lacy = next(s for s in m.slots if s["wanted"] == "lacy")
+    assert lacy["action"] == "wait" and "sleep" in lacy["note"]
+    assert m.state["lineup"][0]["channel"] == "lacy"  # still in the lineup, not dropped like a hand stop
+    # she wakes up and plays again: recorded again
+    titles["lacy"] = "GTA 6 morning"
+    m._next_recheck = 0
+    m._follow()
+    assert live.started[-1] == "lacy"
+    assert next(s for s in m.slots if s["wanted"] == "lacy")["action"] == "watch"
+
+
 def test_streams_added_or_stopped_by_hand_change_the_lineup(cfg, tmp_path):
     live = FakeLive(tmp_path)
     m = mgr(cfg, live, checker({"a"}))

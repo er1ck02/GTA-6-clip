@@ -29,6 +29,7 @@ class LiveCheck:
     url: str = ""
     error: str = ""
     viewers: int = 0
+    category: str = ""          # the stream's game/category when the site reports it ("" = unknown)
 
 
 Probe = Callable[[str], LiveCheck]
@@ -143,7 +144,7 @@ def probe(url: str, timeout: float = 45) -> LiveCheck:
 
     try:
         cmd = _ytdlp_cmd() + ["--quiet", "--no-warnings", "--skip-download", "--no-playlist",
-                              "--print", "%(live_status)s|%(concurrent_view_count)s|%(title)s", url]
+                              "--print", "%(live_status)s|%(concurrent_view_count)s|%(categories.0|)s|%(title)s", url]
         cp = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return LiveCheck(None, url=url, error="timed out")
@@ -151,9 +152,12 @@ def probe(url: str, timeout: float = 45) -> LiveCheck:
         return LiveCheck(None, url=url, error=str(e))
     first = (cp.stdout.strip().splitlines() or [""])[0]
     status, _, rest = first.partition("|")
-    viewers, _, title = rest.partition("|")
+    viewers, _, rest = rest.partition("|")
+    category, _, title = rest.partition("|")
+    if category.strip() in ("NA", "None"):
+        category = ""
     if cp.returncode == 0 and status:
-        return LiveCheck(status == "is_live", title=title.strip(), url=url,
+        return LiveCheck(status == "is_live", title=title.strip(), url=url, category=category.strip(),
                          viewers=int(viewers) if viewers.strip().isdigit() else 0)
     err = (cp.stderr or "").strip().splitlines()
     msg = err[-1] if err else f"yt-dlp exit {cp.returncode}"
@@ -178,14 +182,29 @@ def title_matches(title: str, keywords: list[str]) -> bool:
     return not keywords or any(k.lower() in low for k in keywords)
 
 
+Idle = Callable[[LiveCheck], str]
+
+
+def idle_reason(r: LiveCheck, idle_words: list[str], game_words: list[str]) -> str:
+    """Why a live stream is not worth recording ("" = it is): a sleep/AFK/Just Chatting stream (title or
+    category), or a category that is known and is not GTA."""
+    title, cat = (r.title or "").lower(), (r.category or "").lower()
+    for w in idle_words:
+        if w and (re.search(rf"(?<![a-z]){re.escape(w.lower())}(?![a-z])", title) or w.lower() in cat):
+            return w.lower() if w.lower().endswith("stream") else f"{w.lower()} stream"
+    if cat and game_words and not any(g.lower() in cat for g in game_words):
+        return f"playing {r.category}, not GTA"
+    return ""
+
+
 def discover_live(channels: list[str], check: Probe, keywords: list[str] | None = None,
-                  workers: int = 8) -> list[LiveCheck]:
+                  workers: int = 8, idle: Idle | None = None) -> list[LiveCheck]:
     """Big Twitch streamers (``production.discover_channels``) who are live with a matching title right now,
     most viewers first. Used to keep every slot filled once your own past streamers run out."""
     names = [c.lower().lstrip("@") for c in channels if c and re.fullmatch(r"@?[\w]+", c)]
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
         res = list(ex.map(lambda c: check(f"https://www.twitch.tv/{c}"), names))
-    live = [r for r in res if r.live and title_matches(r.title, list(keywords or []))]
+    live = [r for r in res if r.live and title_matches(r.title, list(keywords or [])) and not (idle and idle(r))]
     return sorted(live, key=lambda r: -r.viewers)
 
 
@@ -207,12 +226,14 @@ class SlotPlan:
 def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, substitute: bool = True,
                 keywords: list[str] | None = None, max_candidates: int = 12,
                 busy: set[str] | None = None, workers: int = 8, target: int = 0,
-                discover: Callable[[], list[LiveCheck]] | None = None) -> list[SlotPlan]:
+                discover: Callable[[], list[LiveCheck]] | None = None,
+                idle: Idle | None = None) -> list[SlotPlan]:
     """For each lineup entry ({channel, url}) decide: watch it (live), stand someone in (offline), or wait.
 
     ``busy`` are channels already being watched (kept as they are, never picked as a substitute twice).
     ``target`` (0 = off) is how many streams should record: stand-ins only fill up to it, and when the lineup
-    alone can't reach it, extra "fill" slots are added. Stand-ins come from your past streamers first, then
+    alone can't reach it, extra "fill" slots are added. ``idle`` names live streams that count as offline
+    (sleep/AFK/Just Chatting, not GTA). Stand-ins come from your past streamers first, then
     from ``discover()`` (live GTA streams on Twitch, most viewers first).
     """
     keywords = list(keywords or [])
@@ -236,7 +257,10 @@ def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, 
         results = list(ex.map(lambda ie: first_live(urls_for(ie[1]), check), todo))
     for (i, _e), r in zip(todo, results):
         p = plans[i]
-        if r.live:
+        why_idle = idle(r) if (idle and r.live) else ""
+        if why_idle:
+            p.note = f"on a {why_idle}" if why_idle.endswith("stream") else why_idle
+        elif r.live:
             p.action, p.channel, p.url, p.title = "watch", p.wanted, r.url, r.title
             p.note = "live"
             busy.add(p.wanted)
@@ -256,7 +280,8 @@ def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
         checks = list(ex.map(lambda c: first_live(c.urls + [u for u in guess_urls(c.channel) if u not in c.urls],
                                                   check), pool))
-    live_pool = [(c, r) for c, r in zip(pool, checks) if r.live and title_matches(r.title, keywords)]
+    live_pool = [(c, r) for c, r in zip(pool, checks)
+                 if r.live and title_matches(r.title, keywords) and not (idle and idle(r))]
     if discover is not None and len(live_pool) < room:
         taken = lineup_names | busy | {c.channel for c, _ in live_pool}
         try:
