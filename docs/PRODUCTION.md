@@ -58,7 +58,9 @@ HTTP: `GET /api/production`, `POST /api/production/start {"channels": [...]}`,
   (`production.post_stand_ins`; set it to false to hold them for review).
 * **Sleep / AFK streams**: every `production.recheck_minutes` the streams being recorded are checked again. A
   title or category matching `production.idle_keywords` (sleep stream, AFK, BRB, Just Chatting...) or a known
-  category that isn't GTA counts as offline: the stream stops, a stand-in takes the slot, and the streamer
+  category that isn't GTA counts as offline, and so does a picture that barely changes for two checks in a row
+  (a still room: a sleep stream that kept its GTA title; `production.idle_motion_threshold`, then not tried
+  again for `idle_cooldown_minutes`): the stream stops, a stand-in takes the slot, and the streamer
   comes back once they're playing again.
 * **A stream that ends** mid-session is replaced the same way within a few seconds.
 

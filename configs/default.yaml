@@ -147,6 +147,8 @@ production:                # `clipstudio production start|stop` (desktop: Start/
   # (your past streamers first, then the most-watched live GTA 6 streams among discover_channels on Twitch)
   idle_keywords: ["sleep stream", "sleeping", "asleep", "zzz", "afk", "brb", "be right back", "just chatting"]
                            # live but idle (or a non-GTA category) counts as offline and gets swapped out
+  idle_motion_threshold: 1.5  # a picture that barely moves (sleep stream behind a GTA title) for 2 checks = offline
+  idle_cooldown_minutes: 30  # a streamer found asleep isn't tried again before this
   post_stand_ins: true     # stand-ins' clips post automatically (credited), like the lineup's
   discover_keywords: ["gta 6", "gta vi", "gta6", "grand theft auto vi"]
   recheck_minutes: 5       # offline channels are checked again this often; the original returns when it's live

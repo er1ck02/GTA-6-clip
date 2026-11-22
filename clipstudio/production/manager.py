@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from clipstudio.config import Config
+from clipstudio.production import activity
 from clipstudio.core import events
 from clipstudio.core.compat import write_text_atomic
 from clipstudio.core.errors import ClipStudioError
@@ -78,6 +79,7 @@ class ProductionManager:
         self._edit_t0: dict[tuple, float] = {}
         self._next_recheck = 0.0
         self._planning = False
+        self._still_checks: dict[str, int] = {}
         self.awake = KeepAwake()
         for ch in self.state.get("posted_stand_ins", []) if self.pc.post_stand_ins else []:
             self._allow(ch)
@@ -216,7 +218,28 @@ class ProductionManager:
         return [{"channel": c.channel, "url": c.urls[0] if c.urls else None} for c in top]
 
     def _idle(self, r: L.LiveCheck) -> str:
+        until = self.state.get("asleep", {}).get(L.channel_of(r.url or "") or "", 0)
+        if until > time.time():
+            return "sleep stream (nothing moving on screen)"
         return L.idle_reason(r, self.pc.idle_keywords, self.pc.substitute_keywords)
+
+    def _still(self, s: dict) -> bool:
+        """The picture of this recording has barely changed for ``idle_motion_checks`` rechecks in a row."""
+        if not self.pc.idle_motion_threshold:
+            return False
+        w = self.live.watches.get(s.get("key"))
+        ring = getattr(getattr(w, "session", None), "ring", None)
+        segs = list(getattr(ring, "segments", []) or [])
+        if not segs:
+            return False
+        head = segs[-1].end
+        score = activity.motion([g.path for g in segs if g.end > head - 180 and Path(g.path).exists()])
+        if score is None:
+            return False
+        s["motion"] = round(score, 2)
+        n = self._still_checks.get(s["channel"], 0) + 1 if score < self.pc.idle_motion_threshold else 0
+        self._still_checks[s["channel"]] = n  # by channel: slots are rebuilt on every re-plan
+        return n >= self.pc.idle_motion_checks
 
     def _discover(self) -> list[L.LiveCheck]:
         return L.discover_live(self.pc.discover_channels, self.check, self.pc.discover_keywords, idle=self._idle)
@@ -232,6 +255,11 @@ class ProductionManager:
         changed = False
         for s, r in zip(slots, res):
             why = self._idle(r) if r.live else ""
+            if not why and self._still(s):
+                why = "sleep stream (nothing moving on screen)"
+                self._still_checks.pop(s["channel"], None)
+                if self.pc.idle_cooldown_minutes:
+                    self.state.setdefault("asleep", {})[s["channel"]] = time.time() + self.pc.idle_cooldown_minutes * 60
             if not why:
                 continue
             log.info("%s is on a %s; swapping it out", s["channel"], why)
