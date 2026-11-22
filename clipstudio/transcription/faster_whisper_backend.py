@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,10 @@ from clipstudio.transcription.base import ProgressFn
 log = get_logger("transcription")
 
 
+_models: dict[tuple, object] = {}
+_models_lock = threading.Lock()
+
+
 class FasterWhisperBackend:
     name = "faster_whisper"
 
@@ -30,6 +35,15 @@ class FasterWhisperBackend:
             self.compute_type = "float16" if device == "cuda" else "int8"
 
     def _load(self):
+        """The whisper model, loaded once per process and settings (live mode edits many moments; loading it for
+        each one cost seconds and leaked CTranslate2 threads)."""
+        key = (self.cfg.model, self.device, self.compute_type, str(self.models_dir))
+        with _models_lock:
+            if key not in _models:
+                _models[key] = self._load_new()
+            return _models[key]
+
+    def _load_new(self):
         try:
             from faster_whisper import WhisperModel
         except ImportError as e:

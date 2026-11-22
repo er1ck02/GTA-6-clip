@@ -89,13 +89,14 @@ def test_nvidia_dll_dirs_found_on_sys_path(tmp_path, monkeypatch):
 
 
 def test_ctrl_break_maps_to_keyboard_interrupt(monkeypatch):
-    monkeypatch.setattr(signal, "SIGBREAK", signal.SIGUSR1, raising=False)
-    old = signal.getsignal(signal.SIGUSR1)
+    sig = getattr(signal, "SIGBREAK", None) or signal.SIGUSR1  # SIGUSR1 stands in where there is no SIGBREAK
+    monkeypatch.setattr(signal, "SIGBREAK", sig, raising=False)
+    old = signal.getsignal(sig)
     try:
         compat.install_interrupt_handlers()
-        assert signal.getsignal(signal.SIGUSR1) is signal.default_int_handler
+        assert signal.getsignal(sig) is signal.default_int_handler
     finally:
-        signal.signal(signal.SIGUSR1, old)
+        signal.signal(sig, old)
 
 
 def test_fonts_found_without_fontconfig(tmp_path, monkeypatch):

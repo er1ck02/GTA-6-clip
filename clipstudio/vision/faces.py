@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import atexit
 import os
+import threading
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -215,10 +216,40 @@ def available_backends() -> dict[str, bool]:
     return out
 
 
+_detectors: dict[tuple, FaceDetector | None] = {}
+_detectors_lock = threading.Lock()
+
+
+class _Shared(FaceDetector):
+    """A process-wide detector used by one caller at a time. Live mode edits a moment every few minutes per
+    stream; creating a MediaPipe graph each time leaked its threads and memory (and atexit kept every one alive)."""
+
+    def __init__(self, inner: FaceDetector):
+        self.inner, self.name = inner, inner.name
+        self._lock = threading.Lock()
+
+    def detect(self, rgb: np.ndarray, tiled: bool = True, edges: bool = False) -> list[FaceBox]:
+        with self._lock:
+            return self.inner.detect(rgb, tiled=tiled, edges=edges)
+
+    def close(self) -> None:  # shared: closed once, at exit
+        pass
+
+
 def get_face_detector(kind: str, models_dir: Path, min_conf: float = 0.5, download: bool = True) -> FaceDetector | None:
-    """Return the best available detector for ``kind`` (auto|mediapipe|opencv|none), or None."""
+    """The best available detector for ``kind`` (auto|mediapipe|opencv|none), or None. Created once per process
+    and settings, then shared."""
     if kind == "none":
         return None
+    key = (kind, str(Path(models_dir).resolve()), round(min_conf, 3), download)
+    with _detectors_lock:
+        if key not in _detectors:
+            det = _make_face_detector(kind, models_dir, min_conf, download)
+            _detectors[key] = _Shared(det) if det is not None else None
+        return _detectors[key]
+
+
+def _make_face_detector(kind: str, models_dir: Path, min_conf: float, download: bool) -> FaceDetector | None:
     if kind in ("auto", "mediapipe"):
         try:
             model = ensure_blazeface(models_dir, download)
