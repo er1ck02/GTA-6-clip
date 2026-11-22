@@ -128,7 +128,8 @@ class HighlightsCfg(_Strict):
     hold_words: list[str] = Field(default_factory=lambda: [
         "breasts", "boobs", "boob", "tits", "titties", "naked", "nude", "nudity", "topless", "nipple", "nipples",
         "stripper", "strippers", "strip club", "lap dance", "sex", "sexual", "porn", "blowjob", "handjob",
-        "penis", "vagina", "genitals", "orgasm", "horny", "onlyfans"])
+        "penis", "vagina", "genitals", "orgasm", "horny", "onlyfans", "disrobe", "undress", "undressed", "tops off",
+        "top off", "bj", "threesome", "lingerie"])
     # Lead-in: a clip starts at least this long before the moment, and further back over the talk that leads
     # straight into it (sentences with no real pause between them), up to lead_in_max seconds before it.
     lead_in_seconds: float = Field(14.0, ge=2, le=40)
