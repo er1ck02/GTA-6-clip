@@ -235,3 +235,9 @@ def test_chat_lines_with_slurs_are_never_shown():
     assert is_noise("someone", "what a f4g".replace("4", "a"))
     assert not is_noise("someone", "bro flew into the tower LMAO")
     assert not is_noise("someone", "grape juice")          # a word that only contains one is fine
+
+
+def test_titles_never_say_rp_or_roleplay():
+    from clipstudio.supervise import NOT_RP
+    assert NOT_RP.search("xqc gta rp moment") and NOT_RP.search("funniest roleplay ever") and NOT_RP.search("GTA6RP".replace("6", " "))
+    assert not NOT_RP.search("ludwig lost the race by this much") and not NOT_RP.search("sharp turn, wrong trip")

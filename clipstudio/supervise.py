@@ -15,6 +15,7 @@ the only place an uploader should post from. A clip that is rendered again goes 
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 from pathlib import Path
@@ -23,6 +24,7 @@ from clipstudio.core.logging import get_logger
 from clipstudio.media.ffmpeg import ffmpeg_bin, probe, run
 
 log = get_logger("supervise")
+NOT_RP = re.compile(r"(?<![a-z])(gta\s*)?(rp|role\s*-?play\w*)(?![a-z])", re.I)   # owner: it is GTA 6, not roleplay
 SHEET_COLS, SHEET_ROWS = 6, 2
 # what a reviewer checks; all four must hold to approve
 PAYOFF_TEST = [
@@ -34,7 +36,7 @@ PAYOFF_TEST = [
 REJECT = ["talk with no event", "menus or loading screens", "long drives", "reading chat", "sponsor segments",
           "needs backstory", "nudity or sexual content"]
 TITLE_RULES = ("lowercase, 3-8 words, one emoji at the end (😭 first, then 💀 or 😳), name the streamer the way fans do, "
-               "do not spoil the punchline, no Title Case or CAPS")
+               "do not spoil the punchline, no Title Case or CAPS, never 'rp' or 'roleplay' (it is GTA 6, not roleplay)")
 
 
 def packet_paths(clip_file: Path) -> tuple[Path, Path]:
@@ -76,6 +78,8 @@ def is_approved(clip_file: Path | str | None) -> bool:
 def record_verdict(clip_file: Path, approved: bool, reason: str, reviewer: str, data_dir: Path,
                    post_title: str | None = None) -> dict:
     """Store the verdict; an approved clip is copied to ``<data_dir>/approved`` and listed in its MAP.txt."""
+    if approved and post_title and NOT_RP.search(post_title):
+        raise ValueError("titles never say 'rp' or 'roleplay': this is GTA 6, not roleplay")
     doc = read_packet(clip_file)
     if doc is None:
         raise FileNotFoundError(f"no review packet next to {clip_file}; render the clip first")
