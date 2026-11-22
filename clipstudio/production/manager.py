@@ -242,7 +242,9 @@ class ProductionManager:
         return n >= self.pc.idle_motion_checks
 
     def _discover(self) -> list[L.LiveCheck]:
-        return L.discover_live(self.pc.discover_channels, self.check, self.pc.discover_keywords, idle=self._idle)
+        q = self.pc.discover_youtube_search
+        return L.discover_live(self.pc.discover_channels, self.check, self.pc.discover_keywords, idle=self._idle,
+                               search=(lambda: L.youtube_live(q)) if q else None)
 
     def _drop_idle(self) -> bool:
         """Streams recording right now that turned into a sleep/AFK/Just Chatting (or non-GTA) stream are stopped;

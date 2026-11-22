@@ -51,7 +51,8 @@ HTTP: `GET /api/production`, `POST /api/production/start {"channels": [...]}`,
   again; when it's back, the stand-in stops (its saved moments still get edited) and the original returns.
 * **Always N streams** (`production.target_streams`, 8 by default; 0 turns it off): stand-ins only fill up to
   that many recordings, and if the lineup alone can't reach it, extra streams are added. When your past
-  streamers run out, the most-watched live stream among `production.discover_channels` on Twitch whose title
+  streamers run out, the most-watched live stream among `production.discover_channels` on Twitch and a YouTube
+  live search for `production.discover_youtube_search` ("GTA 6") whose title
   mentions `production.discover_keywords` (GTA 6) is picked. When an original comes back, its stand-in keeps
   recording as an extra unless that would go over the target; then the newest extra stops. An extra that goes
   offline is replaced on the next check. Stand-ins' clips post automatically with credit, like the lineup's

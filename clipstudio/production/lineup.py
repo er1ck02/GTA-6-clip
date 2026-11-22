@@ -216,13 +216,54 @@ def idle_reason(r: LiveCheck, idle_words: list[str], game_words: list[str]) -> s
     return ""
 
 
+# YouTube search, "Live" filter: every live stream matching the query, with its concurrent viewers
+YT_LIVE_SEARCH = "https://www.youtube.com/results?search_query={q}&sp=EgJAAQ%253D%253D"
+YT_SEARCH_FORMAT = "%(live_status)s|%(concurrent_view_count|)s|%(uploader_id|)s|%(title)s"
+
+
+def parse_search_line(line: str) -> LiveCheck | None:
+    status, _, rest = line.partition("|")
+    viewers, _, rest = rest.partition("|")
+    handle, _, title = rest.partition("|")
+    handle = handle.strip()
+    if status != "is_live" or not handle.startswith("@"):
+        return None
+    return LiveCheck(True, title=title.strip(), url=f"https://www.youtube.com/{handle}/live",
+                     viewers=int(viewers) if viewers.strip().isdigit() else 0)
+
+
+def youtube_live(query: str, limit: int = 40, timeout: float = 90) -> list[LiveCheck]:
+    """Live YouTube streams for ``query`` right now (one yt-dlp search request, nothing downloaded)."""
+    from urllib.parse import quote_plus
+
+    from clipstudio.live.buffer import _ytdlp_cmd
+
+    try:
+        cp = subprocess.run(_ytdlp_cmd() + ["--quiet", "--no-warnings", "--flat-playlist", "--playlist-end",
+                                            str(limit), "--print", YT_SEARCH_FORMAT,
+                                            YT_LIVE_SEARCH.format(q=quote_plus(query))],
+                            capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log.warning("YouTube live search failed: %s", e)
+        return []
+    return [r for r in map(parse_search_line, cp.stdout.splitlines()) if r]
+
+
 def discover_live(channels: list[str], check: Probe, keywords: list[str] | None = None,
-                  workers: int = 8, idle: Idle | None = None) -> list[LiveCheck]:
-    """Big Twitch streamers (``production.discover_channels``) who are live with a matching title right now,
-    most viewers first. Used to keep every slot filled once your own past streamers run out."""
+                  workers: int = 8, idle: Idle | None = None,
+                  search: Callable[[], list[LiveCheck]] | None = None) -> list[LiveCheck]:
+    """Live streams worth standing in, most viewers first: big Twitch streamers (``production.discover_channels``)
+    plus a YouTube live search (``search``), each with a title matching ``keywords``. Used to keep every slot
+    filled once your own past streamers run out."""
     names = [c.lower().lstrip("@") for c in channels if c and re.fullmatch(r"@?[\w]+", c)]
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        found = ex.submit(search) if search else None
         res = list(ex.map(lambda c: check(f"https://www.twitch.tv/{c}"), names))
+        if found is not None:
+            try:
+                res += found.result()
+            except Exception as e:  # noqa: BLE001 - best effort
+                log.warning("live search failed: %s", e)
     live = [r for r in res if r.live and title_matches(r.title, list(keywords or [])) and not (idle and idle(r))]
     return sorted(live, key=lambda r: -r.viewers)
 
@@ -317,7 +358,8 @@ def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, 
     def why_picked(c: PastChannel, r: LiveCheck) -> str:
         if c.sessions:
             return f"{c.clips} clips from {c.sessions} past session{'s' if c.sessions != 1 else ''}"
-        return "top live GTA stream on Twitch" + (f", {r.viewers:,} viewers" if r.viewers else "")
+        site = "YouTube" if "youtu" in (r.url or "") else "Twitch"
+        return f"top live GTA stream on {site}" + (f", {r.viewers:,} viewers" if r.viewers else "")
 
     for p in waiting:
         if room <= 0:
@@ -325,7 +367,9 @@ def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, 
             continue
         if not live_pool:
             why = "none of your past streamers" + (f" streaming {'/'.join(keywords)}" if keywords else "")
-            p.note = f"{p.wanted} is {p.note}; {why} is live right now, checking again later"
+            if discover is not None:
+                why = "no past streamer or other live GTA 6 stream"
+            p.note = f"{p.wanted} is {p.note}; {why} is free right now, checking again later"
             continue
         c, r = live_pool.pop(0)
         p.action, p.channel, p.url, p.title = "substitute", c.channel, r.url, r.title
