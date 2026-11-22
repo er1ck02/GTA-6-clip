@@ -142,3 +142,20 @@ def test_edit_gate_is_shared_and_limits_parallel_edits():
     for t in ts:
         t.join()
     assert peak[0] == 2
+
+
+def test_one_signal_alone_needs_agreement():
+    """A busy chat or a loud sound on its own stays under the threshold; together, or a clip command, they fire."""
+    from clipstudio.config import load_config
+    from clipstudio.live.triggers import TriggerDetector
+
+    cfg = load_config()
+    det = TriggerDetector(cfg.live, cfg.chat)
+    det.has_chat = True
+    z = {"audio": 0.0, "chat": 0.0, "hype": 0.0, "command": 0.0}
+    assert det.score({**z, "chat": 1.5}) < cfg.live.threshold          # chat alone, maxed out
+    assert det.score({**z, "audio": 1.5}) < cfg.live.threshold         # a 13 dB jump alone
+    assert det.score({**z, "chat": 1.0, "audio": 0.8}) >= cfg.live.threshold
+    assert det.score({**z, "chat": 1.0, "hype": 1.0}) >= cfg.live.threshold
+    assert det.score({**z, "command": 1.0}) >= cfg.live.threshold      # viewers asking for a clip
+    assert det.score({**z, "audio": 2.0}) >= cfg.live.threshold        # a huge jump still counts alone
