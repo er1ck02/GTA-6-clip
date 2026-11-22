@@ -70,12 +70,19 @@ def write_chat_ass(messages: list[ChatMessage], plan: CropPlan, cfg: ChatOverlay
     line_h = int(round(fs * 1.32))
     bottom = int(cfg.bottom * H)
     lines = cfg.lines
-    if caption_bottom is not None:  # stay clear of the captions: fewer lines if the gap is small
+    max_w = cfg.width * W
+    face = next((p.dest for p in plan.panels if p.name == "facecam"), None)
+    in_face = cfg.position == "facecam" and face is not None and face.y == 0 and face.w == W
+    if in_face:
+        # bottom-left corner of the streamer's section: off the gameplay, under the face, clear of the captions
+        bottom = face.y + face.h - int(0.01 * H)
+        lines = max(1, min(lines, int(face.h * 0.45) // line_h))
+        max_w = min(max_w, 0.56 * W)
+    elif caption_bottom is not None and caption_bottom < bottom:  # stay clear of captions sitting above the block
         lines = max(0, min(lines, (bottom - caption_bottom - int(0.012 * H)) // line_h))
     family, font_file = resolve_font(tuple(cfg.font), True)
     meas = _Measurer(font_file, fs)
     x = int(cfg.margin_x * W)
-    max_w = cfg.width * W
 
     rows: list[tuple[float, str]] = []
     for show, m in schedule(messages, dur):

@@ -237,6 +237,9 @@ class ChatOverlayCfg(_Strict):
     # bottom edge of the chat block as a fraction of frame height (a little into the apps' bottom text area,
     # which sits lower than the caption safe margin on the left side)
     bottom: float = Field(0.875, ge=0.3, le=0.98)
+    # "facecam": bottom-left corner of the streamer's section when the layout has one (off the gameplay and
+    # clear of the captions), otherwise as "bottom". "bottom": bottom-left of the whole clip, at ``bottom``.
+    position: Literal["facecam", "bottom"] = "facecam"
     font: list[str] = ["Inter", "Roboto", "Segoe UI", "Arial", "DejaVu Sans"]
 
 

@@ -182,6 +182,7 @@ class CropPlan(_M):
     caption_band: tuple[int, int]  # allowed vertical band (top, bottom) for captions
     # the facecam source crop is fitted inside its panel (over a blurred fill) instead of filling it
     facecam_fit: bool = False
+    facecam_inner: PixelRect | None = None   # where the fitted camera picture sits inside its panel
     source: Literal["auto", "manual"] = "auto"
     notes: list[str] = Field(default_factory=list)
 

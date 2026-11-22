@@ -54,7 +54,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 11,
-                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 5, "captions": 7, "render": 9, "qc": 5, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 3, "game_subs": 1}
+                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 6, "captions": 7, "render": 10, "qc": 5, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 4, "game_subs": 1}
 
 
 @dataclass
@@ -840,7 +840,8 @@ class Studio:
         f_chat, f_meta = d / "chat.ass", d / "chat_overlay.json"
         cap_y = CaptionTrack.load(f_caps).layout.baseline_y if f_caps is not None and f_caps.exists() else None
         k = key_of("chat_overlay", STAGE_VERSIONS["chat_overlay"], p.state.stage("chat").key, c.start, c.end, c.cuts,
-                   cfg.section_hash("chat_overlay"), plan.caption_band, plan.out_width, plan.out_height, cap_y)
+                   cfg.section_hash("chat_overlay"), plan.caption_band, plan.out_width, plan.out_height, cap_y,
+                   [pn.model_dump() for pn in plan.panels])
 
         def do() -> None:
             from clipstudio.captions.chat_overlay import write_chat_ass

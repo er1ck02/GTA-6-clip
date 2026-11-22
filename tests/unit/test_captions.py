@@ -100,7 +100,7 @@ def test_chat_overlay_lines_roll_up_bottom_left(tmp_path):
     from clipstudio.captions.chat_overlay import clean_text, schedule, write_chat_ass
     from clipstudio.core.models import ChatMessage
     cfg, plan, track, _ = _track()
-    co = cfg.chat_overlay
+    co = cfg.chat_overlay.model_copy(update={"position": "bottom"})
     msgs = [ChatMessage(t=-2.0, user="@early", text="here before the clip"),
             ChatMessage(t=1.0, user="@a", text="NO WAY :face-blue-smiling:"),
             ChatMessage(t=1.05, user="@b", text="LMAO"), ChatMessage(t=1.1, user="@c", text="clip it"),
@@ -117,7 +117,7 @@ def test_chat_overlay_lines_roll_up_bottom_left(tmp_path):
     ys = [int(y) for y in re.findall(r"\\pos\(\d+,(\d+)\)", ass)]
     xs = [int(x) for x in re.findall(r"\\pos\((\d+),", ass)]
     # under the captions, above the bottom safe margin, on the left
-    assert ys and all(track.layout.baseline_y < y <= co.bottom * plan.out_height for y in ys)
+    assert ys and all(0.6 * plan.out_height < y <= co.bottom * plan.out_height for y in ys)
     assert max(xs) < plan.out_width * 0.1
     # too few messages: no box
     assert write_chat_ass(msgs[:2], plan, co, 10.0, tmp_path / "none.ass") == 0
@@ -154,3 +154,24 @@ def test_captions_take_the_title_slot_and_the_title_fades(tmp_path):
     plan2 = plan_layout(_media(), man.reframing, man.video, man.captions)
     t2 = build_caption_track(tr.words(), 0, 10, man.captions, plan2)
     assert abs(t2.layout.baseline_y - int(0.72 * plan2.out_height)) <= 2
+
+
+def test_chat_sits_in_the_bottom_left_of_the_streamers_section(tmp_path):
+    import re
+    from clipstudio.captions.chat_overlay import write_chat_ass
+    from clipstudio.core.models import ChatMessage
+    cfg = load_config(overrides=["reframing.mode=facecam_split", "reframing.facecam_region={x: 0, y: 0.35, w: 0.22, h: 0.29}"])
+    plan = plan_layout(_media(), cfg.reframing, cfg.video, cfg.captions)
+    face = next(p.dest for p in plan.panels if p.name == "facecam")
+    msgs = [ChatMessage(t=float(i), user=f"@u{i}", text="LMAO no way") for i in range(1, 7)]
+    assert write_chat_ass(msgs, plan, cfg.chat_overlay, 10.0, tmp_path / "c.ass") == 6
+    ass = (tmp_path / "c.ass").read_text(encoding="utf-8")
+    ys = [int(y) for y in re.findall(r"\\pos\(\d+,(\d+)\)", ass)]
+    xs = [int(x) for x in re.findall(r"\\pos\((\d+),", ass)]
+    assert ys and all(face.h * 0.5 < y <= face.y + face.h for y in ys)        # lower half of the facecam panel
+    assert max(xs) < plan.out_width * 0.1                                     # on the left
+    # no facecam in the layout: falls back to the bottom-left of the clip
+    plan2 = plan_layout(_media(), load_config(overrides=["reframing.mode=gameplay"]).reframing, cfg.video, cfg.captions)
+    write_chat_ass(msgs, plan2, cfg.chat_overlay, 10.0, tmp_path / "d.ass")
+    ys2 = [int(y) for y in re.findall(r"\\pos\(\d+,(\d+)\)", (tmp_path / "d.ass").read_text(encoding="utf-8"))]
+    assert ys2 and min(ys2) > 0.6 * plan2.out_height

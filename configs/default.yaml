@@ -49,6 +49,7 @@ chat:                      # used when a chat replay file sits next to the video
 
 chat_overlay:              # the last few chat messages, bottom-left of the clip (text only, no emote images)
   enabled: true
+  position: facecam        # facecam: bottom-left of the streamer's section | bottom: bottom-left of the clip
   lines: 4
   lead_seconds: 3          # show each message this much earlier (chat lags the moment it reacts to)
   bottom: 0.875            # bottom edge of the chat block, as a fraction of frame height

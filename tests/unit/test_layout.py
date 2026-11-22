@@ -121,6 +121,8 @@ def test_small_webcam_is_shown_whole_not_blown_up():
     assert any("small webcam" in n for n in small.notes)
     g = build_video_graph(small, 60, None)
     assert "boxblur" in g and "overlay=" in g and g.count("vstack") == 1
+    inner = small.facecam_inner                                      # enlarged no more than facecam_max_upscale
+    assert inner is not None and inner.h <= f.h * cfg.reframing.facecam_max_upscale + 2 and inner.h <= 640
     big = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6)
     assert not big.facecam_fit and "boxblur" not in build_video_graph(big, 60, None)
 

@@ -9,7 +9,7 @@ from clipstudio.core.compat import replace_file
 from clipstudio.config import AudioCfg, EnhanceCfg, ExportCfg, VideoCfg
 from clipstudio.core.errors import MediaError
 from clipstudio.core.logging import get_logger
-from clipstudio.core.models import CropPlan, MediaInfo
+from clipstudio.core.models import CropPlan, MediaInfo, PixelRect
 from clipstudio.media.ffmpeg import ffmpeg_bin, ffmpeg_capabilities, run
 
 log = get_logger("render")
@@ -91,7 +91,20 @@ def pre_fx(enhance: EnhanceCfg | None, strong: bool = False) -> str:
     ``strong`` is for a small webcam picture that is enlarged several times over."""
     if not enhance or not enhance.deblock:
         return ""
-    return "deblock=filter=weak:block=8,hqdn3d=2:2:5:5," if strong else "deblock=filter=weak:block=8,"
+    return ("deblock=filter=strong:block=8:alpha=0.25:beta=0.12,hqdn3d=3:3:6:6," if strong
+            else "deblock=filter=weak:block=8,")
+
+
+def face_scale(src_w: int, dst_w: int, dst_h: int, enhance: EnhanceCfg | None) -> str:
+    """Scale filters for the webcam picture. A big enlargement is done in two steps with sharpening in
+    between, which keeps edges cleaner than one large jump and does not magnify compression blocks."""
+    sharpen = enhance is not None and enhance.sharpen > 0
+    if dst_w / max(1, src_w) <= 2.2:
+        return f"scale={dst_w}:{dst_h}:flags=lanczos,setsar=1" + (face_fx(enhance) if sharpen else "")
+    mw, mh = max(2, int(round(dst_w * 0.57 / 2.0)) * 2), max(2, int(round(dst_h * 0.57 / 2.0)) * 2)
+    mid = f"scale={mw}:{mh}:flags=spline" + (",cas=0.5" if sharpen else "")
+    return f"{mid},scale={dst_w}:{dst_h}:flags=spline,setsar=1" + (",unsharp=5:5:0.5:5:5:0" if sharpen else "")
+
 
 
 def face_fx(enhance: EnhanceCfg | None) -> str:
@@ -143,14 +156,15 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
         if plan.facecam_fit:
             # the whole camera picture, fitted to the panel height, over a blurred and dimmed copy of itself
             fw = min(top.w, max(2, int(round(top.h * f.w / f.h / 2.0)) * 2))
+            inner = plan.facecam_inner or PixelRect(x=(top.w - fw) // 2, y=0, w=fw, h=top.h)
             face = (f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},{pre_fx(enhance, strong=True)}split=2[fa][fb];"
                     f"[fa]scale={top.w}:{top.h}:force_original_aspect_ratio=increase:flags=bilinear,"
                     f"crop={top.w}:{top.h},boxblur=24:2,eq=brightness=-0.12:saturation=1.1,setsar=1[fbg];"
-                    f"[fb]scale={fw}:{top.h}:flags=lanczos,setsar=1{face_fx(enhance)}[ffg];"
-                    f"[fbg][ffg]overlay={(top.w - fw) // 2}:0[face];")
+                    f"[fb]{face_scale(f.w, inner.w, inner.h, enhance)}[ffg];"
+                    f"[fbg][ffg]overlay={inner.x}:{inner.y}[face];")
         else:
-            face = (f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},{pre_fx(enhance, strong=True)}scale={top.w}:{top.h}:flags=lanczos,"
-                    f"setsar=1{face_fx(enhance)}[face];")
+            face = (f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},{pre_fx(enhance, strong=True)}"
+                    f"{face_scale(f.w, top.w, top.h, enhance)}[face];")
         graph = (
             f"[0:v]split=2[fsrc][gsrc];"
             f"{face}"

@@ -194,8 +194,12 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
         if fit:  # a small webcam: show all of it rather than a blurry close-up of the face
             face_src = PixelRect(x=cam_px.x, y=cam_px.y, w=_even(cam_px.w) if cam_px.w % 2 == 0 else cam_px.w - 1,
                                  h=_even(cam_px.h) if cam_px.h % 2 == 0 else cam_px.h - 1)
+            # never enlarged past facecam_max_upscale: a smaller, cleaner picture beats a bigger, blockier one
+            ih = min(ph, _even(face_src.h * rcfg.facecam_max_upscale))
+            iw = min(W, _even(ih * face_src.w / face_src.h))
+            inner = PixelRect(x=(W - iw) // 2, y=(ph - ih) // 2, w=iw, h=ih)
             notes.append(f"small webcam ({cam_px.w}x{cam_px.h} px): shown whole over a blurred fill, "
-                         f"enlarged {ph / max(1, face_src.h):.1f}x instead of {W / max(1, _cover_crop(cam_px, W / ph, fx, fy).w):.1f}x")
+                         f"enlarged {ih / max(1, face_src.h):.1f}x instead of {W / max(1, _cover_crop(cam_px, W / ph, fx, fy).w):.1f}x")
         rects = gameplay_keys(W / (H - ph), avoid=True)
         face_dest = PixelRect(x=0, y=0, w=W, h=ph)
         return CropPlan(
@@ -204,7 +208,7 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
             keyframes=dedupe([CropKeyframe(t=t, gameplay=g, facecam=face_src) for (t, _), g in zip(path, rects)]),
             protected_regions=[face_dest],
             caption_band=(max(safe_top, ph + int(0.02 * H)), safe_bottom),
-            facecam_fit=fit, source=src_source, notes=notes,
+            facecam_fit=fit, facecam_inner=inner if fit else None, source=src_source, notes=notes,
         )
 
     # facecam_pip: full-screen gameplay with the facecam boxed in a top corner
