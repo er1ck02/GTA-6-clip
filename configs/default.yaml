@@ -87,8 +87,8 @@ captions:
   preset: bold_viral       # clean_gaming | bold_viral | minimal | high_energy | <your preset>
   placement: top           # top: where the title card sits, off the action | manual: use vertical_position
   vertical_position: 0.72
-  lead_seconds: 0.15       # show each caption this much before its word
-  profanity_filter: false
+  lead_seconds: 0.25       # show each caption this much before its word
+  profanity_filter: true   # mask strong swears in captions (f***), drop slurs; audio untouched
 
 audio:
   normalization: true

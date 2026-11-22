@@ -31,8 +31,8 @@ def test_chunks_cover_every_word_without_overlap():
 def test_word_times_are_clip_relative():
     _, _, track, tr = _track()
     first = track.chunks[0].lines[0][0]
-    # clip-relative, and shown captions.lead_seconds (0.15 s) before the word is spoken
-    assert abs(first.start - (tr.words()[0].start - 9.0 - 0.15)) < 1e-3
+    # clip-relative, and shown captions.lead_seconds (0.25 s) before the word is spoken
+    assert abs(first.start - (tr.words()[0].start - 9.0 - 0.25)) < 1e-3
 
 
 def test_respects_max_words_and_lines():
@@ -147,8 +147,9 @@ def test_captions_take_the_title_slot_and_the_title_fades(tmp_path):
           for ln in ass.splitlines() if ",Cap,," in ln}
     early = [y for t, y in ys.items() if t < "0:00:03.30"]
     late = [y for t, y in ys.items() if t > "0:00:03.50"]
-    assert early and late and all(y > slot + 60 for y in early)                # under the title while it is up
-    assert all(abs(y - slot) <= 2 for y in late)                               # then in the title's place
+    # one fixed place just under the title card, before and after the card fades: captions never jump
+    assert early and late and len(set(ys.values())) == 1
+    assert slot + 60 < early[0] < slot + 0.09 * plan.out_height
     # manual placement keeps the old behaviour
     man = load_config(overrides=["captions.placement=manual"])
     plan2 = plan_layout(_media(), man.reframing, man.video, man.captions)
@@ -213,3 +214,16 @@ def test_chat_emotes_are_drawn_as_pictures(tmp_path):
     # an index with no network and no channel simply knows nothing (words stay words)
     idx = EmoteIndex(tmp_path / "cache", None, providers=())
     assert not idx.is_emote("OMEGALUL") and idx.image_path("OMEGALUL") is None
+
+
+def test_captions_mask_swears_and_drop_slurs_by_default():
+    from clipstudio.captions.engine import _clean
+    cfg = load_config()
+    st = cfg.captions.resolved_style()
+    assert cfg.captions.profanity_filter
+    assert _clean("fucking", st, cfg.captions) == "F***ING" and _clean("motherfucker", st, cfg.captions) == "MOTHERF***ER"
+    assert _clean("Shit!", st, cfg.captions) == "S***!"
+    assert _clean("predict", st, cfg.captions) == "PREDICT"                    # not a swear inside another word
+    assert _clean("retarded.", st, cfg.captions) == ""                         # a slur is left out entirely
+    off = load_config(overrides=["captions.profanity_filter=false"])
+    assert _clean("fucking", off.captions.resolved_style(), off.captions) == "FUCKING"

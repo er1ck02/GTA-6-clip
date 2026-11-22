@@ -42,6 +42,13 @@ def stroke_map(rgb: np.ndarray) -> np.ndarray:
 
 def text_line_present(rgb: np.ndarray) -> bool:
     """Is there a centred line of small white text in this band (h, w, 3)?"""
+    return text_line(rgb) is not None
+
+
+def text_line(rgb: np.ndarray) -> np.ndarray | None:
+    """Signature of the centred line of small white text in this band (a 64-bin profile of where its letters
+    are), or None when there is no such line. Two samples of the same subtitle give the same signature; a new
+    line of dialogue gives a different one."""
     stroke = stroke_map(rgb)
     h, w = stroke.shape
     mid = stroke[:, int(w * 0.3): int(w * 0.7)]             # every subtitle crosses the middle of the screen
@@ -49,20 +56,20 @@ def text_line_present(rgb: np.ndarray) -> bool:
     lo_h, hi_h = max(5, h // 12), int(h * 0.42)
     text_rows = np.nonzero(rows > 0.03)[0]
     if len(text_rows) < lo_h:
-        return False
+        return None
     best = None
     for run in np.split(text_rows, np.nonzero(np.diff(text_rows) > 2)[0] + 1):
         if lo_h <= run[-1] - run[0] + 1 <= hi_h and (best is None or rows[run].sum() > rows[best].sum()):
             best = run
     if best is None:
-        return False
+        return None
     line = stroke[best[0]: best[-1] + 1]
     cols = line.any(0)
     # grow outwards from the centre over the letters; a gap wider than a few characters ends the line
     gap = int(0.035 * w)
     c = w // 2
     if not cols[c - gap: c + gap].any():
-        return False
+        return None
     left = right = c
     miss = 0
     for x in range(c, -1, -1):
@@ -80,14 +87,26 @@ def text_line_present(rgb: np.ndarray) -> bool:
             right = x
     span = right - left + 1
     if span < 0.07 * w or abs((left + right) / 2 - w / 2) > 0.045 * w:
-        return False                                        # subtitles are centred; HUD text and signs are not
+        return None                                        # subtitles are centred; HUD text and signs are not
     box = line[:, left: right + 1]
-    return 0.07 <= float(box.mean()) <= 0.5 and float(box.any(0).mean()) >= 0.5
+    if not (0.07 <= float(box.mean()) <= 0.5 and float(box.any(0).mean()) >= 0.5):
+        return None
+    prof = line.sum(0).astype(np.float32)
+    prof[:left], prof[right + 1:] = 0, 0
+    return prof[: (w // 64) * 64].reshape(64, -1).sum(1)
+
+
+def same_line(a: np.ndarray, b: np.ndarray) -> bool:
+    """Do two signatures show the same subtitle text?"""
+    na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
+    return na > 0 and nb > 0 and float(a @ b) / (na * nb) > 0.8
 
 
 def detect_subtitles(path: Path, media: MediaInfo, fps: float = 4.0, band: tuple[float, float] = (0.80, 0.955),
-                     width: tuple[float, float] = (0.2, 0.8)) -> list[bool]:
-    """One flag per 1/fps seconds of the source: a subtitle line is on screen."""
+                     width: tuple[float, float] = (0.2, 0.8)) -> tuple[list[bool], list[int]]:
+    """(flags, onsets). ``flags``: one per 1/fps seconds of the source, a subtitle line is on screen.
+    ``onsets``: sample numbers where a new line of text appears (from nothing, or replacing another line),
+    which is when a game character starts speaking."""
     if media.width <= 0 or media.height <= 0:
         return []
     cw, ch = int(media.width * (width[1] - width[0])) // 2 * 2, int(media.height * (band[1] - band[0])) // 2 * 2
@@ -101,13 +120,24 @@ def detect_subtitles(path: Path, media: MediaInfo, fps: float = 4.0, band: tuple
     if n == 0:
         raise MediaError(f"no frames decoded from {path.name} for subtitle detection")
     frames = buf[: n * BAND_W * bh * 3].reshape(n, bh, BAND_W, 3)
-    raw = np.array([text_line_present(f) for f in frames])
+    sigs = [text_line(f) for f in frames]
+    raw = np.array([sg is not None for sg in sigs])
     # a subtitle stays up for a second or more: drop single-sample blips, fill single-sample gaps
     out = raw.copy()
     for i in range(1, n - 1):
         if raw[i - 1] == raw[i + 1] != raw[i]:
             out[i] = raw[i - 1]
-    return [bool(x) for x in out]
+    onsets, last = [], None
+    for i in range(n):
+        if not out[i]:
+            last = None
+            continue
+        if sigs[i] is None:
+            continue                      # a filled gap: the same line is still up
+        if last is None or not same_line(last, sigs[i]):
+            onsets.append(i)
+        last = sigs[i]
+    return [bool(x) for x in out], onsets
 
 
 def share_present(flags: list[bool] | np.ndarray | None, fps: float, start: float, end: float) -> float:
@@ -118,20 +148,35 @@ def share_present(flags: list[bool] | np.ndarray | None, fps: float, start: floa
     return float(np.mean(flags[a:b])) if b > a else 0.0
 
 
-GAME_SHARE = 0.6   # a line spoken with a subtitle on screen for more than this share of it is the game's
+GAME_SHARE = 0.6   # a line spoken with a subtitle on screen for more than this share of it may be the game's
+ONSET_BEFORE, ONSET_AFTER = 0.9, 0.6   # s: a character's line starts when its subtitle appears
 
 
-def drop_game_dialogue(words: list, flags: list[bool] | np.ndarray | None, fps: float) -> list:
+def is_game_line(flags, onsets, fps: float, start: float, end: float) -> bool:
+    """Was the line spoken in [start, end] said by a game character?
+
+    Yes only when a subtitle is up for most of the line AND that subtitle appeared (or changed) right as the
+    line began. A streamer talking while some older subtitle or an on-screen text sits there does not match,
+    so their words are kept. When in doubt the answer is no: a missing caption is worse than an extra one."""
+    if flags is None or onsets is None or len(flags) == 0:
+        return False
+    if share_present(flags, fps, start, end) <= GAME_SHARE:
+        return False
+    return any(start - ONSET_BEFORE <= i / fps <= start + ONSET_AFTER for i in onsets)
+
+
+def drop_game_dialogue(words: list, flags: list[bool] | np.ndarray | None, fps: float,
+                       onsets: list[int] | None = None) -> list:
     """Words (anything with .text/.start/.end) minus the lines spoken by game characters.
 
     Words are grouped into lines (a pause of 0.7 s or sentence punctuation ends one) and a whole line is
     judged at once, so a subtitle changing mid-sentence does not cut a sentence in half."""
-    if flags is None or len(flags) == 0 or not any(flags):
+    if flags is None or onsets is None or len(flags) == 0 or not any(flags):
         return list(words)
     out, line = [], []
 
     def flush() -> None:
-        if line and share_present(flags, fps, line[0].start, line[-1].end) <= GAME_SHARE:
+        if line and not is_game_line(flags, onsets, fps, line[0].start, line[-1].end):
             out.extend(line)
         line.clear()
 

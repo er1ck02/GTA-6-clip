@@ -235,16 +235,21 @@ def test_game_subtitle_line_is_detected_and_its_speech_is_not_the_streamers():
              Word(text="Oh", start=10.5, end=10.7), Word(text="my", start=10.8, end=11.0),
              Word(text="God!", start=11.1, end=11.5), Word(text="no", start=17.0, end=17.2),
              Word(text="way.", start=17.3, end=17.6)]
-    kept = [w.text for w in drop_game_dialogue(words, flags, 4.0)]
+    kept = [w.text for w in drop_game_dialogue(words, flags, 4.0, onsets=[40])]   # the subtitle appeared at 10 s
     assert kept == ["watch", "this.", "no", "way."]                          # the character's line is left out
     assert len(drop_game_dialogue(words, None, 4.0)) == len(words)            # no subtitle data: keep everything
+    # a subtitle (or any on-screen text) that was already up long before the streamer spoke: their words stay
+    always = [True] * 100
+    assert len(drop_game_dialogue(words, always, 4.0, onsets=[20])) == len(words)     # text appeared at 5 s, nobody spoke then
+    assert len(drop_game_dialogue(words, always, 4.0, onsets=None)) == len(words)     # old data without onsets: keep all
 
     # a game character's "oh my god" is not a reaction; the streamer's is
     tr = make_transcript([(10.5, "oh my god no way")])
     sents = build_sentences(tr)
     loud = LoudnessTrack(window=0.5, rms_db=[-40.0] * 60, median_db=-40.0, p90_db=-40.0)
     assert "speech" in evidence_at(11.0, sents, loud, Signals())
-    assert "speech" not in evidence_at(11.0, sents, loud, Signals(game_subs=flags, game_subs_fps=4.0))
+    assert "speech" not in evidence_at(11.0, sents, loud, Signals(game_subs=flags, game_subs_fps=4.0, game_onsets=[41]))
+    assert "speech" in evidence_at(11.0, sents, loud, Signals(game_subs=flags, game_subs_fps=4.0, game_onsets=[]))
 
 
 def test_talk_is_not_a_reaction_and_chat_is_the_judge():

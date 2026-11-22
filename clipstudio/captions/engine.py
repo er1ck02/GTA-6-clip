@@ -109,8 +109,12 @@ class _Measurer:
 def _clean(text: str, style: CaptionStyle, cfg: CaptionsCfg) -> str:
     t = text.strip()
     if cfg.profanity_filter:
+        if re.sub(r"[^a-z]", "", t.lower()) in {w.lower() for w in cfg.drop_words}:
+            return ""                                   # a slur: not shown at all
         for bad in cfg.profanity_words:
-            t = re.sub(rf"(?i)\b({re.escape(bad)})", lambda m: m.group(1)[0] + "*" * (len(m.group(1)) - 1), t)
+            # short words only at the start of a word ("dick", not "predict"); the rest anywhere ("motherf***er")
+            pat = rf"(?i)\b({re.escape(bad)})" if len(bad) <= 4 and bad not in ("fuck", "shit", "cunt") else rf"(?i)({re.escape(bad)})"
+            t = re.sub(pat, lambda m: m.group(1)[0] + "*" * (len(m.group(1)) - 1), t)
     return t.upper() if style.uppercase else t
 
 
@@ -131,6 +135,12 @@ def _ts_ass(t: float) -> str:
 def _ts_srt(t: float) -> str:
     ms = int(round(max(0.0, t) * 1000))
     return f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
+
+
+def title_block_height(caption_fs: int, out_height: int) -> int:
+    """Height of a one-line title card, plus the gap under it: captions start this far below the title's top."""
+    hook_fs = int(round(caption_fs * 0.62))
+    return int(hook_fs * 1.25 + 2 * max(4.0, hook_fs * 0.22) + out_height * 0.012)
 
 
 def title_slot(plan: CropPlan, block_h: int = 0) -> int:
@@ -220,7 +230,9 @@ def build_caption_track(words: list[Word], clip_start: float, clip_end: float, c
     band_top, band_bottom = plan.caption_band
     block_h = line_h * style.max_lines
     if cfg.placement == "top":
-        baseline = min(title_slot(plan, block_h) + block_h, band_bottom)   # bottom of a full caption block
+        # one fixed place: right under where the title card sits (and stays, after the card has faded),
+        # at the seam of a split layout, so captions never jump and never sit on the action
+        baseline = min(title_slot(plan, block_h) + title_block_height(fs, H) + block_h, band_bottom)
     else:
         baseline = int(cfg.vertical_position * H)
         baseline = min(max(baseline, band_top + block_h), band_bottom)
@@ -280,12 +292,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     # and sit under the title card for as long as it is up
     top = placement == "top"
     slot_y = L.baseline_y - L.line_height_px * style.max_lines
-    hook_end = (hook_seconds if hook_seconds > 0 else 1e9) if hook else 0.0
-    hook_block = int(hook_fs * 1.25 + 2 * hook_pad + plan.out_height * 0.012)
     for c in track.chunks:
         if top:
-            y = slot_y + (hook_block if c.start < hook_end - 0.2 else 0)
-            pos = f"\\an8\\pos({L.center_x},{y})"
+            pos = f"\\an8\\pos({L.center_x},{slot_y})"
         else:
             pos = f"\\an2\\pos({L.center_x},{L.baseline_y})"
         flat = [w for ln in c.lines for w in ln]

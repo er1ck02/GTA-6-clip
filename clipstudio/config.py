@@ -373,15 +373,22 @@ class CaptionsCfg(_Strict):
     vertical_position: float = Field(0.72, ge=0.05, le=0.95, description="baseline as fraction of height")
     # every caption (and word highlight) is shown this many seconds before its word starts: text that appears
     # exactly on the word reads as late
-    lead_seconds: float = Field(0.15, ge=0, le=0.5)
+    lead_seconds: float = Field(0.25, ge=0, le=0.5)
     # caption only the streamer: lines spoken while the game shows its own subtitle are left out
     # (needs visual.game_subtitles; a game with subtitles off cannot be told apart and is captioned in full)
     streamer_only: bool = True
     safe_margin_x: float = Field(0.07, ge=0, le=0.3)
     safe_margin_top: float = Field(0.10, ge=0, le=0.3)
     safe_margin_bottom: float = Field(0.16, ge=0, le=0.4)
-    profanity_filter: bool = False
-    profanity_words: list[str] = Field(default_factory=lambda: ["fuck", "shit", "bitch", "cunt"])
+    # Captions only; the audio is never touched. Strong swears are masked wherever they appear in a word
+    # ("f***ing", "motherf***er"); slurs are left out of the captions altogether.
+    profanity_filter: bool = True
+    profanity_words: list[str] = Field(default_factory=lambda: ["fuck", "shit", "bitch", "cunt", "asshole", "pussy",
+                                                                "dick", "cock"])
+    drop_words: list[str] = Field(default_factory=lambda: [
+        "nigger", "niggers", "nigga", "niggas", "faggot", "faggots", "fag", "fags", "retard", "retards", "retarded",
+        "tranny", "trannies", "kike", "kikes", "spic", "spics", "chink", "chinks", "gook", "gooks", "wetback",
+        "wetbacks", "dyke", "dykes"])
     export_srt: bool = True
     export_ass: bool = True
 

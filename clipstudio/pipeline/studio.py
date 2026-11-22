@@ -53,8 +53,8 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
-STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 12,
-                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 6, "captions": 7, "render": 11, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 5, "game_subs": 1, "face_sr": 1}
+STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 13,
+                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 6, "captions": 9, "render": 11, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 5, "game_subs": 2, "face_sr": 1}
 
 
 @dataclass
@@ -324,9 +324,10 @@ class Studio:
 
         def do() -> None:
             from clipstudio.visual_analysis.subtitles import detect_subtitles
-            flags = detect_subtitles(p.source_path(), media, 4.0)
-            log.info("game subtitles on screen for %.0f%% of the source", 100 * sum(flags) / max(1, len(flags)))
-            p.p("game_subs").write_text(json.dumps({"fps": 4.0, "flags": [int(x) for x in flags]}))
+            flags, onsets = detect_subtitles(p.source_path(), media, 4.0)
+            log.info("game subtitles on screen for %.0f%% of the source, %d new line(s)",
+                     100 * sum(flags) / max(1, len(flags)), len(onsets))
+            p.p("game_subs").write_text(json.dumps({"fps": 4.0, "flags": [int(x) for x in flags], "onsets": onsets}))
 
         try:
             run_stage(p.state, "game_subs", k, [p.p("game_subs")], do, resume=resume, force=force)
@@ -335,23 +336,24 @@ class Studio:
             return None
         return k
 
-    def game_subs(self, p: Project) -> tuple[list[bool] | None, float]:
+    def game_subs(self, p: Project) -> tuple[list[bool] | None, float, list[int] | None]:
+        """(flags, fps, onsets) of the game's subtitles; (None, 4.0, None) when unknown."""
         f = p.p("game_subs")
         if not (self.cfg.visual.game_subtitles and f.exists() and p.state.stage("game_subs").status == "done"):
-            return None, 4.0
+            return None, 4.0, None
         try:
             d = json.loads(f.read_text())
-            return [bool(x) for x in d["flags"]], float(d.get("fps", 4.0))
+            return [bool(x) for x in d["flags"]], float(d.get("fps", 4.0)), d.get("onsets")
         except (ValueError, KeyError, TypeError):
-            return None, 4.0
+            return None, 4.0, None
 
     def _caption_words(self, p: Project, c: Candidate, cfg: Config) -> list:
         """The clip's words for captions: the streamer's only when asked for, with cuts applied."""
         words = Transcript.load(p.p("transcript")).words_between(c.start, c.end)
         if cfg.captions.streamer_only:
             from clipstudio.visual_analysis.subtitles import drop_game_dialogue
-            flags, fps = self.game_subs(p)
-            kept = drop_game_dialogue(words, flags, fps)
+            flags, fps, onsets = self.game_subs(p)
+            kept = drop_game_dialogue(words, flags, fps, onsets)
             if len(kept) != len(words):
                 log.info("    captions: left out %d word(s) spoken by game characters", len(words) - len(kept))
             words = kept
@@ -399,7 +401,7 @@ class Studio:
             track = ChatTrack.load(p.p("chat"))
             sig.chat_rate, sig.chat_hype = activity(track, media.duration, self.cfg.chat.keywords)
             sig.chat_react = reactions(track, media.duration)
-        sig.game_subs, sig.game_subs_fps = self.game_subs(p)
+        sig.game_subs, sig.game_subs_fps, sig.game_onsets = self.game_subs(p)
         return sig
 
     # ------------------------------------------------------------------ vision

@@ -50,15 +50,16 @@ class Signals:
     chat_react: np.ndarray | None = None   # per-second count of reaction messages (laughter, shock)
     game_subs: list[bool] | None = None    # the game's own subtitle is on screen, one flag per 1/game_subs_fps s
     game_subs_fps: float = 4.0
+    game_onsets: list[int] | None = None   # samples where a new subtitle line appears
 
     def streamer_words(self, sents: list["Sentence"], t0: float, t1: float) -> str:
         """The words spoken in [t0, t1] by the streamer (sentences of game characters left out)."""
-        from clipstudio.visual_analysis.subtitles import GAME_SHARE, share_present
+        from clipstudio.visual_analysis.subtitles import is_game_line
         out = []
         for s in sents:
             if s.end < t0 or s.start > t1:
                 continue
-            if self.game_subs and share_present(self.game_subs, self.game_subs_fps, s.start, s.end) > GAME_SHARE:
+            if self.game_subs and is_game_line(self.game_subs, self.game_onsets, self.game_subs_fps, s.start, s.end):
                 continue
             out += [x.text for x in s.words if t0 <= x.start <= t1]
         return " ".join(out)
