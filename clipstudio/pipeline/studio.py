@@ -458,7 +458,27 @@ class Studio:
         if history:
             from clipstudio.vision.facecam import apply_session_prior
             det = apply_session_prior(det, history, self.cfg.vision.facecam_min_confidence)
-        return det
+        return self._channel_facecam(p, det)
+
+    def _channel_facecam(self, p: Project, det: FacecamDetection) -> FacecamDetection:
+        """Use the channel's known camera box when this moment's face sits inside it and detection alone was
+        not sure. A face found elsewhere, or none at all, leaves the detection as it is."""
+        from clipstudio.chat.emotes import channel_from_source
+        from clipstudio.core.models import NormRect
+        try:
+            box = self.cfg.reframing.channel_facecams.get(channel_from_source(p.source_path()) or "")
+        except (KeyError, TypeError):
+            box = None
+        if box is None or det.face is None or det.confidence >= self.cfg.vision.facecam_min_confidence:
+            return det
+        cx, cy = det.face.x + det.face.w / 2, det.face.y + det.face.h / 2
+        if not (box.x <= cx <= box.x + box.w and box.y <= cy <= box.y + box.h):
+            return det
+        out = det.model_copy(deep=True)
+        out.region = NormRect(x=box.x, y=box.y, w=box.w, h=box.h)
+        out.confidence = 0.9
+        out.notes = out.notes + ["face found inside this channel's known camera box (reframing.channel_facecams)"]
+        return out
 
     def _session_facecams(self, p: Project) -> list[FacecamDetection]:
         """Facecam detections of the other moments saved from the same live session (same ``moments`` folder)."""

@@ -59,6 +59,8 @@ reframing:
   mode: auto               # auto | gameplay | fit_blur | facecam_split | facecam_pip
   gameplay_view: 1.0       # share of the game's width shown (1.0 = whole screen); lower = more zoomed in
   require_facecam: true    # no streamer on screen, no clip
+  # channel_facecams:      # where a channel keeps its camera, when the overlay has no border to detect
+  #   somechannel: {x: 0.0, y: 0.33, w: 0.22, h: 0.22}
   gameplay_center_x: 0.5   # default crop centre (0..1)
   tracking: false          # true: follow the action with eased keyframes (stream overlays can mislead it)
   # facecam_region: {x: 0.02, y: 0.04, w: 0.24, h: 0.30}   # manual override of facecam auto-detection

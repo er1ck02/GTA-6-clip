@@ -212,3 +212,25 @@ def test_action_centre_finds_the_side_the_subject_keeps_to():
     ignore = np.zeros((h, w), bool)
     ignore[25:65, 35:60] = True
     assert action_centre(left, ignore) == 0.5              # the moving thing is a webcam or an overlay
+
+
+def test_channel_camera_box_is_used_only_when_a_face_is_inside_it(tmp_path):
+    from clipstudio.config import load_config
+    from clipstudio.core.models import FacecamDetection
+    from clipstudio.pipeline.studio import Studio
+
+    class P:  # just enough of a project: where the source file lives
+        def __init__(self, channel): self._src = tmp_path / "live" / f"{channel}_20261121_205111" / "moments" / "m001.mp4"
+        def source_path(self): return self._src
+
+    st = Studio(load_config(overrides=[f"paths.data_dir={tmp_path.as_posix()}"]))
+    weak = _fc(0.55, face=(0.07, 0.42, 0.05, 0.09), region=(0.02, 0.36, 0.18, 0.28))     # a face at (0.095, 0.465)
+    got = st._channel_facecam(P("kaicenat"), weak)
+    assert got.confidence >= 0.6 and abs(got.region.w - 0.22) < 1e-6 and "known camera box" in got.notes[-1]
+    assert st._channel_facecam(P("someoneelse"), weak).confidence == 0.55               # no box for that channel
+    elsewhere = _fc(0.55, face=(0.6, 0.1, 0.05, 0.09))
+    assert st._channel_facecam(P("kaicenat"), elsewhere).confidence == 0.55             # face is not in the box
+    sure = _fc(0.95, method="face+border", face=(0.07, 0.42, 0.05, 0.09), region=(0.0, 0.33, 0.21, 0.22))
+    assert st._channel_facecam(P("kaicenat"), sure).region == sure.region               # a sure detection stands
+    none = FacecamDetection(region=None, confidence=0.0, method="none")
+    assert st._channel_facecam(P("kaicenat"), none).region is None                      # no face at all: no clip

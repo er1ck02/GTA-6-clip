@@ -208,6 +208,15 @@ class ReframingCfg(_Strict):
     stack_top: float = Field(0.0, ge=0, le=1)
     # a clip without the streamer on screen is not posted (live mode skips the moment)
     require_facecam: bool = True
+    # Where each channel keeps its camera (or avatar), for streams whose overlay has no border the detector can
+    # lock onto. Used only when a face is actually found inside the box in that moment, so a changed layout or
+    # a full-screen camera segment is not cropped blindly. Keys are channel names in lower case.
+    channel_facecams: dict[str, Rect] = Field(default_factory=lambda: {
+        "kaicenat": Rect(x=0.0, y=0.332, w=0.22, h=0.219),
+        "lacy": Rect(x=0.0, y=0.0, w=0.255, h=0.275),
+        "stableronaldo": Rect(x=0.0, y=0.417, w=0.288, h=0.292),
+        "theburntpeanut": Rect(x=0.165, y=0.72, w=0.125, h=0.28),
+    })
     # centre the locked gameplay crop on where the action is over the whole clip (one position, no panning),
     # moving at most this far from gameplay_center_x (fraction of source width). 0 = always the centre.
     focus_max_shift: float = Field(0.14, ge=0, le=0.4)
