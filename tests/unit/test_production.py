@@ -83,7 +83,9 @@ def session_dir(root: Path, channel: str, stamp: str, moments: list[dict], url: 
 
 @pytest.fixture
 def cfg(tmp_path):
-    return load_config(overrides=[f"paths.data_dir={tmp_path}", "production.recheck_minutes=1"])
+    # no network in tests: no Twitch category / YouTube search
+    return load_config(overrides=[f"paths.data_dir={tmp_path}", "production.recheck_minutes=1",
+                                  "production.discover_twitch_category=''", "production.discover_youtube_search=''"])
 
 
 def mgr(cfg, live, check, **kw):
@@ -228,6 +230,41 @@ def test_youtube_live_search_feeds_stand_ins():
     check = lambda u: L.LiveCheck(True, "GTA 6 rp", u, viewers=500) if "tw1" in u else L.LiveCheck(False, url=u)  # noqa: E731
     got = L.discover_live(["tw1", "tw2"], check, ["gta 6"], search=lambda: yt)
     assert [L.channel_of(g.url) for g in got] == ["yt", "tw1"]  # most viewers first, non-GTA dropped
+
+
+def test_twitch_category_is_picked_first_and_needs_credentials(tmp_path, monkeypatch):
+    from clipstudio.production import twitch
+
+    monkeypatch.setenv("CLIPSTUDIO_HOME", str(tmp_path))
+    twitch._token.clear()
+    twitch._games.clear()
+    assert twitch.top_streams("Grand Theft Auto VI") == []  # no ~/.clipstudio/twitch.json: skipped
+    (tmp_path / "twitch.json").write_text('{"client_id": "cid", "client_secret": "sec"}')
+    calls = []
+
+    def fake(url, *, data=None, headers=None, timeout=20):
+        calls.append(url)
+        if "oauth2/token" in url:
+            return {"access_token": "tok", "expires_in": 3600}
+        if "/games?" in url:
+            assert headers["Client-Id"] == "cid" and headers["Authorization"] == "Bearer tok"
+            return {"data": [{"id": "999"}]}
+        assert "game_id=999" in url
+        return {"data": [{"user_login": "Small", "title": "chill", "viewer_count": 50},
+                         {"user_login": "Big", "title": "sleep stream zzz", "viewer_count": 90000},
+                         {"user_login": "Mid", "title": "heists", "viewer_count": 3000}]}
+    monkeypatch.setattr(twitch, "_call", fake)
+    top = twitch.top_streams("Grand Theft Auto VI")
+    assert [L.channel_of(r.url) for r in top] == ["big", "mid", "small"]
+    cfg = load_config()
+    idle = lambda r: L.idle_reason(r, cfg.production.idle_keywords, [])  # noqa: E731
+    yt = [L.LiveCheck(True, "GTA 6", "https://www.youtube.com/@yt/live", viewers=10**6)]
+    got = L.discover_live([], lambda u: L.LiveCheck(False, url=u), ["gta 6"], idle=idle,
+                          search=lambda: yt, category=lambda: top)
+    # category first (no keyword needed, sleep stream skipped), YouTube after
+    assert [L.channel_of(g.url) for g in got] == ["mid", "small", "yt"]
+    twitch.top_streams("Grand Theft Auto VI")
+    assert sum("oauth2" in c for c in calls) == 1 and sum("/games?" in c for c in calls) == 1  # cached
 
 
 def test_sleep_and_non_gta_streams_count_as_offline(cfg, tmp_path):

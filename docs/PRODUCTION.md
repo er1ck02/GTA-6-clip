@@ -51,12 +51,18 @@ HTTP: `GET /api/production`, `POST /api/production/start {"channels": [...]}`,
   again; when it's back, the stand-in stops (its saved moments still get edited) and the original returns.
 * **Always N streams** (`production.target_streams`, 8 by default; 0 turns it off): stand-ins only fill up to
   that many recordings, and if the lineup alone can't reach it, extra streams are added. When your past
-  streamers run out, the most-watched live stream among `production.discover_channels` on Twitch and a YouTube
+  streamers run out, the top live streams of Twitch's `production.discover_twitch_category` directory
+  ("Grand Theft Auto VI", most viewers first; see *Twitch category* below) are picked first, then the most-watched live stream among `production.discover_channels` on Twitch and a YouTube
   live search for `production.discover_youtube_search` ("GTA 6") whose title
   mentions `production.discover_keywords` (GTA 6) is picked. When an original comes back, its stand-in keeps
   recording as an extra unless that would go over the target; then the newest extra stops. An extra that goes
   offline is replaced on the next check. Stand-ins' clips post automatically with credit, like the lineup's
   (`production.post_stand_ins`; set it to false to hold them for review).
+* **Twitch category** (one-time setup, free): go to https://dev.twitch.tv/console/apps, sign in, *Register
+  Your Application* (any name, OAuth redirect `http://localhost`, category *Application Integration*, client
+  type *Confidential*), then *Manage* → copy the Client ID and make a *New Secret*. Save both in
+  `~/.clipstudio/twitch.json` as `{"client_id": "...", "client_secret": "..."}`. Production reads it on the next
+  check; without it the category is skipped and the channel list + YouTube search are used.
 * **Sleep / AFK streams**: every `production.recheck_minutes` the streams being recorded are checked again. A
   title or category matching `production.idle_keywords` (sleep stream, AFK, BRB, Just Chatting...) or a known
   category that isn't GTA counts as offline, and so does a picture that barely changes for two checks in a row

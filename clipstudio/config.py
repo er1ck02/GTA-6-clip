@@ -608,6 +608,9 @@ class ProductionCfg(_Strict):
     idle_motion_checks: int = Field(2, ge=1, le=12)
     idle_cooldown_minutes: float = Field(30, ge=0)        # a streamer found asleep isn't tried again before this
     post_stand_ins: bool = True  # stand-ins' clips post automatically (credited) like the lineup's, not held for review
+    # Twitch's live directory for this game, most viewers first, picked before anything else (needs a free Twitch
+    # developer app in ~/.clipstudio/twitch.json; "" = off)
+    discover_twitch_category: str = "Grand Theft Auto VI"
     discover_youtube_search: str = "GTA 6"  # also stand in the most-watched YouTube live streams for this ("" = off)
     discover_keywords: list[str] = Field(default_factory=lambda: ["gta 6", "gta vi", "gta6", "grand theft auto vi"])
     recheck_minutes: float = Field(5, ge=1, le=120)       # how often offline channels are checked again
