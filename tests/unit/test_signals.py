@@ -152,3 +152,22 @@ def test_a_clip_needs_two_signs_of_a_payoff():
     assert "probably not a real moment" in cs.candidates[0].reason
     off = cfg.model_copy(update={"min_evidence": 0})
     assert all(c.passes_threshold for c in generate_candidates(tr, _loud(60), off, 60).candidates)
+
+
+def test_start_is_pulled_back_over_the_build_up_only():
+    from clipstudio.highlights.candidates import build_sentences, extend_setup
+
+    def vis(motion_per_s, cuts=()):
+        return VisualTrack(sample_fps=4, motion=[m for m in motion_per_s for _ in range(4)], motion_median=1.0,
+                           scene_cuts=list(cuts), events=[])
+    race = vis([8.0] * 20 + [1.0] * 30)           # 20 s of racing, then the results screen
+    assert extend_setup(15.0, 40.0, race, [], 12.0, 45.0) == 3.0          # back over the race, capped at 12 s
+    assert extend_setup(15.0, 40.0, race, [], 12.0, 30.0) == 10.0         # never longer than the maximum
+    assert extend_setup(15.0, 40.0, vis([8.0] * 20 + [1.0] * 30, cuts=[9.0]), [], 12.0, 45.0) == 9.0   # stops at a cut
+    # calm footage before the clip (talking to chat, a menu): nothing is pulled in
+    talk = vis([1.0] * 14 + [8.0] * 6 + [1.0] * 30)
+    assert extend_setup(15.0, 40.0, talk, [], 12.0, 45.0) == 14.0
+    assert extend_setup(15.0, 40.0, vis([1.0] * 50), [], 12.0, 45.0) == 15.0
+    # the new start does not land inside a sentence
+    sents = build_sentences(make_transcript([(2.0, "keep it steady keep it steady come on")]))
+    assert extend_setup(15.0, 40.0, race, sents, 12.0, 45.0) <= 2.0

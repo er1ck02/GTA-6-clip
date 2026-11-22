@@ -116,6 +116,11 @@ class HighlightsCfg(_Strict):
     # live mode does not edit it at all. 0 turns the check off.
     min_evidence: int = Field(2, ge=0, le=4)
     edge_keep: float = Field(2.5, ge=0, le=5)   # quiet seconds left at each edge after tightening
+    # Build-up: when the footage right before a clip is the same continuous action (a race before the finish
+    # line, a chase before the crash), the start is pulled back by up to this many seconds. It stops at a scene
+    # cut and where the game picture goes calm (menus, standing around while talking to chat), so unrelated
+    # footage is not pulled in. Needs the visual analysis. 0 = off.
+    setup_seconds: float = Field(12.0, ge=0, le=30)
     weights: ScoringWeights = ScoringWeights()
 
     @model_validator(mode="after")
