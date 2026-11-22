@@ -124,4 +124,4 @@ upload:                    # nothing is uploaded unless the streamer's channel i
     enabled: false         # nothing is posted until you turn this on
     privacy: unlisted      # private | unlisted | public
     min_gap_minutes: 0     # spacing between posts (0 = post as soon as a clip is ready)
-    max_per_day: 6         # posts per day (YouTube's quota day starts at midnight Pacific)
+    max_per_day: 0         # own cap per day, 0 = none (the API quota still applies; raise daily_quota after Google approves more)

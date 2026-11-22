@@ -36,7 +36,7 @@ Clip Studio still uploads; the panel tells you when a video was locked. To post 
 2. Say it's a personal tool that uploads your own Shorts to your own channel, one channel, about 6 videos a
    day, using `videos.insert` only; include your Cloud project number (Cloud console home page).
 3. Google may ask for screenshots of the sign-in and the upload panel, and a short privacy note. Replies take
-   from a few days to a few weeks. The same form raises the daily quota if you ever need more than 6 a day.
+   from a few days to a few weeks. Ask for a higher daily quota on the same form (see below); then set `daily_quota` to the new number.
 
 ## 6. Turn it on
 Create `C:\Users\Erck8\.clipstudio\config.yaml` with:
@@ -50,14 +50,15 @@ upload:
 ```
 
 Restart Clip Studio. Clips from allowlisted streamers that pass QC now post on their own as soon as they're
-ready, at most 6 a day (set `min_gap_minutes` to space them out). Everything else lands in the panel as **NEEDS REVIEW** until you press **APPROVE**.
+ready, as many as the API quota allows (set `min_gap_minutes` to space them out). Everything else lands in the panel as **NEEDS REVIEW** until you press **APPROVE**.
 
 ## How it behaves
 - **Titles and descriptions** come from the clip's title and always credit the streamer, with links to the
   source stream and their channel. You can edit a title in the panel before it posts. Made for kids is always
   "no"; category is Gaming.
 - **Quota**: the free quota is 10,000 units a day and one upload costs about 1,600, so about 6 a day. When it
-  runs out the queue pauses until midnight Pacific and carries on.
+  runs out the queue pauses until midnight Pacific and carries on. There is no other daily cap unless you set
+  `max_per_day`.
 - **Network trouble**: uploads resume where they stopped (also after a restart) and retry with growing waits,
   then show **FAILED** with the reason and a **RETRY** button.
 - **Sign-in revoked or expired**: the panel says so; press **CONNECT YOUTUBE** again.

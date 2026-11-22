@@ -432,3 +432,8 @@ def test_personal_config_is_merged_after_repo_config(tmp_path, monkeypatch):
     assert cfg.upload.allow_channels == ["ludwig"] and cfg.upload.youtube.enabled is True
     monkeypatch.setenv("CLIPSTUDIO_USER_CONFIG", "")
     assert load_config().upload.youtube.enabled is False
+
+
+def test_no_own_daily_cap_by_default_only_quota(tmp_path, secrets_dir):
+    from clipstudio.config import YouTubeCfg
+    assert YouTubeCfg().max_per_day == 0 and YouTubeCfg().min_gap_minutes == 0

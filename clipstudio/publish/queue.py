@@ -272,7 +272,7 @@ class UploadManager:
             if j is None:
                 return None
             count, used = self._today(now)
-            if count >= self.yc.max_per_day or used + self.yc.upload_cost > self.yc.daily_quota:
+            if (self.yc.max_per_day and count >= self.yc.max_per_day) or used + self.yc.upload_cost > self.yc.daily_quota:
                 self.paused_until = next_pacific_midnight(now)
                 self.pause_reason = (f"daily limit reached ({count} posts, {used}/{self.yc.daily_quota} quota units)")
                 self.save()

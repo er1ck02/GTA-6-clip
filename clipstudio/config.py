@@ -430,7 +430,7 @@ class YouTubeCfg(_Strict):
         "Go watch the full stream and follow {streamer}: {streamer_url}\n\n{hashtags}")
     streamers: dict[str, StreamerCredit] = Field(default_factory=dict)  # channel -> credit overrides
     min_gap_minutes: float = Field(0, ge=0)            # spacing between two posts (0 = none)
-    max_per_day: int = Field(6, ge=1)                  # posts per Pacific day (YouTube's quota day)
+    max_per_day: int = Field(0, ge=0)                  # own cap per Pacific day; 0 = only the API quota limits it
     daily_quota: int = Field(10000, ge=1)              # API units per day for the Google Cloud project
     upload_cost: int = Field(1600, ge=1)               # units one videos.insert costs (check Google's quota page)
     max_attempts: int = Field(5, ge=1)                 # retries for network / server errors before giving up
