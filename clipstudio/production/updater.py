@@ -33,15 +33,27 @@ class UpdateCheck:
     fast_forward: bool = False
     clean: bool = False
     error: str = ""
+    running: str = ""   # the commit the server was started on ("" = not known)
+
+    @property
+    def stale(self) -> bool:
+        """The checkout moved (a commit made right here, or a pull by hand) but the server still runs older code."""
+        return bool(self.running and self.local and self.running != self.local)
+
+    @property
+    def target(self) -> str:
+        return self.remote if self.behind > 0 else self.local
 
     @property
     def available(self) -> bool:
-        return not self.error and self.behind > 0 and self.fast_forward and self.clean
+        if self.error or not self.clean:
+            return False
+        return (self.behind > 0 and self.fast_forward) or (self.behind == 0 and self.stale)
 
     def why_not(self) -> str:
         if self.error:
             return self.error
-        if self.behind == 0:
+        if self.behind == 0 and not self.stale:
             return "up to date"
         if not self.clean:
             return "tracked files are edited in the checkout; not touching it"
@@ -50,9 +62,17 @@ class UpdateCheck:
         return ""
 
 
-def check(remote: str = "origin", repo: Path = REPO) -> UpdateCheck:
-    """Fetch the current branch from ``remote`` and say whether a clean fast-forward is waiting."""
-    r = UpdateCheck()
+def head(repo: Path = REPO) -> str:
+    try:
+        return git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def check(remote: str = "origin", repo: Path = REPO, running: str = "") -> UpdateCheck:
+    """Fetch the current branch from ``remote`` and say whether new code is waiting: a clean fast-forward, or a
+    checkout that already moved past the commit the server is ``running``."""
+    r = UpdateCheck(running=running)
     try:
         cp = git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo)
         r.branch = cp.stdout.strip()

@@ -59,3 +59,17 @@ def test_failing_tests_and_edited_checkout_block_the_update(tmp_path):
     (work / "app.txt").write_text("edited by someone")
     chk = updater.check(repo=work)
     assert not chk.available and "edited" in chk.why_not()
+
+
+def test_commit_made_in_the_checkout_still_restarts_the_running_server(tmp_path):
+    origin, work = make_repos(tmp_path)
+    started_on = updater.head(work)
+    (work / "app.txt").write_text("v2")  # someone commits right in the live checkout and pushes it
+    sh(work, "commit", "-qam", "v2")
+    sh(work, "push", "-q", "origin", "HEAD:main")
+    assert updater.check(repo=work).why_not() == "up to date"  # HEAD == origin: the old check saw nothing
+    chk = updater.check(repo=work, running=started_on)
+    assert chk.available and chk.stale and chk.behind == 0
+    assert chk.target == updater.head(work)
+    assert updater.fast_forward(chk.target, repo=work)[0]  # a no-op merge, then the server restarts
+    assert not updater.check(repo=work, running=updater.head(work)).available
