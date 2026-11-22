@@ -121,7 +121,9 @@ class TriggerDetector:
     def score(self, sig: dict[str, float]) -> float:
         if not self.has_chat:  # audio is the only signal: a jump of audio_jump_db alone reaches threshold 1.0
             return sig["audio"]
-        return sum(self.cfg.weights.get(k, 0.0) * v for k, v in sig.items())
+        combined = sum(self.cfg.weights.get(k, 0.0) * v for k, v in sig.items())
+        # a very big audio jump (1.5 x audio_jump_db) still counts when chat is quiet or lagging
+        return max(combined, 0.75 * sig["audio"])
 
     def evaluate(self, head: float) -> list[Trigger]:
         """Judge every second whose chat and audio have settled; return the triggers found.

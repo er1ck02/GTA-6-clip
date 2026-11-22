@@ -55,7 +55,10 @@ TOOLS: list[dict[str, Any]] = [
     {"id": "libass", "name": "libass captions", "role": "word captions", "stage": "captions", "status": "active"},
     {"id": "x264", "name": "FFmpeg x264", "role": "render 9:16", "stage": "render", "status": "active"},
     {"id": "qc", "name": "QC suite", "role": "verify output", "stage": "qc", "status": "active"},
-    {"id": "streamlink", "name": "Streamlink", "role": "live capture", "stage": None, "status": "planned"},
+    {"id": "live_record", "name": "Live recorder", "role": "rolling 90 s buffer", "stage": "live_record", "status": "optional"},
+    {"id": "live_chat", "name": "Live chat", "role": "Twitch / YouTube chat", "stage": "live_chat", "status": "optional"},
+    {"id": "live_trigger", "name": "Trigger detector", "role": "hype · clip · audio jumps", "stage": "live_trigger", "status": "optional"},
+    {"id": "upload", "name": "Upload queue", "role": "allowlisted streamers", "stage": "upload", "status": "optional"},
     {"id": "tesseract", "name": "Tesseract OCR", "role": "HUD text", "stage": None, "status": "optional"},
     {"id": "yolo", "name": "Ultralytics YOLO", "role": "object tracking", "stage": None, "status": "optional"},
     {"id": "sam2", "name": "SAM 2", "role": "segmentation", "stage": None, "status": "optional"},
@@ -104,6 +107,79 @@ class JobRunner:
     def list(self) -> list[dict]:
         with self.lock:
             return sorted(self.jobs.values(), key=lambda j: -j["created"])[:50]
+
+
+class LiveManager:
+    """At most one live session, run on its own thread so the API stays responsive."""
+
+    def __init__(self, cfg: Config):
+        self.cfg = cfg
+        self.session = None
+        self.thread: threading.Thread | None = None
+        self.error: str | None = None
+        self._frame: tuple[int, bytes] | None = None
+
+    def start(self, url: str | None, file: str | None, channel: str | None, chat: str | None,
+              duration: float, realtime: bool = True):
+        from clipstudio.live.buffer import Recorder
+        from clipstudio.live.chat import channel_from_url, make_chat_source, youtube_channel
+        from clipstudio.live.session import LiveSession
+
+        if self.session is not None and self.session.running:
+            raise ClipStudioError("a live session is already running; stop it first")
+        if bool(url) == bool(file):
+            raise ClipStudioError("give a stream URL (or a file path for a dry run)")
+        if file and not Path(file).expanduser().is_file():
+            raise ClipStudioError(f"file not found: {file}")
+        if not channel and url:
+            channel = channel_from_url(url) or (youtube_channel(url) if "youtu" in url else None)
+        channel = channel.lower().lstrip("@") if channel else None
+        out = Path(self.cfg.paths.data_dir).expanduser().resolve() / "live" / \
+            f"{channel or 'stream'}_{time.strftime('%Y%m%d_%H%M%S')}"
+        rec = Recorder(out / "buffer", self.cfg.live.segment_seconds, url=url or None,
+                       file=Path(file).expanduser() if file else None, realtime=realtime)
+        self.session = LiveSession(self.cfg, rec, make_chat_source(chat or None, url or None, out), out,
+                                   channel=channel, max_seconds=duration)
+        self.error = None
+
+        def run():
+            try:
+                self.session.run()
+            except Exception as e:
+                self.error = str(e)
+                log.error("live session failed: %s", e)
+
+        self.thread = threading.Thread(target=run, daemon=True, name="clipstudio-live")
+        self.thread.start()
+        return self.status()
+
+    def stop(self):
+        if self.session is not None:
+            self.session.stop()
+        return self.status()
+
+    def status(self) -> dict:
+        if self.session is None:
+            return {"active": False, "error": self.error}
+        snap = self.session.snapshot()
+        snap["active"] = True
+        snap["error"] = self.error
+        return snap
+
+    def frame(self) -> bytes | None:
+        """JPEG of the newest recorded segment (what the recorder is seeing now)."""
+        if self.session is None or not self.session.ring.segments:
+            return None
+        seg = self.session.ring.segments[-1]
+        if self._frame and self._frame[0] == seg.index:
+            return self._frame[1]
+        try:
+            cp = run([ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-i", str(seg.path), "-frames:v", "1",
+                      "-vf", "scale=640:-2", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "-"])
+        except Exception:
+            return self._frame[1] if self._frame else None
+        self._frame = (seg.index, cp.stdout)
+        return cp.stdout
 
 
 def create_app(cfg: Config):
@@ -371,6 +447,30 @@ def create_app(cfg: Config):
         if not f.exists():
             raise HTTPException(404, "not rendered yet")
         return FileResponse(f, media_type="application/x-subrip", filename=f.name)
+
+    # ------------------------------------------------------------ live mode
+    live = LiveManager(cfg)
+
+    @app.get("/api/live")
+    def live_status():
+        return live.status()
+
+    @app.post("/api/live/start")
+    def live_start(body: dict = Body(...)):
+        return live.start(body.get("url") or None, body.get("file") or None, body.get("channel") or None,
+                          body.get("chat") or None, float(body.get("duration") or 0),
+                          realtime=not body.get("fast", False))
+
+    @app.post("/api/live/stop")
+    def live_stop():
+        return live.stop()
+
+    @app.get("/api/live/frame")
+    def live_frame():
+        jpg = live.frame()
+        if not jpg:
+            raise HTTPException(404, "no frame yet")
+        return Response(jpg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     # ------------------------------------------------------------ jobs + live events
     @app.get("/api/jobs")

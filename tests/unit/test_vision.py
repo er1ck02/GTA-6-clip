@@ -38,7 +38,7 @@ class FakeDetector:
     def __init__(self, box=(0.06, 0.06, 0.09, 0.16)):
         self.box = box
 
-    def detect(self, rgb):
+    def detect(self, rgb, **kw):
         from clipstudio.vision.faces import FaceBox
         return [FaceBox(*self.box, 0.9)]
 
@@ -71,7 +71,7 @@ def test_unstable_or_borderless_face_stays_below_threshold():
     class Sometimes(FakeDetector):
         calls = 0
 
-        def detect(self, rgb):
+        def detect(self, rgb, **kw):
             self.calls += 1
             return super().detect(rgb) if self.calls % 2 else []
 

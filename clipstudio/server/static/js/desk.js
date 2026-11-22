@@ -18,7 +18,7 @@ function seedFromDisk() {
   const stages = { ...(p.stages || {}) };
   const clipStages = (S.cid && p.clips?.[S.cid]?.stages) || {};
   for (const t of tools) {
-    if (!t.stage) continue;
+    if (!t.stage || t.stage.startsWith('live_') || t.stage === 'upload') continue; // session-wide, not per project
     const live = state[t.stage];
     if (live && live.live) continue; // a live event beats the on-disk state
     const st = stages[t.stage]?.status || clipStages[t.stage];
@@ -76,9 +76,11 @@ function log(ev, historical) {
   }
   const t = new Date(ev.ts * 1000).toTimeString().slice(0, 8);
   let text;
-  if (ev.kind === 'stage') text = `${ev.stage} ${ev.status}${ev.seconds != null ? ` ${ev.seconds}s` : ''}${ev.error ? ` — ${ev.error}` : ''}`;
+  if (ev.kind === 'stage' && ev.stage === 'upload') text = `upload ${ev.moment || ''}: ${ev.decision}${ev.note ? ` — ${ev.note}` : ''}`;
+  else if (ev.kind === 'stage') text = `${ev.stage} ${ev.status}${ev.seconds != null ? ` ${ev.seconds}s` : ''}${ev.error ? ` — ${ev.error}` : ''}`;
   else if (ev.kind === 'progress') text = `${ev.stage} ${Math.round(ev.progress * 100)}%`;
   else if (ev.kind === 'job') text = `job ${ev.job_kind || ''} ${ev.status}${ev.error ? ` — ${ev.error}` : ''}`;
+  else if (ev.kind === 'live_moment') text = `moment ${ev.moment} ${ev.status}${ev.reasons ? ` (${ev.reasons.join(', ')}, score ${ev.score})` : ''}${ev.upload ? ` · upload: ${ev.upload}` : ''}`;
   else text = JSON.stringify(ev);
   const status = ev.status || '';
   const li = h('li', { class: `ev-${status} ${historical ? 'hist' : ''}`, title: JSON.stringify(ev) },

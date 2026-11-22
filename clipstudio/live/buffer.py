@@ -51,11 +51,20 @@ def _ytdlp_cmd() -> list[str]:
 
 
 def stream_reader_cmd(url: str, max_height: int = 1080) -> list[str]:
-    """A command that writes the live stream (muxed video + audio, MPEG-TS) to stdout."""
-    if shutil.which("streamlink"):
-        return ["streamlink", "--stdout", "--loglevel", "warning", url, f"{max_height}p,{max_height}p60,best"]
-    return _ytdlp_cmd() + ["--quiet", "--no-warnings", "--no-part", "--no-playlist",
-                           "-f", f"b[height<={max_height}]/b", "-o", "-", url]
+    """streamlink command that writes the live stream (muxed, MPEG-TS) to stdout."""
+    return ["streamlink", "--stdout", "--loglevel", "warning", url, f"{max_height}p,{max_height}p60,best"]
+
+
+def resolve_stream_urls(url: str, max_height: int = 1080) -> list[str]:
+    """Direct media URLs for a live stream via yt-dlp: one muxed URL, or video + audio (YouTube live HLS)."""
+    cmd = _ytdlp_cmd() + ["--quiet", "--no-warnings", "--no-playlist", "-g",
+                          "-f", f"bv*[height<={max_height}]+ba/b[height<={max_height}]/b", url]
+    cp = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    urls = [u for u in cp.stdout.split() if u.startswith("http")]
+    if cp.returncode != 0 or not urls:
+        err = "\n".join(cp.stderr.strip().splitlines()[-4:])
+        raise MediaError(f"could not open the stream {url}: {err or 'yt-dlp returned no media URL'}")
+    return urls[:2]
 
 
 class Recorder:
@@ -71,28 +80,64 @@ class Recorder:
         self._ff: subprocess.Popen | None = None
         self._seen = 0
         self.started = 0.0
+        self.restarts = 0
+        self.offset = 0.0
+        self._next_index = 0
+        self._last_end = 0.0
+        self._urls: list[str] = []
+        self.segments_total = 0
 
     def start(self) -> None:
         self.work.mkdir(parents=True, exist_ok=True)
         for old in self.work.glob("seg_*.ts"):
             old.unlink()
-        self.list_path.unlink(missing_ok=True)
-        out = ["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-f", "segment",
+        for old in self.work.glob("segments*.csv"):
+            old.unlink()
+        self.restarts = 0
+        self.offset = 0.0
+        self._next_index = 0
+        self._launch()
+        self.started = time.time()
+
+    def restart(self) -> None:
+        """Reopen a stream that dropped (expired media URLs, network blip); stream time continues."""
+        self.stop()
+        self.restarts += 1
+        self._seen = 0
+        self.offset = self._last_end
+        self.list_path = self.work / f"segments_{self.restarts}.csv"
+        log.warning("stream connection dropped; reconnecting (attempt %d)", self.restarts)
+        self._launch()
+
+    def _launch(self) -> None:
+        out = ["-map", "0:v:0", "-map", "1:a:0?" if self._two_inputs() else "0:a:0?", "-c", "copy", "-f", "segment",
                "-segment_time", f"{self.segment_seconds:g}", "-segment_format", "mpegts",
+               "-segment_start_number", str(self._next_index),
                "-segment_list", str(self.list_path), "-segment_list_type", "csv",
                "-segment_list_flags", "+live", str(self.work / "seg_%06d.ts")]
-        base = [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin"]
+        base = [ffmpeg_bin(), "-hide_banner", "-loglevel", "error"]
+        self._reader = None
         if self.file is not None:
-            cmd = base + (["-re"] if self.realtime else []) + ["-i", str(self.file)] + out
+            cmd = base + ["-nostdin"] + (["-re"] if self.realtime else []) + ["-i", str(self.file)] + out
             self._ff = subprocess.Popen(cmd, stderr=subprocess.PIPE)
-        else:
+        elif shutil.which("streamlink"):
             self._reader = subprocess.Popen(stream_reader_cmd(self.url), stdout=subprocess.PIPE,
                                             stderr=subprocess.PIPE)
-            cmd = base[:-1] + ["-i", "pipe:0"] + out
-            self._ff = subprocess.Popen(cmd, stdin=self._reader.stdout, stderr=subprocess.PIPE)
+            self._ff = subprocess.Popen(base + ["-i", "pipe:0"] + out, stdin=self._reader.stdout,
+                                        stderr=subprocess.PIPE)
             self._reader.stdout.close()  # ffmpeg owns the pipe now
-        self.started = time.time()
+        else:
+            ins: list[str] = []
+            for u in self._urls:
+                ins += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-i", u]
+            self._ff = subprocess.Popen(base + ["-nostdin"] + ins + out, stderr=subprocess.PIPE)
         log.info("recording %s into %s (%gs segments)", self.file or self.url, self.work, self.segment_seconds)
+
+    def _two_inputs(self) -> bool:
+        if self.file is not None or shutil.which("streamlink"):
+            return False
+        self._urls = resolve_stream_urls(self.url)
+        return len(self._urls) == 2
 
     @property
     def running(self) -> bool:
@@ -116,8 +161,12 @@ class Recorder:
             except ValueError:
                 break
             idx = int(Path(name).stem.split("_")[-1])
-            new.append(Segment(idx, self.work / Path(name).name, a, b, now))
+            new.append(Segment(idx, self.work / Path(name).name, a + self.offset, b + self.offset, now))
             self._seen += 1
+            self._next_index = idx + 1
+            self._last_end = b + self.offset
+        if new:
+            self.segments_total = getattr(self, "segments_total", 0) + len(new)
         return new
 
     def error_text(self) -> str:

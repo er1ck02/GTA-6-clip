@@ -79,16 +79,38 @@ def _tiles(h: int, w: int) -> list[tuple[int, int, int, int]]:
     return out
 
 
+def _edge_tiles(h: int, w: int, levels: tuple[int, ...] = (6, 9), band: float = 0.3) -> list[tuple[int, int, int, int]]:
+    """Small overlapping tiles in the outer ``band`` of the frame, where webcam overlays sit.
+
+    A webcam box is often under a tenth of the frame wide; in a whole-frame or 3x3 tile its face is a few pixels
+    once scaled to the detector's 128 px input, so the edges get finer tiles."""
+    out = []
+    for n in levels:
+        tw, th = int(w / n * 1.4), int(h / n * 1.4)
+        for i in range(n):
+            for j in range(n):
+                cx, cy = (i + 0.5) / n, (j + 0.5) / n
+                if band <= cx <= 1 - band and band <= cy <= 1 - band:
+                    continue
+                x = int(min(max(0, cx * w - tw / 2), w - tw))
+                y = int(min(max(0, cy * h - th / 2), h - th))
+                out.append((x, y, tw, th))
+    return out
+
+
 class FaceDetector:
     name = "none"
 
     def _detect_one(self, rgb: np.ndarray) -> list[FaceBox]:  # pragma: no cover - interface
         return []
 
-    def detect(self, rgb: np.ndarray, tiled: bool = True) -> list[FaceBox]:
+    def detect(self, rgb: np.ndarray, tiled: bool = True, edges: bool = False) -> list[FaceBox]:
         h, w = rgb.shape[:2]
         found: list[FaceBox] = []
-        for (x, y, tw, th) in (_tiles(h, w) if tiled else [(0, 0, w, h)]):
+        tiles = _tiles(h, w) if tiled else [(0, 0, w, h)]
+        if tiled and edges:
+            tiles += _edge_tiles(h, w)
+        for (x, y, tw, th) in tiles:
             tile = np.ascontiguousarray(rgb[y:y + th, x:x + tw])
             for b in self._detect_one(tile):
                 found.append(FaceBox((x + b.x * tw) / w, (y + b.y * th) / h, b.w * tw / w, b.h * th / h, b.score))
@@ -155,7 +177,7 @@ class HaarFaces(FaceDetector):
         rects = self._c.detectMultiScale(g, scaleFactor=1.1, minNeighbors=6, minSize=(24, 24))
         return [FaceBox(x / w, y / h, fw / w, fh / h, 0.6) for (x, y, fw, fh) in rects]
 
-    def detect(self, rgb: np.ndarray, tiled: bool = False) -> list[FaceBox]:
+    def detect(self, rgb: np.ndarray, tiled: bool = False, edges: bool = False) -> list[FaceBox]:
         # Haar is scale-invariant already; tiling only adds false positives
         return super().detect(rgb, tiled=False)
 

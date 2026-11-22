@@ -40,7 +40,8 @@ _Last updated: 2026-11-21 · version 0.6.0_
 - Cuts inside a clip: video, audio and captions all drop the section (render measured: a 2.2 s cut gives a 3.8 s file with the cut tone gone); QC checks the shortened duration. Split and move work from the timeline and API.
 - Platform copies (TikTok, YouTube Shorts, Instagram Reels, or custom presets): stream copy when the master fits, constrained re-encode when not (verified: 24 fps cap and 3 s trim), JSON post sidecar; only for clips that passed QC.
 - `--json` on every CLI command, including errors; batches over folders continue past a failing file.
-- Live mode (`clipstudio live`): rolling 90 s buffer, triggers on audio jumps, chat spikes, reaction words and "clip" commands, saved moments edited automatically, review/upload queue with a per-streamer allowlist. Verified on real encodes played back in real time (buffer bounded, moment kept, chat carried over); a run on a real live stream is next.
+- Live mode (`clipstudio live`): rolling 90 s buffer, triggers on audio jumps, chat spikes, reaction words and "clip" commands, saved moments edited automatically, review/upload queue with a per-streamer allowlist. Workstation LIVE panel (feed, buffer, trigger graph, chat, moment pipeline, FOLLOW). Verified on real encodes played back in real time and in the browser (Playwright, no console errors). YouTube live streams with separate video/audio HLS and expiring URLs are handled (reconnect test against a local HTTP server). The first real attempt on a YouTube live stream failed on the format request; fixed, re-run pending.
+- GTA VI stream test (Ludwig, 30 min live capture, RTX 4080): 10 candidates at 0.58-0.70, 5 clips in 2 min. Fixed since: audio/video sync on recordings whose streams start late (4 of 5 then passed QC; the 5th is a black in-game phone-camera shot), facecam picking an in-game face.
 
 ## Test results
 

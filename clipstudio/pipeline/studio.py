@@ -53,7 +53,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 6,
-                  "facecam": 2, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 5, "qc": 5, "platforms": 1, "edges": 1}
+                  "facecam": 3, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 5, "qc": 5, "platforms": 1, "edges": 1}
 
 
 @dataclass
@@ -380,7 +380,8 @@ class Studio:
             n = v.facecam_samples
             d = media.duration
             times = [d * (0.03 + 0.94 * (i + 0.5) / n) for i in range(n)]
-            _, frames = sample_at(p.source_path(), times, media.width, media.height, width=960)
+            # full width (up to 1920): webcam overlays can be under a tenth of the frame
+            _, frames = sample_at(p.source_path(), times, media.width, media.height, width=1920)
             det = detect_facecam(frames, self.face_detector())
             log.info("facecam: %s (confidence %.2f) %s", det.method, det.confidence,
                      f"region {det.region.model_dump()}" if det.region else "")

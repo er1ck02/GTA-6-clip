@@ -12,17 +12,24 @@ import json
 import queue
 import threading
 import time
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from clipstudio.config import Config
 from clipstudio.core import events
+from clipstudio.core.errors import ClipStudioError, MediaError
 from clipstudio.core.logging import get_logger
 from clipstudio.live.buffer import Recorder, Ring, Segment, concat_segments
 from clipstudio.live.chat import ChatSource
 from clipstudio.live.triggers import Trigger, TriggerDetector, segment_loudness
 
 log = get_logger("live")
+MAX_RECONNECTS = 20
+
+
+class LiveError(ClipStudioError):
+    """Live mode could not record at all (bad URL, unsupported stream, network)."""
 
 
 @dataclass
@@ -76,6 +83,48 @@ class LiveSession:
         self.peak_disk = 0
         self.stopped_reason = ""
         self._qlock = threading.Lock()
+        self._stop = threading.Event()
+        self.running = False
+        self.started_at = 0.0
+        self.chat_count = 0
+        self.recent_chat: deque[dict] = deque(maxlen=40)
+        self.triggers: list[dict] = []
+
+    def stop(self) -> None:
+        """Ask the loop to finish (pending moments are still saved and edited)."""
+        self._stop.set()
+
+    def snapshot(self) -> dict:
+        """Everything the workstation's live panel shows, as plain data (safe to call from another thread)."""
+        segs = list(self.ring.segments)
+        head = self.ring.head
+        hist = list(self.det.history)[-240:]
+        chat = dict(list(self.det.chat.items()))
+        hype = dict(list(self.det.hype.items()))
+        cmds = dict(list(self.det.command.items()))
+        audio = dict(list(self.det.audio.items()))
+        lo = int(head) - 180
+        return {
+            "running": self.running, "stopped": self.stopped_reason, "channel": self.channel,
+            "source": str(self.rec.url or self.rec.file), "chat_source": self.chat.name,
+            "started_at": self.started_at, "head": round(head, 2), "out": str(self.out),
+            "buffer_seconds": self.lc.buffer_seconds, "threshold": self.lc.threshold,
+            "pre": self.lc.pre_seconds, "post": self.lc.post_seconds,
+            "segments": [{"i": x.index, "start": round(x.start, 2), "end": round(x.end, 2),
+                          "pinned": self.ring._pinned(x)} for x in segs],
+            "disk_mb": round(sum(x.path.stat().st_size for x in segs if x.path.exists()) / 1e6, 1),
+            "discarded": self.ring.deleted, "reconnects": self.rec.restarts,
+            "signals": [{"t": t, "score": sc, **sig} for t, sc, sig in hist],
+            "audio": {k: round(v, 1) for k, v in audio.items() if k >= lo},
+            "chat_rate": {k: v for k, v in chat.items() if k >= lo},
+            "hype": {k: v for k, v in hype.items() if k >= lo},
+            "commands": {k: v for k, v in cmds.items() if k >= lo},
+            "chat_count": self.chat_count, "recent_chat": list(self.recent_chat),
+            "triggers": list(self.triggers),
+            "moments": [asdict(m) for m in self.moments],
+            "allowed": bool(self.channel and self.channel.lower() in
+                            {c.lower().lstrip("@") for c in self.cfg.upload.allow_channels}),
+        }
 
     # ------------------------------------------------------------ queue file
     def save_queue(self) -> None:
@@ -95,6 +144,8 @@ class LiveSession:
         m = Moment(mid, asdict(tr), (a, b), channel=self.channel)
         self.ring.pin(mid, a, b)
         self.moments.append(m)
+        self.triggers.append({"id": mid, "t": tr.t, "score": tr.score, "reasons": tr.reasons})
+        events.publish("stage", stage="live_trigger", status="done", moment=mid)
         self.pending.append(m)
         log.info("moment %s at %.0fs (score %.2f: %s); saving %.0f-%.0fs", mid, tr.t, tr.score,
                  ", ".join(tr.reasons) or "audio", a, b)
@@ -157,21 +208,43 @@ class LiveSession:
                 h.target_duration = min(max(h.target_duration, h.minimum_duration), h.maximum_duration)
                 st = Studio(cfg)
                 p = st.open_or_create(input_path=Path(m.path), chat=Path(m.chat_path) if m.chat_path else None)
-                st.analyze(p)
-                ids = st.default_selection(p, 1)
-                res = st.render(p, ids)[0] if ids else None
                 m.project = p.id
+                self.save_queue()
+                token = events.context.set({"project": p.id, "moment": m.id})
+                try:
+                    events.publish("live_moment", moment=m.id, status="processing", project=p.id)
+                    st.analyze(p)
+                    ids = st.default_selection(p, 1)
+                    res = st.render(p, ids)[0] if ids else None
+                finally:
+                    events.context.reset(token)
                 if res is None:
                     raise RuntimeError("no clip could be cut from this moment")
                 m.clip, m.qc_passed, m.qc_summary = str(res.output), res.qc.passed, res.qc.summary()
                 m.upload, m.upload_note = upload_decision(self.cfg, self.channel, m.qc_passed)
                 m.status = "done"
+                events.publish("stage", stage="upload", status="done" if m.upload == "allowed" else "skipped",
+                               moment=m.id, project=m.project, decision=m.upload, note=m.upload_note)
                 log.info("clip ready: %s (%s; %s)", Path(m.clip).name, m.qc_summary, m.upload)
             except Exception as e:
                 m.status, m.error = "failed", f"{type(e).__name__}: {e}"
                 log.error("editing %s failed: %s", m.id, m.error)
             self.save_queue()
             events.publish("live_moment", moment=m.id, status=m.status, clip=m.clip, upload=m.upload)
+
+    def _stream_over(self) -> bool:
+        """Ask yt-dlp whether a dropped stream is still live (False when unsure, so we try to reconnect)."""
+        from clipstudio.live.buffer import _ytdlp_cmd
+        import subprocess
+
+        try:
+            cp = subprocess.run(_ytdlp_cmd() + ["--quiet", "--no-warnings", "--skip-download", "--print",
+                                                "%(live_status)s", self.rec.url],
+                                capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        status = (cp.stdout.strip().splitlines() or [""])[0]
+        return status in ("was_live", "not_live", "post_live")
 
     # ------------------------------------------------------------ main loop
     def _ingest(self, seg: Segment) -> None:
@@ -186,8 +259,13 @@ class LiveSession:
         if self.process:
             self.worker = threading.Thread(target=self._worker, daemon=True, name="live-editor")
             self.worker.start()
+        self.running, self.started_at = True, time.time()
+        events.publish("stage", stage="live_record", status="running")
         self.rec.start()
         self.chat.start()
+        if self.chat.name != "none":
+            events.publish("stage", stage="live_chat", status="running")
+        events.publish("stage", stage="live_trigger", status="running")
         t0 = time.time()
         try:
             while True:
@@ -198,6 +276,8 @@ class LiveSession:
                     t = msg.t if msg.stream_time else self.ring.stream_time_at(msg.t)
                     self.det.add_chat(t, msg.text)
                     self.chat_log.append((t, msg.user, msg.text))
+                    self.chat_count += 1
+                    self.recent_chat.append({"t": round(t, 1), "user": msg.user, "text": msg.text[:200]})
                 for tr in self.det.evaluate(head):
                     self._on_trigger(tr)
                 self._finish_pending()
@@ -207,16 +287,29 @@ class LiveSession:
                 self.det.forget_before(int(keep_from))
                 self.chat_log = [c for c in self.chat_log if c[0] >= keep_from]
                 if not self.rec.running:
-                    # drain what ffmpeg finished writing, then judge the tail
+                    # drain what ffmpeg finished writing
                     for seg in self.rec.poll():
                         self._ingest(seg)
+                    err = self.rec.error_text()
+                    if self.rec.segments_total == 0:
+                        raise LiveError(f"recording never started: {err[-500:] or 'no video arrived'}")
+                    if self.rec.url and self.rec.restarts < MAX_RECONNECTS and not self._stream_over():
+                        log.warning("recorder stopped: %s", err[-300:] or "no error text")
+                        try:
+                            self.rec.restart()
+                            continue
+                        except MediaError as e:
+                            err = str(e)
+                    # judge the tail
                     for tr in self.det.evaluate(self.ring.head + 10) + self.det.flush():
                         self._on_trigger(tr)
-                    err = self.rec.error_text()
                     self.stopped_reason = "stream ended" + (f": {err[-300:]}" if err else "")
                     break
                 if self.max_seconds and time.time() - t0 >= self.max_seconds:
                     self.stopped_reason = f"time limit ({self.max_seconds:g}s)"
+                    break
+                if self._stop.is_set():
+                    self.stopped_reason = "stopped from the workstation"
                     break
                 if self.lc.max_moments and len(self.moments) >= self.lc.max_moments and not self.pending:
                     self.stopped_reason = f"{self.lc.max_moments} moment(s) saved"
@@ -236,6 +329,9 @@ class LiveSession:
             for s in self.ring.segments:  # nothing is kept but the moments
                 s.path.unlink(missing_ok=True)
             self.save_queue()
+            self.running = False
+            for stage in ("live_record", "live_chat", "live_trigger"):
+                events.publish("stage", stage=stage, status="done")
             log.info("live session ended (%s): %d moment(s), %d segment(s) discarded, peak buffer %.0f MB",
                      self.stopped_reason, len(self.moments), self.ring.deleted, self.peak_disk / 1e6)
         return self.moments

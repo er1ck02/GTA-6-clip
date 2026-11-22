@@ -8,6 +8,7 @@ import { initInspector, tickInspector, syncCropInputs } from './inspector.js';
 import { initTimeline, tickTimeline } from './timeline.js';
 import { initDesk, deskEvent, logEmpty } from './desk.js';
 import { startPolling, stopPolling } from './poller.js';
+import { initLive, liveEvent } from './live.js';
 
 const BOOT = Date.now();
 const ORDER = ['ingest', 'metadata', 'extract_audio', 'transcribe', 'loudness', 'candidates', 'plan', 'captions', 'render', 'qc'];
@@ -122,6 +123,7 @@ function connectEvents() {
 async function handleEvent(ev, historical, replay = false) {
   if (!replay) deskEvent(ev, historical);
   if (historical) return;
+  liveEvent(ev);
   const mine = ev.project === S.pid;
   if (ev.kind === 'stage') {
     activity = ev;
@@ -193,7 +195,7 @@ function frame() {
 
 // ------------------------------------------------------------------ boot
 async function boot() {
-  initHeader(); initProgram(); initOutput(); initBin(); initInspector(); initTimeline(); initDesk();
+  initHeader(); initProgram(); initOutput(); initBin(); initInspector(); initTimeline(); initDesk(); initLive();
   on('preview', invalidateCaptionLine);
   on('render', () => {
     const r = S.render, ev = r && finishedJobs.get(r.job);

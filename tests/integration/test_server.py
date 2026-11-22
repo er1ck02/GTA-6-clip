@@ -119,3 +119,42 @@ def test_api_drives_the_pipeline(tmp_path, sample_short):
             if line.startswith("data:"):
                 assert '"kind"' in line
                 break
+
+
+def test_live_panel_api(tmp_path):
+    """The workstation's live panel: start a dry run from a file, watch the buffer and the moment arrive."""
+    import json
+    import subprocess
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from clipstudio.server.app import create_app
+
+    src = tmp_path / "s.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=90",
+                    "-f", "lavfi", "-i", "sine=frequency=300:sample_rate=48000:duration=90", "-filter_complex",
+                    "[1:a]volume='if(between(t,60,63),0.9,0.05)':eval=frame[a]", "-map", "0:v", "-map", "[a]",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-c:a", "aac", str(src)], check=True)
+    chat = [{"time_in_seconds": float(t), "message": "hi", "author": {"name": "u"}} for t in range(0, 90, 3)]
+    (tmp_path / "s.chat.json").write_text(json.dumps(chat))
+    cfg = load_config(overrides=[f"paths.data_dir={tmp_path / 'data'}", "live.auto_process=false",
+                                 "upload.allow_channels=[tester]"])
+    c = TestClient(create_app(cfg))
+    assert c.get("/api/live").json()["active"] is False
+    r = c.post("/api/live/start", json={"file": str(src), "channel": "tester", "chat": str(tmp_path / "s.chat.json"),
+                                        "fast": True})
+    assert r.status_code == 200, r.text
+    assert c.post("/api/live/start", json={"file": str(src)}).status_code in (200, 400)
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        s = c.get("/api/live").json()
+        if s["active"] and not s["running"] and s["started_at"]:
+            break
+        time.sleep(0.5)
+    assert s["allowed"] and s["chat_source"] == "replay" and s["chat_count"] >= 25
+    assert s["signals"] and s["head"] > 80
+    assert len(s["moments"]) == 1 and s["moments"][0]["status"] == "saved"
+    assert c.post("/api/live/start", json={}).status_code == 400
+    sysinfo = c.get("/api/system").json()
+    assert {"live_record", "live_chat", "live_trigger", "upload"} <= {t["stage"] for t in sysinfo["tools"]}

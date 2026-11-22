@@ -207,7 +207,7 @@ def detect_facecam(frames: np.ndarray, detector: FaceDetector | None) -> Facecam
     notes: list[str] = []
     per_frame: list[list[FaceBox]] = []
     if detector is not None:
-        per_frame = [detector.detect(f) for f in frames]
+        per_frame = [detector.detect(f, edges=True) for f in frames]
     else:
         notes.append("no face detector available (install requirements/vision.txt); border-only search")
     faces, hit = _cluster_faces(per_frame)
@@ -240,7 +240,9 @@ def detect_facecam(frames: np.ndarray, detector: FaceDetector | None) -> Facecam
         else:
             # no border: first-person view models (a gloved hand) and cutscene faces also look like this,
             # so only a face that is there almost all the time can reach the auto-apply threshold
-            conf = 0.30 + 0.35 * min(1.0, hit / 0.8)
+            # (capped below the 0.6 auto-apply default: with fine edge tiles, HUD text and logos can pass for a
+            # small face; the box is still offered in the UI as a suggestion)
+            conf = 0.30 + 0.25 * min(1.0, hit / 0.8)
         method = "face+border" if sides >= 2 else "face"
         notes.append(f"face in {hit:.0%} of {n} samples; {sides}/4 border lines found (score {bscore:.2f})")
         if prior < 1.0:

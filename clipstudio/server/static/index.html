@@ -36,6 +36,44 @@
     <span class="sb-stages" id="sbStages"></span>
   </div>
 
+  <!-- ============================================================ LIVE -->
+  <section class="panel live" id="livePanel">
+    <div class="panel-head">
+      <h2>LIVE / STREAM WATCH</h2>
+      <span class="badge badge-dim" id="liveBadge">OFF</span>
+      <span class="ph-meta" id="liveMeta">paste a Twitch / YouTube / Kick stream URL</span>
+      <form id="liveForm" class="live-form" autocomplete="off">
+        <input id="liveUrl" type="text" spellcheck="false" placeholder="Stream URL (or a file path for a dry run)" aria-label="Stream URL">
+        <input id="liveChannel" type="text" spellcheck="false" placeholder="channel (auto)" aria-label="Channel name">
+        <button type="submit" class="btn btn-accent btn-sm" id="liveStart">WATCH LIVE</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="liveStop" disabled>STOP</button>
+        <button type="button" class="ibtn toggle" id="liveFollow" title="Open each moment in the workstation while it is being edited">FOLLOW</button>
+      </form>
+    </div>
+    <div class="live-body">
+      <div class="live-feed">
+        <img id="liveFrame" alt="Newest recorded frame">
+        <div class="live-feed-msg" id="liveFeedMsg">no video yet</div>
+        <span class="live-head mono" id="liveHead">0:00</span>
+      </div>
+      <div class="live-mid">
+        <div class="mono-label">ROLLING BUFFER <span id="liveBufMeta"></span></div>
+        <div class="live-buffer" id="liveBuffer"></div>
+        <div class="mono-label">TRIGGER SIGNALS · LAST 3 MIN <span id="liveScore"></span></div>
+        <div class="live-signals-wrap"><canvas class="live-signals" id="liveSignals"></canvas></div>
+        <div class="live-legend mono"><i class="lg-score"></i>score <i class="lg-thr"></i>threshold <i class="lg-chat"></i>chat/s <i class="lg-hype"></i>hype + "clip" <i class="lg-aud"></i>audio level</div>
+      </div>
+      <div class="live-chat-col">
+        <div class="mono-label">CHAT <span id="liveChatMeta"></span></div>
+        <ol class="live-chat" id="liveChat"></ol>
+      </div>
+      <div class="live-moments-col">
+        <div class="mono-label">MOMENTS → EDIT → QC → UPLOAD <span id="liveMomentsMeta"></span></div>
+        <div class="live-moments" id="liveMoments"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ============================================================ WORKSPACE -->
   <main class="workspace">
 

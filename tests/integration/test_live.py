@@ -67,3 +67,51 @@ def test_chat_replay_moment_carries_its_chat(tmp_path):
     rows = json.loads(open(m.chat_path).read())
     assert sum(r["message"] == "KEKW no way" for r in rows) == 25
     assert all(0 <= r["time_in_seconds"] <= m.saved[1] - m.saved[0] for r in rows)
+
+
+def test_split_video_audio_urls_and_reconnect(tmp_path, monkeypatch):
+    """YouTube live offers video and audio as separate HLS streams; and media URLs expire, so a dropped
+    connection is reopened with stream time continuing."""
+    import functools
+    import http.server
+
+    from clipstudio.live import buffer as buf_mod
+
+    src = _stream(tmp_path / "s.mp4", 12, 100)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-map", "0:v", "-c", "copy", str(tmp_path / "v.ts")],
+                   check=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-map", "0:a", "-c", "copy", str(tmp_path / "a.ts")],
+                   check=True)
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path))
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    _which = buf_mod.shutil.which
+    monkeypatch.setattr(buf_mod.shutil, "which", lambda n: None if n == "streamlink" else _which(n))  # yt-dlp path
+    monkeypatch.setattr(buf_mod, "resolve_stream_urls", lambda url, max_height=1080: [f"{base}/v.ts", f"{base}/a.ts"])
+    over = iter([False, True])
+    monkeypatch.setattr(LiveSession, "_stream_over", lambda self: next(over))
+    cfg = load_config()
+    rec = Recorder(tmp_path / "buf", 2.0, url="https://example.invalid/live")
+    sess = LiveSession(cfg, rec, ChatSource(), tmp_path / "out", process=False)
+    try:
+        sess.run()
+    finally:
+        srv.shutdown()
+    assert rec.restarts == 1
+    assert 20 <= sess.ring.head <= 26  # two 12 s passes, stream time continuing across the reconnect
+    starts = [s.start for s in sess.ring.segments]
+    assert starts == sorted(starts) and len(set(s.index for s in sess.ring.segments)) == len(starts)
+
+
+def test_unreachable_stream_is_an_error(tmp_path, monkeypatch):
+    from clipstudio.live import buffer as buf_mod
+    from clipstudio.live.session import LiveError
+
+    _which = buf_mod.shutil.which
+    monkeypatch.setattr(buf_mod.shutil, "which", lambda n: None if n == "streamlink" else _which(n))
+    monkeypatch.setattr(buf_mod, "resolve_stream_urls", lambda url, max_height=1080: ["http://127.0.0.1:9/nothing.m3u8"])
+    rec = Recorder(tmp_path / "buf", 2.0, url="https://example.invalid/live")
+    sess = LiveSession(load_config(), rec, ChatSource(), tmp_path / "out", process=False)
+    with pytest.raises(LiveError, match="never started"):
+        sess.run()
