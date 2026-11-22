@@ -190,3 +190,19 @@ def test_split_and_classify_links():
     assert classify_link("https://www.youtube.com/@ludwig/live") == "live"
     assert classify_link("https://www.youtube.com/watch?v=abc", probe=False) == "vod"
     assert classify_link("/videos/game.mp4") == "file"
+
+
+def test_tiny_chat_spike_is_not_a_reaction():
+    """3 messages in an otherwise empty chat used to max out the chat signal; it now needs chat_min_messages."""
+    det, cfg = _detector()
+    det.has_chat = True
+    for t in range(0, 200, 40):  # nearly silent chat
+        det.add_chat(t, "hi")
+    for t in (200.2, 201.1, 202.5):
+        det.add_chat(t, "LUL")
+    sig = det.signals_at(200)
+    assert sig["chat"] == 0.0 and sig["hype"] == 0.0
+    for i in range(12):  # a real burst
+        det.add_chat(203 + i * 0.1, "no way LUL")
+    sig = det.signals_at(200)
+    assert sig["chat"] >= 1.0 and sig["hype"] >= 1.0

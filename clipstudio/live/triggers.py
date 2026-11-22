@@ -4,7 +4,7 @@ Four signals, each scored against the stream's own recent "normal" (so a loud st
 trigger all the time):
 
 * audio: loudness of the loudest second nearby vs the median of the last few minutes;
-* chat: messages in a 5 s window vs the usual rate;
+* chat: messages in a 5 s window vs the usual rate, and never fewer than ``chat_min_messages``;
 * hype: messages with reaction words / emotes (LUL, KEKW, W, "no way"...) in that window;
 * command: viewers typing "clip" / "clip it" (several within 10 s).
 
@@ -112,12 +112,14 @@ class TriggerDetector:
             span = max(1, s - base_from)
             rate5 = self._window(self.chat, base_from, s) / span * CHAT_WINDOW
             now5 = self._window(self.chat, s, s + CHAT_WINDOW)
-            if now5 >= 3 and span >= 10:
-                lift = now5 / max(rate5, 0.5)
+            if now5 >= c.chat_min_messages and span >= 10:
+                # the floor on the baseline keeps a near-empty chat from turning a handful of messages into a
+                # huge relative spike: chat_min_messages reaches full strength only from a quiet start
+                lift = now5 / max(rate5, c.chat_min_messages / c.chat_lift)
                 sig["chat"] = float(np.clip((lift - 1) / (c.chat_lift - 1), 0.0, 1.5))
             hype5 = self._window(self.hype, s, s + CHAT_WINDOW)
-            if hype5 >= 3:
-                sig["hype"] = float(np.clip(hype5 / max(3.0, 1.5 * rate5), 0.0, 1.5))
+            if hype5 >= c.hype_min_messages:
+                sig["hype"] = float(np.clip(hype5 / max(float(c.hype_min_messages), 1.5 * rate5), 0.0, 1.5))
             cmd = self._window(self.command, s - COMMAND_BACK, s + COMMAND_AHEAD)
             sig["command"] = 1.0 if cmd >= c.clip_command_count else 0.4 * cmd / c.clip_command_count
         return sig

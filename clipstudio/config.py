@@ -434,6 +434,9 @@ class LiveCfg(_Strict):
     warmup_seconds: float = Field(20, ge=0)               # no triggers until the baseline has this much data
     audio_jump_db: float = Field(9.0, gt=0)               # loudness this far above the baseline counts fully
     chat_lift: float = Field(3.0, gt=1)                   # chat this many times busier than normal counts fully
+    chat_min_messages: int = Field(10, ge=1)              # messages in 5 s before chat counts at all (a 3-message
+                                                          # "spike" in an empty chat is not a reaction)
+    hype_min_messages: int = Field(5, ge=1)               # reaction messages (LUL, W, no way...) in 5 s, likewise
     clip_commands: list[str] = Field(default_factory=lambda: ["clip", "clip it", "clip that", "clipit", "!clip"])
     clip_command_count: int = Field(3, ge=1)              # this many viewers asking for a clip within 10 s triggers
     weights: dict[str, float] = Field(default_factory=lambda: {"audio": 0.6, "chat": 0.7, "hype": 0.5, "command": 1.0})

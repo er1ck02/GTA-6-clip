@@ -464,3 +464,8 @@ shared gate keeps clip latency predictable and the PC responsive. A moment shows
 "agreement" meaningless. Now a lone signal (other than "clip" commands) is scaled by 0.8, and the solo-audio path
 needs a jump of twice `audio_jump_db`. Every moment also costs about 23 s of editing on an RTX 4080, so the rate
 matters more as streams are added.
+
+**Follow-up (absolute chat floor).** Some saved moments came from "spikes" of three messages in an almost empty
+chat: against a baseline near zero, any burst is a huge relative lift. Chat now counts only from
+`chat_min_messages` (10 in 5 s) and reaction words from `hype_min_messages` (5), and the baseline used for the lift
+never drops below `chat_min_messages / chat_lift`, so a quiet chat needs a real burst to register.
