@@ -390,11 +390,15 @@ def supervise(a) -> int:
           "edited are finished and saved.\n", flush=True)
     crashes: list[float] = []
     update: dict = {}  # set by the auto-update thread: {"sha": ..., "summary": ...} while restarting onto it
+    running: dict = {}  # {"sha": the commit the server was last started on}
     if cfg.production.auto_update:
-        threading.Thread(target=_auto_update, args=(port, cfg, state, update), daemon=True,
+        threading.Thread(target=_auto_update, args=(port, cfg, state, update, None, running), daemon=True,
                          name="clipstudio-auto-update").start()
     while True:
         started = time.time()
+        from clipstudio.production import updater
+
+        running["sha"] = updater.head()
         try:
             rc = subprocess.call(server_cmd(launch), cwd=REPO)
         except KeyboardInterrupt:
@@ -427,10 +431,12 @@ def supervise(a) -> int:
         threading.Thread(target=_reengage, args=(port,), daemon=True).start()
 
 
-def _auto_update(port: int, cfg, state: Path, update: dict, rounds: int | None = None) -> None:
+def _auto_update(port: int, cfg, state: Path, update: dict, rounds: int | None = None,
+                 running: dict | None = None) -> None:
     """Every ``production.update_check_minutes``: if the branch has new commits that fast-forward a clean
     checkout and pass their unit tests, stop quickly (only the clip mid-edit finishes; waiting moments are saved
-    and resumed) and let the supervisor loop restart the server on the new code."""
+    and resumed) and let the supervisor loop restart the server on the new code. Also restarts when the checkout
+    already moved past the commit the server was started on (``running``), e.g. a commit made in this checkout."""
     from clipstudio.production import updater
 
     tested: dict[str, bool] = {}
@@ -444,24 +450,26 @@ def _auto_update(port: int, cfg, state: Path, update: dict, rounds: int | None =
             mode = None
         if mode != "running" or update.get("sha"):
             continue
-        chk = updater.check()
+        chk = updater.check(running=(running or {}).get("sha", ""))
         if not chk.available:
-            if chk.behind:
+            if chk.behind or chk.stale:
                 print(f"update waiting but skipped: {chk.why_not()}", flush=True)
             continue
-        if chk.remote not in tested:
+        sha = chk.target
+        if sha not in tested:
             if cfg.production.update_run_tests:
-                print(f"new code {chk.remote[:7]} ({chk.behind} commit(s)); running its tests first", flush=True)
-                ok, tail = updater.test_commit(chk.remote)
+                why = f"{chk.behind} new commit(s)" if chk.behind else "checkout is ahead of the running server"
+                print(f"new code {sha[:7]} ({why}); running its tests first", flush=True)
+                ok, tail = updater.test_commit(sha)
                 print(f"  tests: {tail}", flush=True)
             else:
                 ok = True
-            tested[chk.remote] = ok
-        if not tested[chk.remote]:
+            tested[sha] = ok
+        if not tested[sha]:
             continue  # this commit failed its tests; wait for the next one
-        summary = updater.git("log", "-1", "--format=%s", chk.remote).stdout.strip()
-        print(f"restarting production onto {chk.remote[:7]}: {summary}", flush=True)
-        update.update(sha=chk.remote, summary=summary)
+        summary = updater.git("log", "-1", "--format=%s", sha).stdout.strip()
+        print(f"restarting production onto {sha[:7]}: {summary}", flush=True)
+        update.update(sha=sha, summary=summary)
         try:
             api(port, "POST", "/api/production/stop", {"mode": "now"}, timeout=30)
             while not api(port, "GET", "/api/production", timeout=15).get("safe"):
