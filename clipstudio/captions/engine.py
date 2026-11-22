@@ -150,7 +150,7 @@ def title_slot(plan: CropPlan, block_h: int = 0) -> int:
     wide gameplay picture, below the apps' top bar). Moved below anything protected (a PiP facecam)."""
     face = next((p.dest for p in plan.panels if p.name == "facecam"), None)
     game = next((p.dest for p in plan.panels if p.name == "gameplay"), None)
-    split = face is not None and game is not None and face.y == 0 and game.y >= face.h
+    split = face is not None and game is not None and face.w == plan.out_width and game.y >= face.y + face.h
     y = max(game.y + int(plan.out_height * 0.018), plan.caption_band[0]) if split else plan.caption_band[0]
     for pr in plan.protected_regions:
         if pr.y < y + block_h and pr.y + pr.h > y:

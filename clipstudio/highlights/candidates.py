@@ -572,7 +572,7 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
             weak, why_not = True, "chat did not react"
         if sig.visual is not None and sig.visual.brightness:
             br = np.asarray(sig.visual.brightness[int(start * sig.visual.sample_fps): int(end * sig.visual.sample_fps) + 1])
-            f["dark_share"] = round(float((br < 45).mean()), 3) if br.size else 0.0
+            f["dark_share"] = round(float((br < 22).mean()), 3) if br.size else 0.0   # near black, not just night
             if cfg.min_evidence > 0 and f["dark_share"] > cfg.max_dark_share:
                 weak, why_not = True, f"{f['dark_share']:.0%} of it is too dark to read"
         held = held_words(" ".join(x.text for s in sents for x in s.words if start - 3 <= x.start <= end + 3), cfg.hold_words)

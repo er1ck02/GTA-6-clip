@@ -54,7 +54,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 13,
-                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 6, "captions": 9, "render": 11, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 5, "game_subs": 2, "face_sr": 1}
+                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 7, "captions": 9, "render": 12, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 5, "game_subs": 2, "face_sr": 1, "title": 1}
 
 
 @dataclass
@@ -87,7 +87,7 @@ class Project:
 
     def edits(self) -> Edits:
         f = self.p("edits")
-        return Edits.model_validate_json(f.read_text()) if f.exists() else Edits()
+        return Edits.model_validate_json(f.read_text(encoding="utf-8")) if f.exists() else Edits()
 
     def save_edits(self, e: Edits) -> None:
         write_text_atomic(self.p("edits"), e.model_dump_json(indent=2, exclude_none=True))
@@ -768,8 +768,8 @@ class Studio:
         plan = CropPlan.load(f_plan)
 
         caps_on = cfg.captions.enabled
-        # a transcript-line fallback title is not a hook; only written titles go on screen
-        hook = c.title if cfg.enhance.hook_title and c.title_source != "transcript" else None
+        title = c.title if cfg.enhance.hook_title and c.title_source != "transcript" else None
+        hook = None   # the title is drawn as a picture (emoji, casual type), no longer by the captions file
         k_cap = key_of("captions", STAGE_VERSIONS["captions"], tr_key, k_plan, c.start, c.end, cfg.section_hash("captions"),
                        hook, cfg.enhance.hook_title_seconds if hook else None, c.cuts,
                        p.state.stage("game_subs").key if cfg.captions.streamer_only else None)
@@ -795,6 +795,7 @@ class Studio:
         f_chat = self._chat_overlay(p, c, cfg, plan, state, d, f_caps if caps_on else None, resume, force)
 
         f_face, k_face = self._face_upscale(p, c, cfg, plan, state, d, resume, force)
+        title_img = self._title_image(title, cfg, plan, state, d, resume, force)
 
         voice = self.voice_track(media, cfg, self.speech_tracks_used(p))
         punches = self.punches(p, c, cfg)
@@ -802,7 +803,7 @@ class Studio:
                      p.state.data["source"]["fingerprint"], cfg.section_hash("video", "audio", "export", "enhance"),
                      f_ass.read_text(encoding="utf-8") if caps_on else None, voice, punches, c.cuts,
                      (f_chat.read_text(encoding="utf-8") if isinstance(f_chat, Path) else
-                      (state.stage("chat_overlay").key if f_chat else None)), k_face)
+                      (state.stage("chat_overlay").key if f_chat else None)), k_face, title, title_img[1:] if title_img else None)
         state.data["punches"] = punches
         r = run_stage(state, "render", k_r, [f_out],
                       lambda: render_clip(media, plan, c.start, c.end, f_ass if caps_on else None, f_out,
@@ -810,7 +811,8 @@ class Studio:
                                           voice_track=voice, enhance=cfg.enhance, punches=punches,
                                           cuts=c.rel_cuts(), under_ass=f_chat if isinstance(f_chat, Path) else None,
                                           face_video=f_face,
-                                          chat_video=f_chat if isinstance(f_chat, tuple) else None),
+                                          chat_video=f_chat if isinstance(f_chat, tuple) else None,
+                                          title_image=title_img),
                       resume=resume, force=force, retries=1)
         cached += [r.name] if r.cached else []
 
@@ -836,6 +838,39 @@ class Studio:
                     log.error("      fail: %s: %s", ch.name, ch.detail)
         plats = self._platforms(state, c, cfg, f_out, qc, platforms, resume, force, k_r)
         return ClipResult(c.id, f_out, qc, round(time.perf_counter() - t0, 2), cached, plats)
+
+    def _title_image(self, title: str | None, cfg: Config, plan: CropPlan, state: StateFile, d: Path,
+                     resume: bool, force: bool) -> tuple[Path, int, int, float] | None:
+        """Per-clip stage: the title as a picture, and where it goes (centred in the band above the streamer,
+        or above the gameplay when there is no webcam). None when the clip has no written title."""
+        if not title:
+            return None
+        f_png, f_meta = d / "title.png", d / "title.json"
+        k = key_of("title", STAGE_VERSIONS["title"], title, cfg.enhance.title_size, plan.out_width, plan.out_height)
+
+        def do() -> None:
+            from clipstudio.captions.title_card import render_title
+            size = render_title(title, f_png, plan.out_width, plan.out_height, cfg.enhance.title_size)
+            f_meta.write_text(json.dumps({"size": size}))
+
+        try:
+            run_stage(state, "title", k, [f_png, f_meta], do, resume=resume, force=force)
+        except StageFailed as e:
+            log.warning("title picture failed, rendering without a title: %s", e)
+            return None
+        size = json.loads(f_meta.read_text()).get("size")
+        if not size:
+            return None
+        w, h = size
+        H = plan.out_height
+        first = next((pn.dest for pn in plan.panels if pn.name in ("facecam", "gameplay")
+                      and pn.dest.w == plan.out_width and pn.dest.h < H), None)
+        gap = int(0.012 * H)
+        if first is not None and first.y - h - gap >= int(0.035 * H):
+            y = first.y - h - gap                               # in the band above the picture
+        else:
+            y = (first.y if first is not None else int(0.1 * H)) + gap   # no band: on the top edge of the picture
+        return f_png, (plan.out_width - w) // 2, y, float(cfg.enhance.hook_title_seconds)
 
     def _face_upscale(self, p: Project, c: Candidate, cfg: Config, plan: CropPlan, state: StateFile, d: Path,
                       resume: bool, force: bool) -> tuple[Path | None, str | None]:

@@ -22,9 +22,9 @@ def test_crops_inside_frame_and_9x16(w, h, mode, cx):
         assert r.x >= 0 and r.y >= 0 and r.x + r.w <= w and r.y + r.h <= h
         assert r.w % 2 == 0 and r.h % 2 == 0
     if mode == "gameplay":
-        # the crop has the shape of the panel it fills (wide by default: 1080x1280 over a blurred fill)
+        # the crop has the shape of the panel it fills (a wide view of the game over a blurred fill)
         gp = next(p for p in plan.panels if p.name == "gameplay").dest
-        assert abs(kf.gameplay.w / kf.gameplay.h - gp.w / gp.h) < 0.01 and (gp.w, gp.h) == (1080, 1280)
+        assert abs(kf.gameplay.w / kf.gameplay.h - gp.w / gp.h) < 0.01 and gp.w == 1080 and gp.h <= 1280
         full = load_config(overrides=["reframing.mode=gameplay", "reframing.gameplay_fill=full"])
         fk = plan_layout(_m(w, h), full.reframing, full.video, full.captions).keyframes[0].gameplay
         assert abs(fk.w / fk.h - 9 / 16) < 0.01
@@ -32,7 +32,7 @@ def test_crops_inside_frame_and_9x16(w, h, mode, cx):
         face = next(p for p in plan.panels if p.name == "facecam").dest
         # a webcam big enough fills the panel exactly; a small one is shown whole over a blurred fill
         assert plan.facecam_fit or abs(kf.facecam.w / kf.facecam.h - face.w / face.h) < 0.02
-        assert plan.caption_band[0] > face.h
+        assert plan.caption_band[0] > face.y + face.h
 
 
 def test_split_without_region_falls_back_with_note():
@@ -63,7 +63,9 @@ def test_manual_facecam_region_beats_detection():
 
 
 def test_split_gameplay_crop_steps_off_the_facecam():
-    cfg = load_config(overrides=["reframing.mode=facecam_split", "reframing.gameplay_center_x=0.45"])
+    # a zoomed-in view (half the screen) can step around the webcam; the default wide view shows the screen as is
+    cfg = load_config(overrides=["reframing.mode=facecam_split", "reframing.gameplay_center_x=0.45",
+                                 "reframing.gameplay_view=0.45"])
     plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6)
     g = plan.keyframes[0].gameplay
     assert g.x >= int((0.02 + 0.25) * 1920)  # starts right of the facecam box
@@ -97,9 +99,11 @@ def test_crop_is_locked_by_default_and_split_is_a_top_third():
     assert plan.mode == "facecam_split" and len(plan.keyframes) == 1  # no panning unless tracking is asked for
     face = next(p.dest for p in plan.panels if p.name == "facecam")
     game = next(p.dest for p in plan.panels if p.name == "gameplay")
-    assert (face.h, game.h) == (640, 1280)
-    # the gameplay crop is enlarged far less than a full-screen 9:16 crop (608 px wide) would be
-    assert plan.keyframes[0].gameplay.w >= 900
+    # streamer on top, game right under it, and the game is not zoomed in: four fifths of the screen's width,
+    # shrunk to fit (never enlarged), with the pair centred on a blurred fill
+    assert (face.h, game.h) == (640, 760) and game.y == face.y + face.h and face.y > 0
+    assert plan.keyframes[0].gameplay.w >= 0.79 * 1920 and plan.keyframes[0].gameplay.w >= game.w
+    assert plan.panels[0].name == "background"
 
 
 def test_framing_moves_and_zooms_the_locked_crop():
@@ -108,7 +112,7 @@ def test_framing_moves_and_zooms_the_locked_crop():
     plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6, fr)
     g = plan.keyframes[0].gameplay
     assert len(plan.keyframes) == 1 and abs(g.h - 1080 / 1.25) <= 2 and g.y == 0
-    assert abs(g.w / g.h - 1080 / 1280) < 0.01 and any("overlays" in n for n in plan.notes)
+    assert abs(g.w / g.h - 1080 / 760) < 0.01 and any("overlays" in n for n in plan.notes)
 
 
 def test_small_webcam_is_shown_whole_not_blown_up():
@@ -120,11 +124,11 @@ def test_small_webcam_is_shown_whole_not_blown_up():
     assert small.facecam_fit and f.w >= 150 and f.h >= 170          # the whole camera picture, not a strip of it
     assert any("small webcam" in n for n in small.notes)
     g = build_video_graph(small, 60, None)
-    assert "boxblur" in g and "overlay=" in g and g.count("vstack") == 1
+    assert "boxblur" in g and "overlay=" in g and "[base]" in g
     inner = small.facecam_inner                                      # enlarged no more than facecam_max_upscale
     assert inner is not None and inner.h <= f.h * cfg.reframing.facecam_max_upscale + 2 and inner.h <= 640
     big = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6)
-    assert not big.facecam_fit and "boxblur" not in build_video_graph(big, 60, None)
+    assert not big.facecam_fit and "boxblur=24" not in build_video_graph(big, 60, None)   # no blurred webcam fill
 
 
 def test_no_facecam_gameplay_is_wide_not_zoomed():
@@ -155,3 +159,19 @@ def test_upscaled_webcam_comes_from_a_second_input(tmp_path):
     assert find_program(tmp_path) is None                      # the program without its model is not usable
     (tmp_path / "realesrgan" / "models" / "realesrgan-x4plus.bin").write_bytes(b"")
     assert find_program(tmp_path) is not None
+
+
+def test_title_is_a_picture_above_the_streamer_and_captions_are_off(tmp_path):
+    from clipstudio.captions.title_card import render_title
+    from clipstudio.rendering.render import build_video_graph
+    cfg = load_config()
+    assert not cfg.captions.enabled                                   # the clip carries a title only
+    size = render_title("what did bro just do \U0001F62D", tmp_path / "t.png", 1080, 1920)
+    assert size and size[0] <= 1080 * 0.95 and (tmp_path / "t.png").stat().st_size > 0
+    long = render_title("word " * 60, tmp_path / "l.png", 1080, 1920)
+    assert long[0] <= 1080 and long[1] < 1920 * 0.12                  # wrapped and cut to two lines
+    assert render_title("   ", tmp_path / "n.png", 1080, 1920) is None
+    plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6)
+    g = build_video_graph(plan, 60, None, title_input=(1, 100, 80, 0.0))
+    assert "[1:v]format=rgba[titlev]" in g and "overlay=100:80" in g and "enable" not in g
+    assert "enable='lte(t,3.50)'" in build_video_graph(plan, 60, None, title_input=(1, 100, 80, 3.5))

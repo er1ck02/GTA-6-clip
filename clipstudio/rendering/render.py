@@ -120,7 +120,8 @@ def keep_expr(cuts: list[tuple[float, float]]) -> str:
 def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance: EnhanceCfg | None = None,
                       punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None,
                       under_ass: str | None = None, face_input: int | None = None,
-                      chat_input: tuple[int, int, int] | None = None) -> str:
+                      chat_input: tuple[int, int, int] | None = None,
+                      title_input: tuple[int, int, int, float] | None = None) -> str:
     """``under_ass``: a second subtitle file drawn before (under) the captions, e.g. the chat overlay.
     ``face_input``: scale factor of a second input that holds the webcam crop already enlarged (AI upscaled),
     aligned to the clip's first frame; the webcam panel is then drawn from it instead of from the source."""
@@ -172,13 +173,26 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
                     f"[fbg][ffg]overlay={inner.x}:{inner.y}[face];")
         else:
             face = f"{cam}{face_scale(cam_w, top.w, top.h, enhance)}[face];"
-        graph = (
-            f"{head}"
-            f"{face}"
-            f"[gsrc]{crop},{pre_fx(enhance)}scale={bot.w}:{bot.h}:flags=lanczos,setsar=1"
-            f"{gameplay_fx(bot.w, bot.h, enhance, punches)}[game];"
-            f"[face][game]vstack=inputs=2[base]"
-        )
+        if any(p.name == "background" for p in plan.panels):
+            # the pair does not fill 9:16: it sits on a blurred, dimmed copy of the gameplay
+            sw4, sh4 = W // 4 - (W // 4) % 2, H // 4 - (H // 4) % 2
+            graph = (
+                f"{head}"
+                f"{face}"
+                f"[gsrc]{crop},{pre_fx(enhance)}split=2[gfs][gbs];"
+                f"[gfs]scale={bot.w}:{bot.h}:flags=lanczos,setsar=1{gameplay_fx(bot.w, bot.h, enhance, punches)}[game];"
+                f"[gbs]scale={sw4}:{sh4}:force_original_aspect_ratio=increase,crop={sw4}:{sh4},boxblur=10:2,"
+                f"eq=brightness=-0.25:saturation=1.1,scale={W}:{H}:flags=bilinear,setsar=1[bg];"
+                f"[bg][face]overlay={top.x}:{top.y}[bgf];[bgf][game]overlay={bot.x}:{bot.y}[base]"
+            )
+        else:
+            graph = (
+                f"{head}"
+                f"{face}"
+                f"[gsrc]{crop},{pre_fx(enhance)}scale={bot.w}:{bot.h}:flags=lanczos,setsar=1"
+                f"{gameplay_fx(bot.w, bot.h, enhance, punches)}[game];"
+                f"[face][game]vstack=inputs=2[base]"
+            )
     elif plan.mode == "facecam_pip":
         f = kf.facecam
         assert f is not None
@@ -205,6 +219,11 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
         ci, cx, cy = chat_input
         tail += (f"[basec];[{ci}:v]fps={fps:g}:start_time=0,format=rgba[chatv];"
                  f"[basec][chatv]overlay={cx}:{cy}:eof_action=pass:format=auto")
+    if title_input:
+        # (input index, x, y, seconds): the title picture; 0 seconds = for the whole clip
+        ti, tx, ty, tsec = title_input
+        en = f":enable='lte(t,{tsec:.2f})'" if tsec > 0 else ""
+        tail += f"[baset];[{ti}:v]format=rgba[titlev];[baset][titlev]overlay={tx}:{ty}:eof_action=repeat{en}"
     if under_ass:
         tail += f",ass={under_ass}"
     if ass_name:
@@ -292,7 +311,8 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
                 voice_track: int | None = None, enhance: EnhanceCfg | None = None,
                 punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None,
                 under_ass: Path | None = None, face_video: Path | None = None, face_scale_factor: int = 4,
-                chat_video: tuple[Path, int, int] | None = None) -> Path:
+                chat_video: tuple[Path, int, int] | None = None,
+                title_image: tuple[Path, int, int, float] | None = None) -> Path:
     src = Path(media.path)
     dur = end - start
     out_dur = dur - sum(b - a for a, b in (cuts or []))
@@ -311,9 +331,12 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
     if under_ass is not None and under_ass.parent.resolve() != workdir.resolve():
         raise ValueError("overlay subtitle file must live in the clip output folder")
     use_face = face_video is not None and plan.mode == "facecam_split"
-    chat_in = (2 if use_face else 1, chat_video[1], chat_video[2]) if chat_video else None
+    n_in = 1 + int(use_face)
+    chat_in = (n_in, chat_video[1], chat_video[2]) if chat_video else None
+    n_in += int(bool(chat_video))
+    title_in = (n_in, title_image[1], title_image[2], title_image[3]) if title_image else None
     graph = build_video_graph(plan, fps, ass_name, enhance, punches, cuts, under_ass.name if under_ass else None,
-                              face_scale_factor if use_face else None, chat_in)
+                              face_scale_factor if use_face else None, chat_in, title_in)
     n_tracks = max(1, len(media.audio_streams)) if acfg.tracks == "all" else 1
     agraph = build_audio_graph(n_tracks, voice_track, acfg, cuts)
     afilt = _audio_filters(acfg, src, start, dur, agraph) if media.has_audio else ""
@@ -327,6 +350,8 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
             c += ["-i", str(face_video)]
         if chat_video:
             c += ["-i", str(chat_video[0])]
+        if title_image:
+            c += ["-i", str(title_image[0])]
         c += ["-filter_complex", graph, "-map", "[vout]"]
         if media.has_audio:
             # same for audio: silence-pad a late start and a short end, so both streams are exactly out_dur long

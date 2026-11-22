@@ -147,9 +147,13 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
                if i in (0, len(keys) - 1) or not (keys[i - 1].gameplay == k.gameplay == keys[i + 1].gameplay)]
         return out
 
+    def view_height() -> int:
+        """Height of a full-width gameplay panel that shows ``gameplay_view`` of the source's width."""
+        return min(_even(H * 2 / 3), _even(W * sh / max(1.0, rcfg.gameplay_view * sw)))
+
     if mode == "gameplay" and rcfg.gameplay_fill == "wide":
-        gh = _even(H * 2 / 3)
-        gy = _even(H * 0.21)   # leaves a band above for the title and captions, below the apps' top bar
+        gh = view_height()
+        gy = _even((H - gh) * 0.45)   # a band above for the title, below the apps' top bar
         rects = gameplay_keys(W / gh, avoid=False)
         notes.append("no facecam: gameplay shown wide (less zoom) over a blurred fill, text in the band above it")
         return CropPlan(
@@ -200,14 +204,21 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
             inner = PixelRect(x=(W - iw) // 2, y=(ph - ih) // 2, w=iw, h=ih)
             notes.append(f"small webcam ({cam_px.w}x{cam_px.h} px): shown whole over a blurred fill, "
                          f"enlarged {ih / max(1, face_src.h):.1f}x instead of {W / max(1, _cover_crop(cam_px, W / ph, fx, fy).w):.1f}x")
-        rects = gameplay_keys(W / (H - ph), avoid=True)
-        face_dest = PixelRect(x=0, y=0, w=W, h=ph)
+        # streamer on top, game below. The game panel shows gameplay_view of the screen's width; what is left
+        # of the 9:16 frame above and below the pair is a blurred fill (the band above carries the title)
+        gh = min(H - ph, view_height())
+        top = _even((H - ph - gh) * 0.58)   # a little low: room above for a two-line title
+        rects = gameplay_keys(W / gh, avoid=gh >= H - ph)   # a wide view cannot step around the webcam anyway
+        face_dest = PixelRect(x=0, y=top, w=W, h=ph)
+        panels = [Panel(name="facecam", dest=face_dest), Panel(name="gameplay", dest=PixelRect(x=0, y=top + ph, w=W, h=gh))]
+        if ph + gh < H:
+            panels.insert(0, Panel(name="background", dest=PixelRect(x=0, y=0, w=W, h=H)))
         return CropPlan(
             mode=mode, source_width=sw, source_height=sh, out_width=W, out_height=H,
-            panels=[Panel(name="facecam", dest=face_dest), Panel(name="gameplay", dest=PixelRect(x=0, y=ph, w=W, h=H - ph))],
+            panels=panels,
             keyframes=dedupe([CropKeyframe(t=t, gameplay=g, facecam=face_src) for (t, _), g in zip(path, rects)]),
             protected_regions=[face_dest],
-            caption_band=(max(safe_top, ph + int(0.02 * H)), safe_bottom),
+            caption_band=(max(safe_top, top + ph + int(0.02 * H)), safe_bottom),
             facecam_fit=fit, facecam_inner=inner if fit else None, source=src_source, notes=notes,
         )
 

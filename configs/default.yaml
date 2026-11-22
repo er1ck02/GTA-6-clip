@@ -57,6 +57,7 @@ chat_overlay:              # the last few chat messages, bottom-left of the clip
 
 reframing:
   mode: auto               # auto | gameplay | fit_blur | facecam_split | facecam_pip
+  gameplay_view: 0.8       # share of the game's width shown (1.0 = whole screen); lower = more zoomed in
   gameplay_center_x: 0.5   # default crop centre (0..1)
   tracking: false          # true: follow the action with eased keyframes (stream overlays can mislead it)
   # facecam_region: {x: 0.02, y: 0.04, w: 0.24, h: 0.30}   # manual override of facecam auto-detection
@@ -83,7 +84,7 @@ video:
   fps: 60                  # or "source"
 
 captions:
-  enabled: true
+  enabled: false           # spoken-word captions (off: the clip carries a title only)
   preset: bold_viral       # clean_gaming | bold_viral | minimal | high_energy | <your preset>
   placement: top           # top: where the title card sits, off the action | manual: use vertical_position
   vertical_position: 0.72
@@ -106,7 +107,7 @@ enhance:
   punch_zoom: 1.10         # quick zoom on the peak moment and on-screen events (1.0 = off)
   punch_max: 3
   hook_title: true         # title card on the video (only for titles you or the LLM wrote, never a transcript line)
-  hook_title_seconds: 3.5  # then it fades and the captions take its place; 0 = the whole clip
+  hook_title_seconds: 0    # 0 = the whole clip
   face_upscale: auto       # Real-ESRGAN on a small webcam, if installed under models/realesrgan (off | auto | on)
   trim_black_edges: true      # cut black frames at clip edges (not when you set start/end yourself)
 

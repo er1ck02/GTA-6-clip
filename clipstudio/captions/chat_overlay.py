@@ -69,7 +69,7 @@ def chat_region(plan: CropPlan, cfg: ChatOverlayCfg, caption_bottom: int | None 
     lines = cfg.lines
     max_w = cfg.width * W
     face = next((p.dest for p in plan.panels if p.name == "facecam"), None)
-    in_face = cfg.position == "facecam" and face is not None and face.y == 0 and face.w == W
+    in_face = cfg.position == "facecam" and face is not None and face.w == W
     if in_face:
         # bottom-left corner of the streamer's section: off the gameplay, under the face, clear of the captions
         bottom = face.y + face.h - int(0.01 * H)

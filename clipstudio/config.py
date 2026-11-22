@@ -122,7 +122,7 @@ class HighlightsCfg(_Strict):
     # the signs. The streamer saying "it's insane" in a conversation, with chat not reacting, is not a moment.
     chat_must_react: bool = True
     # a clip that is dark for most of its length (a night scene, a dark room) is unreadable on a phone
-    max_dark_share: float = Field(0.6, ge=0, le=1)
+    max_dark_share: float = Field(0.7, ge=0, le=1)
     # Never queue these for posting without a person looking: clips whose words point to nudity or sexual
     # content (the game has such scenes, and platforms demonetise them). Matched as whole words.
     hold_words: list[str] = Field(default_factory=lambda: [
@@ -195,6 +195,10 @@ class ReframingCfg(_Strict):
     # a blurred fill, with the title and captions in the band above it. "full" fills the whole 9:16 frame with
     # a 608 px wide crop (enlarged 1.78x), which looks zoomed in and soft on stream recordings.
     gameplay_fill: Literal["wide", "full"] = "wide"
+    # How much of the game's width the gameplay picture shows (1.0 = the whole 16:9 frame, letterboxed).
+    # 0.8 shows four fifths of the screen at full sharpness (the picture is shrunk, not enlarged); the old
+    # look (0.475) cut the screen in half and read as zoomed in. The rest of the 9:16 frame is a blurred fill.
+    gameplay_view: float = Field(0.8, ge=0.3, le=1.0)
     # centre the locked gameplay crop on where the action is over the whole clip (one position, no panning),
     # moving at most this far from gameplay_center_x (fraction of source width). 0 = always the centre.
     focus_max_shift: float = Field(0.14, ge=0, le=0.4)
@@ -363,7 +367,8 @@ BUILTIN_CAPTION_PRESETS: dict[str, dict[str, Any]] = {
 
 
 class CaptionsCfg(_Strict):
-    enabled: bool = True
+    # spoken-word captions; off by default: the clip carries a title only
+    enabled: bool = False
     word_level: bool = True
     preset: str = "bold_viral"
     style: dict[str, Any] = Field(default_factory=dict, description="overrides applied on top of the preset")
@@ -432,7 +437,8 @@ class EnhanceCfg(_Strict):
     # title card at the top of the gameplay picture. Shown only for a title written by a person or by the
     # LLM re-rank: the automatic fallback title is a line of the transcript, which is not a hook.
     hook_title: bool = True
-    hook_title_seconds: float = Field(3.5, ge=0, le=600)   # then it fades out; 0 = stays up for the whole clip
+    hook_title_seconds: float = Field(0, ge=0, le=600)     # 0 = stays up for the whole clip
+    title_size: float = Field(0.034, gt=0.01, le=0.1)      # title text height as a fraction of frame height
     # AI upscaling of the webcam picture with Real-ESRGAN, when the program is installed under
     # <models_dir>/realesrgan/ (nothing is downloaded by Clip Studio itself). "auto": only for a small webcam
     # (at most face_upscale_max_pixels in the stream), where it matters and costs about a minute a clip;
