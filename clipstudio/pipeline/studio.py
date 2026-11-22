@@ -54,7 +54,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 8,
-                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 3, "captions": 6, "render": 7, "qc": 5, "platforms": 1, "edges": 1, "framing": 2, "chat_overlay": 2}
+                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 3, "captions": 6, "render": 7, "qc": 5, "platforms": 1, "edges": 1, "framing": 2, "chat_overlay": 3}
 
 
 @dataclass
@@ -785,9 +785,10 @@ class Studio:
             from clipstudio.captions.chat_overlay import write_chat_ass
             msgs = []
             for m in ChatTrack.load(p.p("chat")).messages:
-                if not (c.start - 8.0 <= m.t < c.end) or any(a <= m.t < b for a, b in c.cuts):
+                mt = m.t - co.lead_seconds  # shown earlier: chat lags what it reacts to
+                if not (c.start - 8.0 <= mt < c.end) or any(a <= mt < b for a, b in c.cuts):
                     continue
-                t = (cut_time(m.t, c.cuts) if c.cuts and m.t >= c.start else m.t) - c.start
+                t = (cut_time(mt, c.cuts) if c.cuts and mt >= c.start else mt) - c.start
                 msgs.append(ChatMessage(t=round(t, 3), user=m.user, text=m.text))
             n = write_chat_ass(msgs, plan, co, c.output_duration, f_chat, cap_y)
             f_meta.write_text(json.dumps({"lines": n, "messages_in_window": len(msgs)}))

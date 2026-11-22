@@ -68,7 +68,7 @@ def write_chat_ass(messages: list[ChatMessage], plan: CropPlan, cfg: ChatOverlay
     W, H = plan.out_width, plan.out_height
     fs = max(12, int(round(cfg.size * H)))
     line_h = int(round(fs * 1.32))
-    bottom = plan.caption_band[1] - int(0.004 * H)
+    bottom = int(cfg.bottom * H)
     lines = cfg.lines
     if caption_bottom is not None:  # stay clear of the captions: fewer lines if the gap is small
         lines = max(0, min(lines, (bottom - caption_bottom - int(0.012 * H)) // line_h))

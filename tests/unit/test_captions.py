@@ -116,7 +116,8 @@ def test_chat_overlay_lines_roll_up_bottom_left(tmp_path):
     ys = [int(y) for y in re.findall(r"\\pos\(\d+,(\d+)\)", ass)]
     xs = [int(x) for x in re.findall(r"\\pos\((\d+),", ass)]
     # under the captions, above the bottom safe margin, on the left
-    assert ys and all(track.layout.baseline_y < y <= plan.caption_band[1] for y in ys) and max(xs) < plan.out_width * 0.1
+    assert ys and all(track.layout.baseline_y < y <= co.bottom * plan.out_height for y in ys)
+    assert max(xs) < plan.out_width * 0.1
     # too few messages: no box
     assert write_chat_ass(msgs[:2], plan, co, 10.0, tmp_path / "none.ass") == 0
 

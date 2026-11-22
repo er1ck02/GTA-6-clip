@@ -202,6 +202,12 @@ class ChatOverlayCfg(_Strict):
     margin_x: float = Field(0.04, ge=0, le=0.3)
     max_age: float = Field(9.0, gt=1, le=60)           # seconds a message stays up when chat is slow
     min_messages: int = Field(3, ge=1)                 # fewer than this in the clip: no chat box at all
+    # chat reaches the recording a few seconds after the thing it reacts to (typing time plus stream delay):
+    # every message is shown this many seconds earlier, so the reactions land on the moment
+    lead_seconds: float = Field(3.0, ge=0, le=15)
+    # bottom edge of the chat block as a fraction of frame height (a little into the apps' bottom text area,
+    # which sits lower than the caption safe margin on the left side)
+    bottom: float = Field(0.875, ge=0.3, le=0.98)
     font: list[str] = ["Inter", "Roboto", "Segoe UI", "Arial", "DejaVu Sans"]
 
 
