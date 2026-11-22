@@ -251,10 +251,18 @@ def youtube_live(query: str, limit: int = 40, timeout: float = 90) -> list[LiveC
 
 def discover_live(channels: list[str], check: Probe, keywords: list[str] | None = None,
                   workers: int = 8, idle: Idle | None = None,
-                  search: Callable[[], list[LiveCheck]] | None = None) -> list[LiveCheck]:
+                  search: Callable[[], list[LiveCheck]] | None = None,
+                  category: Callable[[], list[LiveCheck]] | None = None) -> list[LiveCheck]:
     """Live streams worth standing in, most viewers first: big Twitch streamers (``production.discover_channels``)
     plus a YouTube live search (``search``), each with a title matching ``keywords``. Used to keep every slot
-    filled once your own past streamers run out."""
+    filled once your own past streamers run out. ``category`` (Twitch's GTA VI directory, most viewers first) is
+    tried first; its streams don't need a keyword in the title, but sleep/AFK ones are still skipped."""
+    first: list[LiveCheck] = []
+    if category is not None:
+        try:
+            first = [r for r in category() if r.live and not (idle and idle(r))]
+        except Exception as e:  # noqa: BLE001 - best effort
+            log.warning("Twitch category lookup failed: %s", e)
     names = [c.lower().lstrip("@") for c in channels if c and re.fullmatch(r"@?[\w]+", c)]
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
         found = ex.submit(search) if search else None
@@ -265,7 +273,8 @@ def discover_live(channels: list[str], check: Probe, keywords: list[str] | None 
             except Exception as e:  # noqa: BLE001 - best effort
                 log.warning("live search failed: %s", e)
     live = [r for r in res if r.live and title_matches(r.title, list(keywords or [])) and not (idle and idle(r))]
-    return sorted(live, key=lambda r: -r.viewers)
+    seen = {channel_of(r.url) for r in first}
+    return first + sorted((r for r in live if channel_of(r.url) not in seen), key=lambda r: -r.viewers)
 
 
 # ------------------------------------------------------------------ planning

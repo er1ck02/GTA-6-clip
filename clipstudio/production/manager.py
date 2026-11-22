@@ -243,8 +243,12 @@ class ProductionManager:
 
     def _discover(self) -> list[L.LiveCheck]:
         q = self.pc.discover_youtube_search
+        from clipstudio.production import twitch
+
+        game = self.pc.discover_twitch_category
         return L.discover_live(self.pc.discover_channels, self.check, self.pc.discover_keywords, idle=self._idle,
-                               search=(lambda: L.youtube_live(q)) if q else None)
+                               search=(lambda: L.youtube_live(q)) if q else None,
+                               category=(lambda: twitch.top_streams(game)) if game else None)
 
     def _drop_idle(self) -> bool:
         """Streams recording right now that turned into a sleep/AFK/Just Chatting (or non-GTA) stream are stopped;
