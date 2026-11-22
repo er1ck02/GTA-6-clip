@@ -267,6 +267,45 @@ def payoff_evidence(f: dict[str, float], text: str, sig: "Signals", start: float
     return ev
 
 
+def extend_setup(start: float, end: float, v: VisualTrack, sents: list[Sentence], max_back: float,
+                 max_dur: float) -> float:
+    """New start time: pulled back over the build-up to the clip, or ``start`` when there is none.
+
+    Walks back one second at a time while the game picture is clearly in motion (twice the source's typical
+    level), allowing two calm seconds in a row, and stops at a scene cut, at ``max_back`` seconds and at
+    ``max_dur`` total length. The result never lands inside a sentence."""
+    fps = v.sample_fps
+    mo = np.asarray(v.motion, np.float32)
+    if max_back <= 0 or not mo.size or start < 1.0:
+        return start
+    thr = 2.0 * max(v.motion_median, 1e-6)
+
+    def active(t0: float) -> bool:
+        seg = mo[int(t0 * fps): int((t0 + 1.0) * fps)]
+        return bool(seg.size) and float(seg.mean()) >= thr
+
+    if not (active(start) or active(max(0.0, start - 1.0))):
+        return start  # the clip itself does not open on action: nothing to build up to
+    limit = max(0.0, start - max_back, end - max_dur)
+    cut = max((c for c in v.scene_cuts if limit < c <= start - 0.5), default=None)
+    if cut is not None:
+        limit = cut
+    new, calm, t = start, 0, start - 1.0
+    while t >= limit - 1e-6:
+        if active(t):
+            new, calm = t, 0
+        else:
+            calm += 1
+            if calm > 2:
+                break
+        t -= 1.0
+    new = max(new, limit)
+    for s in sents:  # do not start mid-sentence: take the whole sentence if it fits, else start after it
+        if s.start < new < s.end:
+            new = s.start - 0.25 if s.start - 0.25 >= max(0.0, limit - 2.0) else s.end + 0.1
+    return round(min(start, max(0.0, new)), 3) if start - new >= 1.0 else start
+
+
 def _category(text: str, f: dict[str, float]) -> str:
     toks = set(_norm(text).split())
     if toks & LAUGH_WORDS:
@@ -360,6 +399,8 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
                                                      else None)
             floor = max(cfg.minimum_duration, 0.75 * cfg.target_duration)
             start, end = tighten(start, end, inside, loud, cfg.edge_keep, floor, keep_pt)
+        if sig.visual is not None and cfg.setup_seconds > 0:
+            start = extend_setup(start, end, sig.visual, sents, cfg.setup_seconds, cfg.maximum_duration)
         dur = end - start
         if dur < cfg.minimum_duration - 1e-6 or dur > cfg.maximum_duration + 1e-6:
             return

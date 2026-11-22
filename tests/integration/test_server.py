@@ -139,7 +139,7 @@ def test_live_panel_api(tmp_path):
     chat = [{"time_in_seconds": float(t), "message": "hi", "author": {"name": "u"}} for t in range(0, 90, 3)]
     (tmp_path / "s.chat.json").write_text(json.dumps(chat))
     cfg = load_config(overrides=[f"paths.data_dir={tmp_path / 'data'}", "live.auto_process=false",
-                                 "upload.allow_channels=[tester]"])
+                                 "live.chat_known_seconds=20", "upload.allow_channels=[tester]"])
     c = TestClient(create_app(cfg))
     assert c.get("/api/live").json()["active"] is False
     r = c.post("/api/live/start", json={"file": str(src), "channel": "tester", "chat": str(tmp_path / "s.chat.json"),

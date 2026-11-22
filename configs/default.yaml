@@ -113,7 +113,7 @@ export:
 
 live:                      # clipstudio live: watch a stream, keep only the moments that trigger
   buffer_seconds: 90       # older footage is deleted unless a saved moment needs it
-  pre_seconds: 35          # kept before the trigger
+  pre_seconds: 50          # kept before the trigger (build-up: a race before the finish line)
   post_seconds: 15         # kept after the trigger
   threshold: 1.0           # higher = fewer, bigger moments
   cooldown_seconds: 45

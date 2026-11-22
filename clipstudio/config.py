@@ -116,6 +116,11 @@ class HighlightsCfg(_Strict):
     # live mode does not edit it at all. 0 turns the check off.
     min_evidence: int = Field(2, ge=0, le=4)
     edge_keep: float = Field(2.5, ge=0, le=5)   # quiet seconds left at each edge after tightening
+    # Build-up: when the footage right before a clip is the same continuous action (a race before the finish
+    # line, a chase before the crash), the start is pulled back by up to this many seconds. It stops at a scene
+    # cut and where the game picture goes calm (menus, standing around while talking to chat), so unrelated
+    # footage is not pulled in. Needs the visual analysis. 0 = off.
+    setup_seconds: float = Field(12.0, ge=0, le=30)
     weights: ScoringWeights = ScoringWeights()
 
     @model_validator(mode="after")
@@ -432,7 +437,7 @@ class LiveCfg(_Strict):
     """Live mode: watch a stream with a short rolling buffer and keep only the moments that trigger."""
     buffer_seconds: float = Field(90, ge=20, le=900)     # footage older than this is deleted unless a moment needs it
     segment_seconds: float = Field(2.0, ge=1, le=10)
-    pre_seconds: float = Field(35, ge=5)                  # kept before the trigger (the setup)
+    pre_seconds: float = Field(50, ge=5)                  # kept before the trigger (the build-up the picker can use)
     post_seconds: float = Field(15, ge=3)                 # kept after the trigger (the payoff and reaction)
     threshold: float = Field(1.0, gt=0)                   # trigger score needed to save a moment
     cooldown_seconds: float = Field(45, ge=0)             # no new moment this soon after the last one's end
@@ -442,6 +447,8 @@ class LiveCfg(_Strict):
     chat_lift: float = Field(3.0, gt=1)                   # chat this many times busier than normal counts fully
     chat_min_messages: int = Field(10, ge=1)              # messages in 5 s before chat counts at all (a 3-message
                                                           # "spike" in an empty chat is not a reaction)
+    chat_known_seconds: float = Field(120, ge=0)          # chat read this long before a quiet chat lets a loud
+                                                          # sound count on its own
     hype_min_messages: int = Field(5, ge=1)               # reaction messages (LUL, W, no way...) in 5 s, likewise
     clip_commands: list[str] = Field(default_factory=lambda: ["clip", "clip it", "clip that", "clipit", "!clip"])
     clip_command_count: int = Field(3, ge=1)              # this many viewers asking for a clip within 10 s triggers

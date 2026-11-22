@@ -30,7 +30,8 @@ CHAT_WINDOW = 5
 COMMAND_BACK, COMMAND_AHEAD = 4, 6  # "clip it" comes a few seconds after the moment
 PEAK_HOLD = 5   # after the score first crosses the threshold, wait this long and fire at the strongest second
 SETTLE = 6  # seconds of chat that must have arrived after a second before it is judged (reactions lag)
-SOLO_MIN, SOLO_FACTOR = 0.3, 0.8  # a signal counts as present from 0.3; alone it is scaled down by 0.8
+SOLO_MIN, SOLO_FACTOR = 0.3, 0.8
+CHAT_KNOWN = 120  # seconds of chat history before a quiet chat lets a loud sound count on its own  # a signal counts as present from 0.3; alone it is scaled down by 0.8
 
 
 @dataclass
@@ -85,6 +86,8 @@ class TriggerDetector:
 
     def add_chat(self, t: float, text: str) -> None:
         s = int(t)
+        if not self.has_chat:
+            self.first_chat = t
         self.has_chat = True
         self.chat[s] += 1
         low = text.lower()
@@ -112,6 +115,7 @@ class TriggerDetector:
             span = max(1, s - base_from)
             rate5 = self._window(self.chat, base_from, s) / span * CHAT_WINDOW
             self._last_rate5 = rate5
+            self._chat_age = s - getattr(self, "first_chat", s)
             now5 = self._window(self.chat, s, s + CHAT_WINDOW)
             if now5 >= c.chat_min_messages and span >= 10:
                 # the floor on the baseline keeps a near-empty chat from turning a handful of messages into a
@@ -137,7 +141,10 @@ class TriggerDetector:
         # a huge audio jump (2 x audio_jump_db) counts on its own only where chat is too quiet to react; in a busy
         # chat a loud game sound nobody reacts to is not a moment (on Ludwig's stream two thirds of the moments
         # were exactly that)
-        quiet = getattr(self, "_last_rate5", 0.0) < self.cfg.chat_min_messages / self.cfg.chat_lift
+        # until chat has been read for live.chat_known_seconds its "normal" is unknown (and live chat arrives in late
+        # batches at first), so it is not treated as quiet: on Ludwig the first three moments were audio-only
+        quiet = (getattr(self, "_chat_age", 0) >= self.cfg.chat_known_seconds
+                 and getattr(self, "_last_rate5", 0.0) < self.cfg.chat_min_messages / self.cfg.chat_lift)
         return max(combined, (0.5 if quiet else 0.4) * sig["audio"])
 
     def evaluate(self, head: float) -> list[Trigger]:
