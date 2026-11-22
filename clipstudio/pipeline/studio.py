@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from clipstudio import __version__
+from clipstudio.core.compat import replace_file, write_text_atomic
 from clipstudio.audio_analysis.loudness import analyze_loudness
 from clipstudio.captions.engine import build_caption_track, write_ass, write_srt
 from clipstudio.config import Config, Rect
@@ -88,9 +89,7 @@ class Project:
         return Edits.model_validate_json(f.read_text()) if f.exists() else Edits()
 
     def save_edits(self, e: Edits) -> None:
-        tmp = self.p("edits").with_suffix(".tmp")
-        tmp.write_text(e.model_dump_json(indent=2, exclude_none=True))
-        tmp.replace(self.p("edits"))
+        write_text_atomic(self.p("edits"), e.model_dump_json(indent=2, exclude_none=True))
 
 
 @dataclass
@@ -457,7 +456,7 @@ class Studio:
                  "-vf", "scale=-2:'min(720,ih)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
                  "-g", "30", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-ac", "2",
                  "-movflags", "+faststart", str(tmp)])
-            tmp.replace(p.p("preview"))
+            replace_file(tmp, p.p("preview"))
 
         key = key_of("preview_proxy", 1, p.state.data["source"]["fingerprint"])
         log.info("source codec %s is not browser-playable; building a 720p H.264 preview proxy", media.video_codec)

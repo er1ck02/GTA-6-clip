@@ -16,6 +16,7 @@ from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from clipstudio.core.compat import write_text_atomic
 from clipstudio.config import Config
 from clipstudio.core import events
 from clipstudio.core.errors import ClipStudioError, MediaError
@@ -129,11 +130,8 @@ class LiveSession:
     # ------------------------------------------------------------ queue file
     def save_queue(self) -> None:
         with self._qlock:  # the recorder loop and the editing worker both update it
-            self.out.mkdir(parents=True, exist_ok=True)
             doc = {"channel": self.channel, "moments": [asdict(m) for m in self.moments]}
-            tmp = self.out / "queue.json.tmp"
-            tmp.write_text(json.dumps(doc, indent=2))
-            tmp.replace(self.out / "queue.json")
+            write_text_atomic(self.out / "queue.json", json.dumps(doc, indent=2))
 
     # ------------------------------------------------------------ capture
     def _on_trigger(self, tr: Trigger) -> None:

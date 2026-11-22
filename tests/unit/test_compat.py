@@ -139,3 +139,41 @@ def test_facecam_prefers_an_edge_face_over_a_frequent_mid_screen_one():
     faces, hit = _cluster_faces(per_frame)
     assert abs(faces[0].cx - cam.cx) < 0.01 and hit == 0.5
     assert overlay_prior(game) < 0.3 and overlay_prior(cam) == 1.0
+
+
+def test_replace_file_retries_windows_sharing_violation(tmp_path, monkeypatch):
+    """A destination held open by a reader (WinError 5 on Windows) is retried, not fatal."""
+    import os
+
+    from clipstudio.core import compat
+
+    real = os.replace
+    calls = {"n": 0}
+
+    def flaky(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(13, "Access is denied")
+        real(src, dst)
+
+    monkeypatch.setattr(compat.os, "replace", flaky)
+    dst = tmp_path / "project.json"
+    dst.write_text("old")
+    compat.write_text_atomic(dst, '{"ok": true}')
+    assert dst.read_text() == '{"ok": true}'
+    assert calls["n"] == 3
+    assert list(tmp_path.glob("*.tmp")) == []  # temp file never left behind
+
+
+def test_replace_file_gives_up_eventually(tmp_path, monkeypatch):
+    import pytest
+
+    from clipstudio.core import compat
+
+    def locked(src, dst):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(compat.os, "replace", locked)
+    with pytest.raises(PermissionError):
+        compat.write_text_atomic(tmp_path / "x.json", "{}")
+    assert list(tmp_path.glob("*.tmp")) == []

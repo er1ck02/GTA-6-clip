@@ -20,6 +20,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
+from clipstudio.core.compat import replace_file
 from clipstudio.core.errors import DependencyMissing, MediaError
 from clipstudio.core.logging import get_logger
 from clipstudio.media.ffmpeg import ffmpeg_bin
@@ -266,5 +267,5 @@ def concat_segments(segs: list[Segment], dst: Path) -> Path:
     lst.unlink(missing_ok=True)
     if cp.returncode != 0:
         raise MediaError(f"could not join segments: {cp.stderr.decode(errors='replace')[-400:]}")
-    tmp.replace(dst)
+    replace_file(tmp, dst)
     return dst

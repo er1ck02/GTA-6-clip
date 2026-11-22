@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
+from clipstudio.core.compat import replace_file
 from clipstudio.core.logging import get_logger
 
 log = get_logger("vision")
@@ -196,7 +197,7 @@ def ensure_blazeface(models_dir: Path, download: bool = True) -> Path | None:
             f.write(r.read())
         if tmp.stat().st_size < 100_000:
             raise RuntimeError("download too small")
-        tmp.replace(p)
+        replace_file(tmp, p)
         return p
     except Exception as e:  # noqa: BLE001
         log.warning("BlazeFace model unavailable (%s)", e)

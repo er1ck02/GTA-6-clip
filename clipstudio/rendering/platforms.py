@@ -12,6 +12,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from clipstudio.core.compat import replace_file
 from clipstudio.config import ExportCfg, PlatformPreset
 from clipstudio.core.logging import get_logger
 from clipstudio.media.ffmpeg import ffmpeg_bin, ffprobe_bin, probe, run
@@ -90,7 +91,7 @@ def export_platforms(master: Path, out_dir: Path, ecfg: ExportCfg, title: str, d
             cmd += ["-c", "copy"]
         cmd += ["-movflags", "+faststart", str(tmp)]
         run(cmd)
-        tmp.replace(dst)
+        replace_file(tmp, dst)
         trimmed = info.duration > preset.max_duration + 0.05
         if trimmed:
             log.warning("%s: clip is %.1fs, %s allows %.0fs; the copy was cut at the limit",
