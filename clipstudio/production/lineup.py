@@ -342,7 +342,7 @@ def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, 
     if not substitute or room <= 0:
         if substitute and target:
             for p in waiting:
-                p.note = f"{p.wanted} is {p.note}; {target} streams are already recording"
+                p.note = f"{p.wanted} is {p.note}; all stream slots are full"
         return plans
     lineup_names = {p.wanted for p in plans}
     pool = [c for c in ranked if c.channel not in lineup_names and c.channel not in busy][:max_candidates]
@@ -372,7 +372,7 @@ def plan_lineup(lineup: list[dict], ranked: list[PastChannel], check: Probe, *, 
 
     for p in waiting:
         if room <= 0:
-            p.note = f"{p.wanted} is {p.note}; {target} streams are already recording"
+            p.note = f"{p.wanted} is {p.note}; all stream slots are full"
             continue
         if not live_pool:
             why = "none of your past streamers" + (f" streaming {'/'.join(keywords)}" if keywords else "")
