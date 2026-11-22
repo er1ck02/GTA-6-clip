@@ -65,7 +65,7 @@ def test_split_gameplay_crop_steps_off_the_facecam():
 
 def test_tracking_path_becomes_constant_size_keyframes():
     from clipstudio.core.models import ActionTrack
-    cfg = load_config(overrides=["reframing.mode=gameplay"])
+    cfg = load_config(overrides=["reframing.mode=gameplay", "reframing.tracking=true"])
     tr = ActionTrack(method="test", sample_fps=4, smoothed=[(0.0, 0.3), (2.0, 0.3), (4.0, 0.7), (6.0, 0.7)])
     plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, None, tr)
     xs = [k.gameplay.x for k in plan.keyframes]
@@ -81,3 +81,16 @@ def test_pip_box_is_protected_from_captions():
     plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6)
     pip = next(p for p in plan.panels if p.name == "facecam").dest
     assert plan.protected_regions == [pip] and plan.caption_band[0] > pip.y + pip.h
+
+
+def test_crop_is_locked_by_default_and_split_is_a_top_third():
+    from clipstudio.core.models import ActionTrack
+    cfg = load_config(overrides=["reframing.mode=auto"])
+    tr = ActionTrack(method="test", sample_fps=4, smoothed=[(0.0, 0.3), (2.0, 0.3), (4.0, 0.7), (6.0, 0.7)])
+    plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), tr, 0.6)
+    assert plan.mode == "facecam_split" and len(plan.keyframes) == 1  # no panning unless tracking is asked for
+    face = next(p.dest for p in plan.panels if p.name == "facecam")
+    game = next(p.dest for p in plan.panels if p.name == "gameplay")
+    assert (face.h, game.h) == (640, 1280)
+    # the gameplay crop is enlarged far less than a full-screen 9:16 crop (608 px wide) would be
+    assert plan.keyframes[0].gameplay.w >= 900

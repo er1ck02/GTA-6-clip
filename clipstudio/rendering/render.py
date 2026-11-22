@@ -15,7 +15,7 @@ log = get_logger("render")
 
 
 def lerp_expr(times: list[float], values: list[int]) -> str:
-    """FFmpeg expression in ``t`` that interpolates linearly between keyframes and holds at the ends.
+    """FFmpeg expression in ``t`` that eases between keyframes (smoothstep) and holds at the ends.
 
     Values are snapped to even pixels so chroma planes stay aligned.
     """
@@ -24,7 +24,8 @@ def lerp_expr(times: list[float], values: list[int]) -> str:
     parts = str(values[-1])
     for i in range(len(times) - 2, -1, -1):
         t0, t1, v0, v1 = times[i], times[i + 1], values[i], values[i + 1]
-        seg = f"{v0}+({v1 - v0})*(t-{t0:.3f})/{max(1e-3, t1 - t0):.3f}"
+        u = f"((t-{t0:.3f})/{max(1e-3, t1 - t0):.3f})"
+        seg = f"{v0}+({v1 - v0})*{u}*{u}*(3-2*{u})"  # smoothstep: every move eases in and out
         parts = f"if(lt(t,{t1:.3f}),{seg},{parts})"
     parts = f"if(lt(t,{times[0]:.3f}),{values[0]},{parts})"
     return f"'2*trunc(({parts})/2)'"
@@ -78,8 +79,23 @@ def gameplay_fx(w: int, h: int, enhance: EnhanceCfg | None, punches: list[float]
         if enhance.contrast > 0 or enhance.vibrance > 0:
             fx += f",eq=contrast={1 + enhance.contrast:.3f}:saturation={1 + enhance.vibrance:.3f}"
         if enhance.sharpen > 0:
-            fx += f",unsharp=5:5:{enhance.sharpen:.2f}:5:5:0"
+            # contrast-adaptive: sharpens soft detail and leaves hard edges (and compression blocks) alone
+            fx += f",cas={min(1.0, enhance.sharpen):.2f}"
     return fx
+
+
+def pre_fx(enhance: EnhanceCfg | None, strong: bool = False) -> str:
+    """Filters run on a source crop before it is enlarged: remove the recording's compression blocks.
+
+    ``strong`` is for a small webcam picture that is enlarged several times over."""
+    if not enhance or not enhance.deblock:
+        return ""
+    return "deblock=filter=weak:block=8,hqdn3d=2:2:5:5," if strong else "deblock=filter=weak:block=8,"
+
+
+def face_fx(enhance: EnhanceCfg | None) -> str:
+    """Light sharpening for the enlarged webcam panel."""
+    return f",cas={min(1.0, enhance.sharpen + 0.05):.2f}" if enhance and enhance.sharpen > 0 else ""
 
 
 def keep_expr(cuts: list[tuple[float, float]]) -> str:
@@ -93,7 +109,8 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
     W, H = plan.out_width, plan.out_height
     crop = gameplay_crop(plan)
     if plan.mode == "gameplay":
-        graph = f"[0:v]{crop},scale={W}:{H}:flags=lanczos,setsar=1{gameplay_fx(W, H, enhance, punches)}[base]"
+        graph = (f"[0:v]{crop},{pre_fx(enhance)}scale={W}:{H}:flags=lanczos,setsar=1"
+                 f"{gameplay_fx(W, H, enhance, punches)}[base]")
     elif plan.mode == "fit_blur":
         fg = next(p.dest for p in plan.panels if p.name == "gameplay")
         sw, sh = W // 4 - (W // 4) % 2, H // 4 - (H // 4) % 2
@@ -111,8 +128,10 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
         bot = next(p.dest for p in plan.panels if p.name == "gameplay")
         graph = (
             f"[0:v]split=2[fsrc][gsrc];"
-            f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},scale={top.w}:{top.h}:flags=lanczos,setsar=1[face];"
-            f"[gsrc]{crop},scale={bot.w}:{bot.h}:flags=lanczos,setsar=1{gameplay_fx(bot.w, bot.h, enhance, punches)}[game];"
+            f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},{pre_fx(enhance, strong=True)}scale={top.w}:{top.h}:flags=lanczos,"
+            f"setsar=1{face_fx(enhance)}[face];"
+            f"[gsrc]{crop},{pre_fx(enhance)}scale={bot.w}:{bot.h}:flags=lanczos,setsar=1"
+            f"{gameplay_fx(bot.w, bot.h, enhance, punches)}[game];"
             f"[face][game]vstack=inputs=2[base]"
         )
     elif plan.mode == "facecam_pip":
@@ -122,8 +141,8 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
         b = max(2, (W // 180) // 2 * 2)  # border width
         graph = (
             f"[0:v]split=2[fsrc][gsrc];"
-            f"[gsrc]{crop},scale={W}:{H}:flags=lanczos,setsar=1{gameplay_fx(W, H, enhance, punches)}[game];"
-            f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},scale={pip.w}:{pip.h}:flags=lanczos,setsar=1,"
+            f"[gsrc]{crop},{pre_fx(enhance)}scale={W}:{H}:flags=lanczos,setsar=1{gameplay_fx(W, H, enhance, punches)}[game];"
+            f"[fsrc]crop={f.w}:{f.h}:{f.x}:{f.y},{pre_fx(enhance, strong=True)}scale={pip.w}:{pip.h}:flags=lanczos,setsar=1,"
             f"pad={pip.w + 2 * b}:{pip.h + 2 * b}:{b}:{b}:color=0xF2E8D5[face];"
             f"[game][face]overlay={pip.x - b}:{pip.y - b}[base]"
         )
@@ -200,6 +219,14 @@ def _audio_filters(acfg: AudioCfg, src: Path, start: float, dur: float, graph: s
             f"offset={meas['target_offset']}:linear=true,aresample=48000")
 
 
+def parse_rate(v: str) -> float:
+    """'16M' / '800k' / '2500000' -> bits per second."""
+    m = re.fullmatch(r"\s*([\d.]+)\s*([kKmMgG]?)\s*", v)
+    if not m:
+        raise ValueError(f"bad bitrate {v!r}")
+    return float(m.group(1)) * {"": 1, "k": 1e3, "m": 1e6, "g": 1e9}[m.group(2).lower()]
+
+
 def choose_encoder(ecfg: ExportCfg, device: str) -> str:
     if ecfg.encoder != "auto":
         return ecfg.encoder
@@ -243,11 +270,19 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
             c += ["-filter_complex", f"{agraph};[amix]aresample=async=1:first_pts=0,{afilt},apad[aout]",
                   "-map", "[aout]"]
             c += ["-c:a", "aac", "-b:a", ecfg.audio_bitrate, "-ar", "48000", "-ac", "2"]
+        mr = ecfg.max_bitrate
+        buf = f"{parse_rate(mr) * 2 / 1e6:g}M"
+        gop = str(int(round(fps * 2)))  # a keyframe every 2 s: what the platforms' own encoders expect
         if enc == "h264_nvenc":
-            c += ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", str(ecfg.crf), "-b:v", "0"]
+            # slowest preset, two-pass, look-ahead and adaptive quantisation: bits go to the moving parts of
+            # the picture, which is where a zoomed-in crop of fast gameplay breaks up first
+            c += ["-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq", "-rc", "vbr", "-multipass", "fullres",
+                  "-cq", str(ecfg.crf), "-b:v", "0", "-maxrate", mr, "-bufsize", buf, "-rc-lookahead", "32",
+                  "-spatial-aq", "1", "-temporal-aq", "1", "-aq-strength", "8", "-bf", "3", "-b_ref_mode", "middle"]
         else:
-            c += ["-c:v", "libx264", "-preset", ecfg.preset, "-crf", str(ecfg.crf)]
-        c += ["-pix_fmt", "yuv420p", "-profile:v", "high", "-movflags", "+faststart", "-t", f"{out_dur:.3f}", tmp.name]
+            c += ["-c:v", "libx264", "-preset", ecfg.preset, "-crf", str(ecfg.crf), "-maxrate", mr, "-bufsize", buf]
+        c += ["-g", gop, "-pix_fmt", "yuv420p", "-profile:v", "high", "-color_primaries", "bt709", "-color_trc", "bt709",
+              "-colorspace", "bt709", "-movflags", "+faststart", "-t", f"{out_dur:.3f}", tmp.name]
         return c
 
     log.info("rendering %s (%.1fs, %s, %s)", out_path.name, dur, plan.mode, encoder)

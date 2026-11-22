@@ -27,6 +27,7 @@ def _common(p: argparse.ArgumentParser) -> None:
 def _clip_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--layout", choices=["auto", "gameplay", "fit_blur", "facecam_split", "facecam_pip"])
     p.add_argument("--caption-preset")
+    p.add_argument("--title", help="clip title, also burned in as the on-screen hook")
     p.add_argument("--facecam", metavar="X,Y,W,H", help="facecam region in normalised coords, e.g. 0.02,0.05,0.25,0.3")
 
 
@@ -325,7 +326,7 @@ def cmd_review(a) -> int:
                 cuts.append((float(lo), float(hi)))
         c = st.edit_clip(p, a.clip, clear=("cuts",) if a.clear_cuts and not a.cut else (), start=a.start, end=a.end,
                          crop_center_x=a.crop_x, layout=a.layout, caption_preset=a.caption_preset,
-                         facecam_region=fr, cuts=cuts)
+                         facecam_region=fr, cuts=cuts, title=getattr(a, "title", None))
         log.info("updated %s: %.2f-%.2fs%s", c.id, c.start, c.end, f", {len(c.cuts)} cut(s)" if c.cuts else "")
     cs = st.candidates(p)
     if a.json:

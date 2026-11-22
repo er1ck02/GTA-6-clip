@@ -50,9 +50,9 @@ chat:                      # used when a chat replay file sits next to the video
 reframing:
   mode: auto               # auto | gameplay | fit_blur | facecam_split | facecam_pip
   gameplay_center_x: 0.5   # default crop centre (0..1)
-  tracking: true           # follow the action with smoothed keyframes
+  tracking: false          # true: follow the action with eased keyframes (stream overlays can mislead it)
   # facecam_region: {x: 0.02, y: 0.04, w: 0.24, h: 0.30}   # manual override of facecam auto-detection
-  facecam_panel_ratio: 0.38
+  facecam_panel_ratio: 0.3334   # facecam in the top third (1080x640), gameplay 1080x1280 below
   pip_width_ratio: 0.40
   pip_corner: top_left
   avoid_facecam_shift: 0.12
@@ -89,18 +89,20 @@ audio:
   duck_ratio: 4
 
 enhance:
-  sharpen: 0.35            # unsharp amount after scaling (0 = off)
+  sharpen: 0.3             # contrast-adaptive sharpening after scaling (0 = off)
+  deblock: true            # smooth the recording's compression blocks before the crop is enlarged
   vibrance: 0.06
   contrast: 0.03
   punch_zoom: 1.10         # quick zoom on the peak moment and on-screen events (1.0 = off)
   punch_max: 3
-  hook_title: false        # big clip title at the top for the first seconds
-  hook_title_seconds: 2.5
+  hook_title: true         # title card on the video (only for titles you or the LLM wrote, never a transcript line)
+  hook_title_seconds: 0    # 0 = the whole clip
   trim_black_edges: true      # cut black frames at clip edges (not when you set start/end yourself)
 
 export:
   encoder: auto            # auto | libx264 | h264_nvenc
-  crf: 19
+  crf: 18
+  max_bitrate: 16M         # master ceiling; at or under every platform cap, so platform copies are not re-encoded
   auto_render_top: 3
 
 live:                      # clipstudio live: watch a stream, keep only the moments that trigger

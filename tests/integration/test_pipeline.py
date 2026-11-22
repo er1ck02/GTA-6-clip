@@ -81,7 +81,7 @@ def test_layouts_render_and_pass_qc(tmp_path, sample_short, layout):
 @needs_whisper
 def test_auto_facecam_split_and_tracking(tmp_path, sample_face):
     pytest.importorskip("mediapipe")
-    st = Studio(_cfg(tmp_path, "paths.models_dir=models"))
+    st = Studio(_cfg(tmp_path, "paths.models_dir=models", "reframing.tracking=true"))
     p = st.open_or_create(input_path=sample_face)
     cs = st.analyze(p)
     fc = st.facecam(p)

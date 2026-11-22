@@ -53,7 +53,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 6,
-                  "facecam": 3, "track": 1, "visual": 1, "chat": 1, "rank": 1, "plan": 2, "captions": 5, "render": 5, "qc": 5, "platforms": 1, "edges": 1}
+                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 3, "captions": 6, "render": 6, "qc": 5, "platforms": 1, "edges": 1}
 
 
 @dataclass
@@ -395,8 +395,36 @@ class Studio:
         return FacecamDetection.load(p.p("facecam"))
 
     def facecam(self, p: Project) -> FacecamDetection | None:
+        """This source's facecam detection, settled against the other moments of the same live stream."""
         f = p.p("facecam")
-        return FacecamDetection.load(f) if f.exists() and self.cfg.vision.enabled else None
+        if not (f.exists() and self.cfg.vision.enabled):
+            return None
+        det = FacecamDetection.load(f)
+        history = self._session_facecams(p)
+        if history:
+            from clipstudio.vision.facecam import apply_session_prior
+            det = apply_session_prior(det, history, self.cfg.vision.facecam_min_confidence)
+        return det
+
+    def _session_facecams(self, p: Project) -> list[FacecamDetection]:
+        """Facecam detections of the other moments saved from the same live session (same ``moments`` folder)."""
+        try:
+            folder = p.source_path().parent
+        except (KeyError, TypeError):
+            return []
+        if folder.name != "moments" or not self.projects_dir.exists():
+            return []
+        out = []
+        for d in self.projects_dir.iterdir():
+            fc, pj = d / "analysis" / "facecam.json", d / "project.json"
+            if d.name == p.id or not (fc.exists() and pj.exists()):
+                continue
+            try:
+                if Path(json.loads(pj.read_text())["source"]["path"]).parent == folder:
+                    out.append(FacecamDetection.load(fc))
+            except (ValueError, KeyError, TypeError, OSError):
+                continue
+        return out
 
     def _track(self, p: Project, c: Candidate, cfg: Config, media: MediaInfo, state: StateFile,
                resume: bool, force: bool) -> tuple[ActionTrack | None, str | None]:
@@ -412,6 +440,8 @@ class Studio:
         if crop_w > 0.98:
             return None, None
         region, _, _ = resolve_facecam(cfg.reframing, fc, v.facecam_min_confidence)
+        if region is None and fc is not None and fc.region is not None and fc.method != "fullframe_face":
+            region = fc.region  # not sure enough to build the layout on, but sure enough not to follow it
         exclude = [region] if region is not None else []
         f_tr = p.clip_dir(c.id) / "track.json"
         k = key_of("track", STAGE_VERSIONS["track"], p.state.stage("metadata").key, c.start, c.end,
@@ -483,6 +513,8 @@ class Studio:
             if e.cuts:
                 c.cuts = normalize_cuts(e.cuts, c.start, c.end)
                 c.user_adjusted = True
+            if e.title and e.title.strip():
+                c.title, c.title_source = e.title.strip(), "user"
         return cs
 
     def edit_clip(self, p: Project, cid: str, clear: tuple[str, ...] = (), **changes) -> Candidate:
@@ -635,7 +667,8 @@ class Studio:
         plan = CropPlan.load(f_plan)
 
         caps_on = cfg.captions.enabled
-        hook = c.title if cfg.enhance.hook_title else None
+        # a transcript-line fallback title is not a hook; only written titles go on screen
+        hook = c.title if cfg.enhance.hook_title and c.title_source != "transcript" else None
         k_cap = key_of("captions", STAGE_VERSIONS["captions"], tr_key, k_plan, c.start, c.end, cfg.section_hash("captions"),
                        hook, cfg.enhance.hook_title_seconds if hook else None, c.cuts)
 
@@ -648,7 +681,8 @@ class Studio:
                 words = remap_words(Transcript.load(p.p("transcript")).words_between(c.start, c.end), c.cuts)
                 track = build_caption_track(words, c.start, c.start + c.output_duration, cfg.captions, plan)
                 track.save(f_caps)
-            write_ass(track, cfg.captions.resolved_style(), plan, f_ass, hook, cfg.enhance.hook_title_seconds)
+            write_ass(track, cfg.captions.resolved_style(), plan, f_ass, hook, cfg.enhance.hook_title_seconds,
+                      clip_duration=c.output_duration)
             if cfg.captions.export_srt:
                 write_srt(track, f_srt)
 

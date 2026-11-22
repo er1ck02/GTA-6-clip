@@ -332,7 +332,7 @@ def create_app(cfg: Config):
     @app.patch("/api/projects/{pid}/clips/{cid}")
     def edit_clip(pid: str, cid: str, body: dict = Body(...)):
         p = proj(pid)
-        allowed = {"status", "start", "end", "layout", "crop_center_x", "facecam_region", "caption_preset", "cuts"}
+        allowed = {"status", "start", "end", "layout", "crop_center_x", "facecam_region", "caption_preset", "cuts", "title"}
         bad = set(body) - allowed
         if bad:
             raise HTTPException(400, f"unknown fields: {sorted(bad)}")

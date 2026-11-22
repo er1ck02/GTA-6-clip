@@ -51,6 +51,7 @@ class ClipEdit(BaseModel):
     crop_center_x: float | None = Field(None, ge=0, le=1)
     facecam_region: dict[str, float] | None = None
     caption_preset: str | None = None
+    title: str | None = Field(None, max_length=80)  # hand-written title / on-screen hook
     cuts: list[tuple[float, float]] | None = None  # removed sections, absolute source seconds
 
 
