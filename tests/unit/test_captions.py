@@ -227,3 +227,11 @@ def test_captions_mask_swears_and_drop_slurs_by_default():
     assert _clean("retarded.", st, cfg.captions) == ""                         # a slur is left out entirely
     off = load_config(overrides=["captions.profanity_filter=false"])
     assert _clean("fucking", off.captions.resolved_style(), off.captions) == "FUCKING"
+
+
+def test_chat_lines_with_slurs_are_never_shown():
+    from clipstudio.captions.chat_overlay import is_noise
+    assert is_noise("someone", "BRO FLY LOW RETARD")
+    assert is_noise("someone", "what a f4g".replace("4", "a"))
+    assert not is_noise("someone", "bro flew into the tower LMAO")
+    assert not is_noise("someone", "grape juice")          # a word that only contains one is fine

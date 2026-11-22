@@ -25,10 +25,15 @@ SHORTCODE = re.compile(r":[A-Za-z0-9_\-+]{2,40}:")
 BOTS = {"nightbot", "fossabot", "streamelements", "streamlabs", "moobot", "wizebot", "soundalerts", "sery_bot"}
 
 
+# a chat line with one of these is never burned into a clip (slurs get a post removed, and it is not ours to repeat)
+SLURS = re.compile(r"(?<![a-z])(n[i1]gg(?:er|a)s?|fagg?(?:ot)?s?|retard(?:s|ed)?|trann(?:y|ies)|kikes?|spics?|chinks?|gooks?"
+                   r"|wetbacks?|dykes?|rape[ds]?|raping|kys)(?![a-z])", re.I)
+
+
 def is_noise(user: str, text: str) -> bool:
-    """Bot announcements and chat commands (``!giveaway``) are not reactions."""
+    """Bot announcements, chat commands (``!giveaway``) and lines with a slur are not shown."""
     u = user.lstrip("@").lower()
-    return text.lstrip().startswith("!") or u in BOTS or u.endswith("bot")
+    return text.lstrip().startswith("!") or u in BOTS or u.endswith("bot") or bool(SLURS.search(text))
 
 
 def clean_text(text: str) -> str:
