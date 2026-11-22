@@ -118,6 +118,7 @@ class _Watch:
         self.error: str | None = None
         self.frame: tuple[int, bytes] | None = None
         self.started = time.time()
+        self.args: tuple = ()
 
     @property
     def running(self) -> bool:
@@ -167,6 +168,7 @@ class LiveManager:
                            file=Path(file).expanduser() if file else None, realtime=realtime)
             w = _Watch(key, LiveSession(self.cfg, rec, make_chat_source(chat or None, url or None, out), out,
                                         channel=channel, max_seconds=duration))
+            w.args = (url, file, channel, chat, duration, realtime)
             self.watches[key] = w
 
         def run():
@@ -198,6 +200,16 @@ class LiveManager:
             if key is None or k == key:
                 w.session.stop()
         return self.status(key)
+
+    def restart(self, key: str) -> dict:
+        """Watch a stopped stream again with the same settings (a new session; the old moments stay on disk)."""
+        w = self.watches.get(key)
+        if w is None:
+            raise ClipStudioError(f"no stream {key!r}")
+        if w.running:
+            raise ClipStudioError("it is still running")
+        del self.watches[key]
+        return self.start(*w.args)
 
     def remove(self, key: str) -> dict:
         w = self.watches.get(key)
@@ -539,6 +551,70 @@ def create_app(cfg: Config):
         return live.start(body.get("url") or None, body.get("file") or None, body.get("channel") or None,
                           body.get("chat") or None, float(body.get("duration") or 0),
                           realtime=not body.get("fast", False))
+
+    @app.post("/api/live/restart")
+    def live_restart(body: dict = Body(...)):
+        return live.restart(body.get("id"))
+
+    # ------------------------------------------------------------ sources: one place to paste links
+    @app.post("/api/sources")
+    def add_sources(body: dict = Body(...)):
+        """Paste any number of links or file paths. Live streams start being watched; VODs and files are
+        imported and analysed (queued one after another). One bad link never blocks the others."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        from clipstudio.live.chat import classify_link, split_links
+
+        links = split_links(body.get("text") or "\n".join(body.get("urls") or []))
+        if not links:
+            raise ClipStudioError("paste at least one link or file path")
+        with ThreadPoolExecutor(max_workers=min(8, len(links))) as ex:  # YouTube links need a metadata lookup
+            kinds = list(ex.map(classify_link, links))
+        out = []
+        for link, kind in zip(links, kinds):
+            row = {"input": link, "kind": kind, "ok": True, "error": None}
+            try:
+                if kind == "live":
+                    row["id"] = live.start(link, None, None, None, 0)["id"]
+                else:
+                    pth = Path(link).expanduser()
+                    if kind == "file" and not pth.is_file():
+                        raise ClipStudioError(f"file not found: {link}")
+                    r = create_project({"url": link} if kind == "vod" else {"input_path": str(pth)})
+                    row["project"], row["job"] = r["project"], r["job"]["id"]
+            except Exception as e:  # noqa: BLE001 - report per link
+                row["ok"], row["error"] = False, str(e)
+            out.append(row)
+        return {"added": out, "sources": sources()}
+
+    @app.get("/api/sources")
+    def sources():
+        """Everything being watched or analysed, newest first: live streams and VOD/file imports."""
+        rows = []
+        for x in live.status().get("sessions", []):
+            rows.append({"kind": "live", **x})
+        seen = set()
+        for j in jobs.list():
+            if j["kind"] != "analyze" or not j["project"] or j["project"] in seen:
+                continue
+            seen.add(j["project"])
+            row = {"kind": "vod", "id": j["project"], "project": j["project"], "status": j["status"],
+                   "error": j["error"], "started_at": j.get("started") or j["created"], "clips": None,
+                   "source": None, "duration": None}
+            try:
+                pr = studio.load(j["project"])
+                src = pr.state.data.get("source", {})
+                row["source"] = src.get("url") or src.get("path")
+                if has(pr, "media"):
+                    row["duration"] = MediaInfo.load(pr.p("media")).duration
+                if pr.p("candidates").exists():
+                    row["clips"] = len(studio.candidates(pr).candidates)
+            except Exception:  # noqa: BLE001 - a row is still shown with what is known
+                pass
+            rows.append(row)
+        rows.sort(key=lambda r: -(r.get("started_at") or 0))
+        return {"rows": rows, "max_streams": cfg.live.max_streams,
+                "edit_slots": cfg.live.max_parallel_edits, "channels": cfg.live.channels}
 
     @app.post("/api/live/start-all")
     def live_start_all(body: dict = Body(default={})):

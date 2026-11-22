@@ -204,3 +204,26 @@ def test_live_many_streams(tmp_path):
     assert [x["id"] for x in c.get("/api/live").json()["sessions"]] == ["beta"]
     c.post("/api/live/stop", json={})
     assert c.post("/api/live/start-all", json={}).status_code == 400  # live.channels is empty
+
+
+def test_sources_paste_many(tmp_path):
+    """One box for every link: files and VODs are imported and analysed, bad lines are reported per line."""
+    import subprocess
+
+    from fastapi.testclient import TestClient
+
+    from clipstudio.server.app import create_app
+
+    src = tmp_path / "vod.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=8",
+                    "-f", "lavfi", "-i", "sine=frequency=400:duration=8", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-c:a", "aac", str(src)], check=True)
+    cfg = load_config(overrides=[f"paths.data_dir={tmp_path / 'data'}"])
+    c = TestClient(create_app(cfg))
+    assert c.get("/api/sources").json()["rows"] == []
+    r = c.post("/api/sources", json={"text": f"{src}\n{tmp_path / 'missing.mp4'}\n\n{src}"}).json()
+    assert [x["ok"] for x in r["added"]] == [True, False]  # duplicate line dropped, missing file reported
+    assert r["added"][0]["kind"] == "file" and "not found" in r["added"][1]["error"]
+    rows = c.get("/api/sources").json()["rows"]
+    assert len(rows) == 1 and rows[0]["kind"] == "vod" and rows[0]["project"] == r["added"][0]["project"]
+    assert c.post("/api/sources", json={"text": "  "}).status_code == 400

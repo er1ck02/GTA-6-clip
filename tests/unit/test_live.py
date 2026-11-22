@@ -171,3 +171,22 @@ def test_face_detector_is_created_once_and_shared(tmp_path):
         import pytest
         pytest.skip("OpenCV not installed")
     assert a is b
+
+
+def test_split_and_classify_links():
+    from clipstudio.live.chat import classify_link, split_links
+
+    text = """https://www.twitch.tv/ludwig
+    https://www.twitch.tv/videos/123456, https://kick.com/xqc
+    C:\\clips\\game.mp4
+
+    https://www.twitch.tv/ludwig"""
+    assert split_links(text) == ["https://www.twitch.tv/ludwig", "https://www.twitch.tv/videos/123456",
+                                 "https://kick.com/xqc", "C:\\clips\\game.mp4"]
+    assert classify_link("https://www.twitch.tv/ludwig") == "live"
+    assert classify_link("https://kick.com/xqc") == "live"
+    assert classify_link("https://www.twitch.tv/videos/123456") == "vod"
+    assert classify_link("https://clips.twitch.tv/SomeClip") == "vod"
+    assert classify_link("https://www.youtube.com/@ludwig/live") == "live"
+    assert classify_link("https://www.youtube.com/watch?v=abc", probe=False) == "vod"
+    assert classify_link("/videos/game.mp4") == "file"

@@ -1,6 +1,6 @@
 // Boot, header, status strip, live events (SSE) and the frame loop.
 import { S, $, h, on, emit, api, toast } from './core.js';
-import { video, loadProjects, loadProject, refreshProject, loadQC, importSource } from './actions.js';
+import { video, loadProjects, loadProject, refreshProject, loadQC } from './actions.js';
 import { initProgram, drawOverlay, tickProgram, invalidateCaptionLine } from './program.js';
 import { initOutput, drawOutput, onRenderEvent, onRenderJobDone } from './output.js';
 import { initBin } from './bin.js';
@@ -21,15 +21,6 @@ const finishedJobs = new Map(); // job id -> final job event (a cached render ca
 function initHeader() {
   const sel = $('#projectSelect');
   sel.onchange = () => loadProject(sel.value || null);
-  $('#importForm').onsubmit = async e => {
-    e.preventDefault();
-    const inp = $('#importInput');
-    const btn = e.submitter || $('#importForm button');
-    btn.disabled = true;
-    const ok = await importSource(inp.value);
-    btn.disabled = false;
-    if (ok) inp.value = '';
-  };
   on('projects', () => {
     const name = p => {
       const src = p.source?.url || p.source?.path || '';
