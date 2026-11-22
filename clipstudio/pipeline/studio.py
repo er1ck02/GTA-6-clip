@@ -800,7 +800,7 @@ class Studio:
         punches = self.punches(p, c, cfg)
         k_r = key_of("render", STAGE_VERSIONS["render"], k_plan, k_cap if caps_on else None, c.start, c.end,
                      p.state.data["source"]["fingerprint"], cfg.section_hash("video", "audio", "export", "enhance"),
-                     f_ass.read_text() if caps_on else None, voice, punches, c.cuts,
+                     f_ass.read_text(encoding="utf-8") if caps_on else None, voice, punches, c.cuts,
                      (f_chat.read_text(encoding="utf-8") if isinstance(f_chat, Path) else
                       (state.stage("chat_overlay").key if f_chat else None)), k_face)
         state.data["punches"] = punches
