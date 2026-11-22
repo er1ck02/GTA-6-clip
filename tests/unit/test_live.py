@@ -158,7 +158,9 @@ def test_one_signal_alone_needs_agreement():
     assert det.score({**z, "chat": 1.0, "audio": 0.8}) >= cfg.live.threshold
     assert det.score({**z, "chat": 1.0, "hype": 1.0}) >= cfg.live.threshold
     assert det.score({**z, "command": 1.0}) >= cfg.live.threshold      # viewers asking for a clip
-    assert det.score({**z, "audio": 2.0}) >= cfg.live.threshold        # a huge jump still counts alone
+    assert det.score({**z, "audio": 2.0}) >= cfg.live.threshold        # a huge jump counts alone in a quiet chat
+    det._last_rate5 = 20.0                                              # ...but not where chat could react
+    assert det.score({**z, "audio": 2.0}) < cfg.live.threshold
 
 
 def test_face_detector_is_created_once_and_shared(tmp_path):

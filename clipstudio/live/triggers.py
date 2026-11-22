@@ -111,6 +111,7 @@ class TriggerDetector:
         if self.has_chat:
             span = max(1, s - base_from)
             rate5 = self._window(self.chat, base_from, s) / span * CHAT_WINDOW
+            self._last_rate5 = rate5
             now5 = self._window(self.chat, s, s + CHAT_WINDOW)
             if now5 >= c.chat_min_messages and span >= 10:
                 # the floor on the baseline keeps a near-empty chat from turning a handful of messages into a
@@ -133,8 +134,11 @@ class TriggerDetector:
         active = [k for k, v in sig.items() if v >= SOLO_MIN]
         if len(active) == 1 and active[0] != "command":
             combined *= SOLO_FACTOR
-        # a huge audio jump (2 x audio_jump_db) still counts when chat is quiet or lagging
-        return max(combined, 0.5 * sig["audio"])
+        # a huge audio jump (2 x audio_jump_db) counts on its own only where chat is too quiet to react; in a busy
+        # chat a loud game sound nobody reacts to is not a moment (on Ludwig's stream two thirds of the moments
+        # were exactly that)
+        quiet = getattr(self, "_last_rate5", 0.0) < self.cfg.chat_min_messages / self.cfg.chat_lift
+        return max(combined, (0.5 if quiet else 0.4) * sig["audio"])
 
     def evaluate(self, head: float) -> list[Trigger]:
         """Judge every second whose chat and audio have settled; return the triggers found.
