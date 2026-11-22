@@ -32,11 +32,8 @@ SYSTEM = (
     "on-screen events such as death screens or explosions, chat activity). Judge each one as a standalone short: "
     "is there a clear moment (setup, payoff, reaction), would it hook a viewer in the first two seconds without "
     "context, is it funny, surprising or impressive? Penalise dead air, filler talk, menus and clips that only make "
-    "sense with earlier context. Score 0-10. The title is burned into the video as the on-screen hook, so write it like the "
-    "caption of a top gaming short: 3 to 7 words, under 38 characters, plain words, says what happens or raises "
-    "a question the clip answers (e.g. 'He stole a forklift in GTA 6', 'The cashier knew his name'). Name the "
-    "game or the streamer when it helps a stranger. No clickbait the clip does not pay off, no hashtags, no emoji, "
-    "never a bare quote of a few transcript words. Also give a one-line hook for the post text and a short "
+    "sense with earlier context. Score 0-10. The title is shown on the video and used as the post title, so write it the way a fan types a caption: all lowercase, 3 to 8 words, exactly one emoji at the end (prefer \U0001F62D, then \U0001F480 or \U0001F633), name the streamer the way fans write the name when it helps, and do not give away the punchline. Good: 'what did bro just do \U0001F62D', 'ludwig cannot drive \U0001F62D', 'he had one job \U0001F480', 'gta 6 npcs are not real \U0001F62D', 'wait gta 6 has this?? \U0001F633', or a real 2 to 6 word quote from the clip plus the emoji. Never Title Case, never ALL CAPS, no labels like '(full crash)', no ad-style questions, no hashtags. Set keep to false unless all four hold: a visible game event or a quotable line; a loud streamer reaction within about two seconds of it; it makes sense in under five seconds with no backstory; the streamer is on camera. Reject talk with no event, menus and loading screens, long drives, chat reading and sponsor segments. "
+    "Also give a one-line hook for the post text and a short "
     "reason. Return every candidate id exactly once."
 )
 

@@ -279,7 +279,12 @@ class LiveSession:
                 ids = st.default_selection(p, 1)
                 best = cs.get(ids[0]) if ids else None
                 why = None
-                if best is not None and best.status != "accepted":
+                if self.cfg.reframing.require_facecam and self.cfg.reframing.facecam_region is None:
+                    fc = st.facecam(p)
+                    if not (fc is not None and fc.region is not None
+                            and fc.confidence >= self.cfg.vision.facecam_min_confidence):
+                        why = "the streamer is not on screen (no facecam found)"
+                if why is None and best is not None and best.status != "accepted":
                     need = self.cfg.highlights.min_evidence
                     if best.score < self.lc.min_clip_score:
                         why = f"best clip scores {best.score:.2f}, under live.min_clip_score {self.lc.min_clip_score:.2f}"

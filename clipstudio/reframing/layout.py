@@ -149,7 +149,7 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
 
     def view_height() -> int:
         """Height of a full-width gameplay panel that shows ``gameplay_view`` of the source's width."""
-        return min(_even(H * 2 / 3), _even(W * sh / max(1.0, rcfg.gameplay_view * sw)))
+        return min(_even(H * 2 / 3), _even(W * sh / max(1.0, min(1.0, rcfg.gameplay_view) * sw)))
 
     if mode == "gameplay" and rcfg.gameplay_fill == "wide":
         gh = view_height()
@@ -207,7 +207,7 @@ def plan_layout(media: MediaInfo, rcfg: ReframingCfg, vcfg: VideoCfg, ccfg: Capt
         # streamer on top, game below. The game panel shows gameplay_view of the screen's width; what is left
         # of the 9:16 frame above and below the pair is a blurred fill (the band above carries the title)
         gh = min(H - ph, view_height())
-        top = _even((H - ph - gh) * 0.58)   # a little low: room above for a two-line title
+        top = _even((H - ph - gh) * rcfg.stack_top) if rcfg.stack_top > 0 else 0
         rects = gameplay_keys(W / gh, avoid=gh >= H - ph)   # a wide view cannot step around the webcam anyway
         face_dest = PixelRect(x=0, y=top, w=W, h=ph)
         panels = [Panel(name="facecam", dest=face_dest), Panel(name="gameplay", dest=PixelRect(x=0, y=top + ph, w=W, h=gh))]

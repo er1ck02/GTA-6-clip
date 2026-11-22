@@ -530,6 +530,7 @@ def generate_candidates(tr: Transcript, loud: LoudnessTrack, cfg: HighlightsCfg,
                     if snt.start < start < snt.end:
                         start = max(0.0, snt.start - 0.25)
             end = max(end, min(media_duration, pay + cfg.reaction_tail))
+            end = min(end, pay + cfg.reaction_max)   # hard cut once the reaction has landed
             for snt in sents:  # the reaction is not cut off mid-sentence
                 if snt.start < end < snt.end and snt.end + cfg.tail - start <= cfg.maximum_duration:
                     end = min(media_duration, snt.end + cfg.tail)

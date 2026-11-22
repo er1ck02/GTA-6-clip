@@ -65,7 +65,7 @@ def test_manual_facecam_region_beats_detection():
 def test_split_gameplay_crop_steps_off_the_facecam():
     # a zoomed-in view (half the screen) can step around the webcam; the default wide view shows the screen as is
     cfg = load_config(overrides=["reframing.mode=facecam_split", "reframing.gameplay_center_x=0.45",
-                                 "reframing.gameplay_view=0.45"])
+                                 "reframing.gameplay_view=0.45", "reframing.facecam_panel_ratio=0.3334"])
     plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6)
     g = plan.keyframes[0].gameplay
     assert g.x >= int((0.02 + 0.25) * 1920)  # starts right of the facecam box
@@ -101,8 +101,10 @@ def test_crop_is_locked_by_default_and_split_is_a_top_third():
     game = next(p.dest for p in plan.panels if p.name == "gameplay")
     # streamer on top, game right under it, and the game is not zoomed in: four fifths of the screen's width,
     # shrunk to fit (never enlarged), with the pair centred on a blurred fill
-    assert (face.h, game.h) == (640, 760) and game.y == face.y + face.h and face.y > 0
-    assert plan.keyframes[0].gameplay.w >= 0.79 * 1920 and plan.keyframes[0].gameplay.w >= game.w
+    # the streamer fills the top half; the whole game screen sits right under it, shrunk to the frame's width
+    # and never enlarged; what is left at the bottom is a blurred band
+    assert (face.y, face.h, game.y, game.h) == (0, 960, 960, 608)
+    assert plan.keyframes[0].gameplay.w >= 1916 and plan.keyframes[0].gameplay.h == 1080
     assert plan.panels[0].name == "background"
 
 
@@ -112,7 +114,7 @@ def test_framing_moves_and_zooms_the_locked_crop():
     plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6, fr)
     g = plan.keyframes[0].gameplay
     assert len(plan.keyframes) == 1 and abs(g.h - 1080 / 1.25) <= 2 and g.y == 0
-    assert abs(g.w / g.h - 1080 / 760) < 0.01 and any("overlays" in n for n in plan.notes)
+    assert abs(g.w / g.h - 1080 / 608) < 0.01 and any("overlays" in n for n in plan.notes)
 
 
 def test_small_webcam_is_shown_whole_not_blown_up():
@@ -126,7 +128,7 @@ def test_small_webcam_is_shown_whole_not_blown_up():
     g = build_video_graph(small, 60, None)
     assert "boxblur" in g and "overlay=" in g and "[base]" in g
     inner = small.facecam_inner                                      # enlarged no more than facecam_max_upscale
-    assert inner is not None and inner.h <= f.h * cfg.reframing.facecam_max_upscale + 2 and inner.h <= 640
+    assert inner is not None and inner.h <= f.h * cfg.reframing.facecam_max_upscale + 2 and inner.h <= 960
     big = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6)
     assert not big.facecam_fit and "boxblur=24" not in build_video_graph(big, 60, None)   # no blurred webcam fill
 

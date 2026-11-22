@@ -55,7 +55,9 @@ def test_zoom_expr_values():
 
 
 def test_gameplay_fx():
-    ecfg = load_config().enhance
+    assert load_config().enhance.punch_zoom == 1.0            # off by default: no zooms or punch-ins
+    assert "eval=frame" not in gameplay_fx(1080, 1920, load_config().enhance, [3.0])
+    ecfg = load_config(overrides=["enhance.punch_zoom=1.1"]).enhance
     fx = gameplay_fx(1080, 1920, ecfg, [3.0])
     assert "eval=frame" in fx and "crop=1080:1920" in fx and "cas=" in fx and "eq=contrast" in fx
     assert "eval=frame" not in gameplay_fx(1080, 1920, ecfg, [])

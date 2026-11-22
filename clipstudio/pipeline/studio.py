@@ -53,8 +53,8 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
-STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 13,
-                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 7, "captions": 9, "render": 12, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 5, "game_subs": 2, "face_sr": 1, "title": 1}
+STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 14,
+                  "facecam": 4, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 8, "captions": 9, "render": 13, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 5, "game_subs": 2, "face_sr": 1, "title": 1}
 
 
 @dataclass
@@ -881,7 +881,8 @@ class Studio:
         if first is not None and first.y - h - gap >= int(0.035 * H):
             y = first.y - h - gap                               # in the band above the picture
         else:
-            y = (first.y if first is not None else int(0.1 * H)) + gap   # no band: on the top edge of the picture
+            # no band above: on the top of the picture, below the apps' own top bar and above the face
+            y = max((first.y if first is not None else 0) + gap, int(0.085 * H))
         return f_png, (plan.out_width - w) // 2, y, float(cfg.enhance.hook_title_seconds)
 
     def _face_upscale(self, p: Project, c: Candidate, cfg: Config, plan: CropPlan, state: StateFile, d: Path,

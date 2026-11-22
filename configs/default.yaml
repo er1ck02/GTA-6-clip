@@ -18,9 +18,9 @@ transcription:
   vad_filter: true
 
 highlights:
-  minimum_duration: 15
+  minimum_duration: 12
   maximum_duration: 45
-  target_duration: 25
+  target_duration: 20
   minimum_score: 0.55
   max_candidates: 10
   remove_duplicates: true
@@ -57,11 +57,12 @@ chat_overlay:              # the last few chat messages, bottom-left of the clip
 
 reframing:
   mode: auto               # auto | gameplay | fit_blur | facecam_split | facecam_pip
-  gameplay_view: 0.8       # share of the game's width shown (1.0 = whole screen); lower = more zoomed in
+  gameplay_view: 1.0       # share of the game's width shown (1.0 = whole screen); lower = more zoomed in
+  require_facecam: true    # no streamer on screen, no clip
   gameplay_center_x: 0.5   # default crop centre (0..1)
   tracking: false          # true: follow the action with eased keyframes (stream overlays can mislead it)
   # facecam_region: {x: 0.02, y: 0.04, w: 0.24, h: 0.30}   # manual override of facecam auto-detection
-  facecam_panel_ratio: 0.3334   # facecam in the top third (1080x640), gameplay 1080x1280 below
+  facecam_panel_ratio: 0.5      # streamer fills the top half; the whole game screen sits under it
   pip_width_ratio: 0.40
   pip_corner: top_left
   avoid_facecam_shift: 0.12
@@ -104,7 +105,7 @@ enhance:
   deblock: true            # smooth the recording's compression blocks before the crop is enlarged
   vibrance: 0.06
   contrast: 0.03
-  punch_zoom: 1.10         # quick zoom on the peak moment and on-screen events (1.0 = off)
+  punch_zoom: 1.0          # quick zoom on the peak moment (1.0 = off: no zooms or punch-ins)
   punch_max: 3
   hook_title: true         # title card on the video (only for titles you or the LLM wrote, never a transcript line)
   hook_title_seconds: 0    # 0 = the whole clip

@@ -24,6 +24,17 @@ from clipstudio.media.ffmpeg import ffmpeg_bin, probe, run
 
 log = get_logger("supervise")
 SHEET_COLS, SHEET_ROWS = 6, 2
+# what a reviewer checks; all four must hold to approve
+PAYOFF_TEST = [
+    "a visible game event or a quotable line",
+    "a loud streamer reaction within about 2 s of it",
+    "makes sense in under 5 s with no backstory",
+    "the streamer is on screen",
+]
+REJECT = ["talk with no event", "menus or loading screens", "long drives", "reading chat", "sponsor segments",
+          "needs backstory", "nudity or sexual content"]
+TITLE_RULES = ("lowercase, 3-8 words, one emoji at the end (😭 first, then 💀 or 😳), name the streamer the way fans do, "
+               "do not spoil the punchline, no Title Case or CAPS")
 
 
 def packet_paths(clip_file: Path) -> tuple[Path, Path]:
@@ -41,7 +52,8 @@ def write_packet(clip_file: Path, render_key: str, info: dict) -> dict:
     run([ffmpeg_bin(), "-hide_banner", "-nostats", "-v", "error", "-y", "-i", str(clip_file),
          "-vf", f"fps={n / dur:.5f},scale=270:480,tile={SHEET_COLS}x{SHEET_ROWS}", "-frames:v", "1", "-q:v", "4", str(sheet)])
     doc = {"status": "pending", "render_key": render_key, "clip": str(clip_file), "sheet": str(sheet),
-           "created": time.time(), "reviewer": None, "reason": None, **info}
+           "created": time.time(), "reviewer": None, "reason": None, "approve_only_if": PAYOFF_TEST,
+           "reject_if": REJECT, "title_rules": TITLE_RULES, **info}
     meta.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
     return doc
 

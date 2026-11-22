@@ -97,9 +97,10 @@ class ScoringWeights(_Strict):
 
 
 class HighlightsCfg(_Strict):
-    minimum_duration: float = Field(15, gt=1)
+    # 12-30 s is where short clips hold their viewers; 45 s is the hard ceiling
+    minimum_duration: float = Field(12, gt=1)
     maximum_duration: float = Field(45, gt=1)
-    target_duration: float = Field(25, gt=1)
+    target_duration: float = Field(20, gt=1)
     minimum_score: float = Field(0.55, ge=0, le=1)
     max_candidates: int = Field(10, ge=1, le=200)
     remove_duplicates: bool = True
@@ -132,9 +133,12 @@ class HighlightsCfg(_Strict):
         "top off", "bj", "threesome", "lingerie"])
     # Lead-in: a clip starts at least this long before the moment, and further back over the talk that leads
     # straight into it (sentences with no real pause between them), up to lead_in_max seconds before it.
-    lead_in_seconds: float = Field(14.0, ge=2, le=40)
+    lead_in_seconds: float = Field(12.0, ge=2, le=40)
     lead_in_max: float = Field(26.0, ge=2, le=60)
-    reaction_tail: float = Field(6.0, ge=1, le=20)   # at least this much after the moment (the reaction itself)
+    reaction_tail: float = Field(4.0, ge=1, le=20)   # at least this much after the moment (the reaction itself)
+    # ... and no more than this: the clip cuts hard once the reaction has landed, with no trailing talk
+    # (a sentence in progress is finished). The moment is located to within a few seconds, hence the slack.
+    reaction_max: float = Field(8.0, ge=1, le=30)
     # The cause must be in the clip: the loudest jump or on-screen event in the 25 s before the reaction (the
     # crash, not the wreck) is looked for, and the clip starts this long before it instead of on the aftermath.
     cause_lead: float = Field(5.0, ge=0, le=15)
@@ -183,7 +187,7 @@ class ReframingCfg(_Strict):
     tracking: bool = False
     # manual facecam box; overrides automatic detection
     facecam_region: Rect | None = None
-    facecam_panel_ratio: float = Field(0.3334, ge=0.2, le=0.6)  # top third: 1080x640 over 1080x1280
+    facecam_panel_ratio: float = Field(0.5, ge=0.2, le=0.6)     # streamer fills the top half (1080x960)
     pip_width_ratio: float = Field(0.40, ge=0.2, le=0.6)
     pip_corner: Literal["top_left", "top_right"] = "top_left"
     # keep the gameplay crop off the facecam overlay when that costs at most this much horizontal shift
@@ -196,9 +200,14 @@ class ReframingCfg(_Strict):
     # a 608 px wide crop (enlarged 1.78x), which looks zoomed in and soft on stream recordings.
     gameplay_fill: Literal["wide", "full"] = "wide"
     # How much of the game's width the gameplay picture shows (1.0 = the whole 16:9 frame, letterboxed).
-    # 0.8 shows four fifths of the screen at full sharpness (the picture is shrunk, not enlarged); the old
-    # look (0.475) cut the screen in half and read as zoomed in. The rest of the 9:16 frame is a blurred fill.
-    gameplay_view: float = Field(0.8, ge=0.3, le=1.0)
+    # The default shows the whole screen, shrunk to the frame's width and never enlarged; the old look (0.475)
+    # cut the screen in half and read as zoomed in. The rest of the 9:16 frame is a blurred fill.
+    gameplay_view: float = Field(1.0, ge=0.3, le=1.0)
+    # where the streamer-plus-game pair sits when it does not fill the frame: 0 = at the very top (the
+    # leftover is a blurred band at the bottom, under the apps' own text), 0.5 = centred
+    stack_top: float = Field(0.0, ge=0, le=1)
+    # a clip without the streamer on screen is not posted (live mode skips the moment)
+    require_facecam: bool = True
     # centre the locked gameplay crop on where the action is over the whole clip (one position, no panning),
     # moving at most this far from gameplay_center_x (fraction of source width). 0 = always the centre.
     focus_max_shift: float = Field(0.14, ge=0, le=0.4)
@@ -432,7 +441,7 @@ class EnhanceCfg(_Strict):
     vibrance: float = Field(0.06, ge=0, le=0.5)      # saturation boost (0 = off)
     contrast: float = Field(0.03, ge=0, le=0.3)
     # quick zoom on the clip's peak moment and on on-screen events (scale factor, 1.0 = off)
-    punch_zoom: float = Field(1.10, ge=1.0, le=1.5)
+    punch_zoom: float = Field(1.0, ge=1.0, le=1.5)
     punch_max: int = Field(3, ge=0, le=10)           # at most this many punches per clip
     # title card at the top of the gameplay picture. Shown only for a title written by a person or by the
     # LLM re-rank: the automatic fallback title is a line of the transcript, which is not a hook.
@@ -460,11 +469,12 @@ class PlatformPreset(_Strict):
 
 
 DEFAULT_PLATFORMS = {
-    "tiktok": {"label": "TikTok", "max_duration": 600, "max_video_bitrate": "16M", "hashtags": ["gta6", "gaming"]},
+    # two to four tags: the game, (the streamer's tag, added when posting), then the platform's own
+    "tiktok": {"label": "TikTok", "max_duration": 600, "max_video_bitrate": "16M", "hashtags": ["gta6", "fyp"]},
     "youtube_shorts": {"label": "YouTube Shorts", "max_duration": 180, "max_video_bitrate": "20M",
-                       "hashtags": ["shorts", "gta6"]},
+                       "hashtags": ["gta6", "shorts"]},
     "instagram_reels": {"label": "Instagram Reels", "max_duration": 180, "max_fps": 60, "max_video_bitrate": "12M",
-                        "hashtags": ["reels", "gta6", "gaming"]},
+                        "hashtags": ["gta6", "reels"]},
 }
 
 
