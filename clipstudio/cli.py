@@ -138,6 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
                                 "ones) and finish what the last stop left"),
                       ("stop", "stop recording, finish or save every clip in flight, say how long, then close"),
                       ("status", "what production is doing and what the next start will resume"),
+                      ("toggle", "one button: safe stop if production is running, else start it"),
                       ("supervise", "run the server and restart it if it crashes (used by start)"),
                       ("shortcuts", "put Start / Stop / Status shortcuts on the Windows desktop")):
         q = psub.add_parser(name, help=hlp)
@@ -534,7 +535,7 @@ def cmd_production(a) -> int:
     from clipstudio.production import agent
 
     res = {"start": agent.start, "stop": agent.stop, "status": agent.status, "supervise": agent.supervise,
-           "shortcuts": agent.shortcuts}[a.action](a)
+           "toggle": agent.toggle, "shortcuts": agent.shortcuts}[a.action](a)
     if isinstance(res, int):
         return res
     _emit(a, res)

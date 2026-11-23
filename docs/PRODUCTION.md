@@ -13,6 +13,7 @@ Run once to put them on the desktop:
 
 | Shortcut | What happens |
 |---|---|
+| **Production On-Off** | One button, also in the Start menu. Runs a safe stop (every clip in flight finished or saved) if production is running, otherwise starts it. To pin it, right-click it in the Start menu and pick Pin to taskbar. Works without Claude. |
 | **Start Production** | Quick checks (FFmpeg, stream recorder, disk space, YouTube sign-in), opens the server in its own window, resumes the channels you were recording last time, stands in for any that are offline, finishes clips the last stop left unedited, opens the workstation in your browser, and keeps Windows from sleeping. |
 | **Stop Production** | Stops recording at once, finishes every saved moment, VOD and upload in flight, shows "please wait about N min" with a countdown, then closes the server. Your PC is free when it says so. |
 | **Stop Production NOW** | Same, but finishes only the clip being edited right now. Everything else stays on disk and is edited on the next start. |
