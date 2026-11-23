@@ -547,4 +547,4 @@ def test_toggle_starts_when_down_and_stops_safely_when_up(monkeypatch):
     for state in ("down", "production", "old"):
         monkeypatch.setattr(agent, "server_state", lambda port, s=state: s)
         agent.toggle(argparse.Namespace(json=True))
-    assert calls == [("start", True, None), ("stop", False, False), ("stop", False, False)]
+    assert calls == [("start", False, None), ("stop", False, False), ("stop", False, False)]
