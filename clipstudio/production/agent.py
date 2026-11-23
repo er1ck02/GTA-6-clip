@@ -12,6 +12,7 @@ The server settings used the first time (``--config/--profile/--set``) are remem
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -491,8 +492,23 @@ def _reengage(port: int) -> None:
 
 
 # ------------------------------------------------------------------ desktop shortcuts
-SHORTCUTS = {"Start Production": "Start Production.bat", "Stop Production": "Stop Production.bat",
-             "Stop Production NOW": "Stop Production NOW.bat", "Production Status": "Production Status.bat"}
+TOGGLE = "Toggle Production.bat"
+SHORTCUTS = {"Production On-Off": TOGGLE, "Start Production": "Start Production.bat",
+             "Stop Production": "Stop Production.bat", "Stop Production NOW": "Stop Production NOW.bat", "Production Status": "Production Status.bat"}
+
+
+def toggle(a) -> dict:
+    """One button: stop safely (every clip in flight finished or saved) if production is up, else start it."""
+    launch = resolve_launch(a)
+    if server_state(launch["port"]) == "down":
+        for k, v in (("channel", None), ("no_browser", True)):
+            if not hasattr(a, k):
+                setattr(a, k, v)
+        return start(a)
+    for k, v in (("now", False), ("no_wait", False), ("keep_server", False)):
+        if not hasattr(a, k):
+            setattr(a, k, v)
+    return stop(a)
 
 
 def shortcuts(a) -> dict:
@@ -500,13 +516,23 @@ def shortcuts(a) -> dict:
     if sys.platform != "win32":
         raise ClipStudioError("desktop shortcuts are made on Windows; elsewhere run `production start|stop`")
     folder = REPO / "scripts" / "windows"
-    lines = ["$d=[Environment]::GetFolderPath('Desktop')", "$w=New-Object -ComObject WScript.Shell"]
+    lines = ["$d=[Environment]::GetFolderPath('Desktop')", "$m=[Environment]::GetFolderPath('Programs')",
+             "$w=New-Object -ComObject WScript.Shell"]
+    work = str(REPO).replace("'", "''")
     for name, bat in SHORTCUTS.items():
         target = str(folder / bat).replace("'", "''")
-        lines.append(f"$s=$w.CreateShortcut((Join-Path $d '{name}.lnk')); $s.TargetPath='{target}'; "
-                     f"$s.WorkingDirectory='{str(REPO).replace(chr(39), chr(39) * 2)}'; $s.Save()")
+        if bat == TOGGLE:  # via cmd.exe so Windows allows "Pin to taskbar" (it refuses .bat targets)
+            spec = (f"$s.TargetPath=$env:ComSpec; $s.Arguments='/c \"\"{target}\"\"'; "
+                    "$s.IconLocation='shell32.dll,27'; ")
+            homes = ("$d", "$m")  # desktop + Start menu
+        else:
+            spec, homes = f"$s.TargetPath='{target}'; ", ("$d",)
+        for home in homes:
+            lines.append(f"$s=$w.CreateShortcut((Join-Path {home} '{name}.lnk')); {spec}"
+                         f"$s.WorkingDirectory='{work}'; $s.Save()")
     lines.append("Write-Output $d")
-    cp = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "; ".join(lines)],
+    script = base64.b64encode("; ".join(lines).encode("utf-16-le")).decode()  # no command-line quoting
+    cp = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", script],
                         capture_output=True, text=True, timeout=60)
     if cp.returncode != 0:
         raise ClipStudioError(f"could not make the shortcuts: {cp.stderr.strip()[-300:]}")

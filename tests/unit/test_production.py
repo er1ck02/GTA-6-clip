@@ -533,3 +533,18 @@ def test_failed_moments_are_retried_once(cfg, tmp_path):
         {"id": "m3", "status": "done", "path": "make", "created": time.time(), "clip": "x.mp4"}])
     m = mgr(cfg, FakeLive(tmp_path), checker(set()))
     assert [x["id"] for _d, x in m.backlog()] == ["m1"]
+
+
+def test_toggle_starts_when_down_and_stops_safely_when_up(monkeypatch):
+    import argparse
+
+    from clipstudio.production import agent
+
+    calls = []
+    monkeypatch.setattr(agent, "resolve_launch", lambda a, persist=False: {"port": 8765})
+    monkeypatch.setattr(agent, "start", lambda a: calls.append(("start", a.no_browser, a.channel)) or {})
+    monkeypatch.setattr(agent, "stop", lambda a: calls.append(("stop", a.now, a.keep_server)) or {})
+    for state in ("down", "production", "old"):
+        monkeypatch.setattr(agent, "server_state", lambda port, s=state: s)
+        agent.toggle(argparse.Namespace(json=True))
+    assert calls == [("start", True, None), ("stop", False, False), ("stop", False, False)]
