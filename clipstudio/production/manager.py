@@ -161,6 +161,17 @@ class ProductionManager:
         if ch not in posted:
             posted.append(ch)
 
+    def _ensure_priority(self) -> None:
+        """production.priority_channels head the lineup every round: recorded whenever they're live on GTA 6,
+        ahead of (and bumping) stand-ins, and their clips post credited like the rest of the lineup."""
+        lineup = self.state.setdefault("lineup", [])
+        have = {(e.get("channel") or "").lower() for e in lineup}
+        for ch in reversed([c.lower().lstrip("@") for c in self.pc.priority_channels if c.strip()]):
+            if ch not in have:
+                lineup.insert(0, {"channel": ch, "url": None})
+            if ch not in {c.lower().lstrip("@") for c in self.cfg.upload.allow_channels}:
+                self.cfg.upload.allow_channels.append(ch)
+
     def _running(self) -> dict[str, Any]:
         """channel -> watch, for streams recording right now."""
         out = {}
@@ -339,6 +350,7 @@ class ProductionManager:
             return self.slots
         self._planning = True
         try:
+            self._ensure_priority()
             running = self._running()
             held = [s for s in self._recording_slots() if s["action"] in ("substitute", "fill")]
             # lineup names a held stand-in covers, and lineup names a held slot records itself (counted once)
