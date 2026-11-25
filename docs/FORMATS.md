@@ -34,6 +34,12 @@ default `en-US-BrianMultilingualNeural`, +6% rate), falling back to `kokoro` (op
 needs PyTorch). Audition: `python -m clipstudio.cli formats voice "line" --out test.wav --edge-voice en-US-AndrewMultilingualNeural`.
 Write the script to be spoken: short sentences, contractions, a joke per moment, no lists of numbers.
 
+## Countdown style (owner's choice, 2026-11-25): `"style": "minimal"`
+No voiceover. 2.5 s title card, then each clip with a big "#N STREAMER" on screen for its first 2.5 s and the
+credit after that, straight into the next clip, 5 s credits card at the end. Use this for daily/weekly top 5s
+and per-streamer compilations. `setup`/`react`/`intro`/`outro` are ignored in this style. The narrated style
+remains for anything that needs explaining; news Shorts keep a short voiceover.
+
 ## Weekly top 5
 1. `python -m clipstudio.cli formats draft --approved yt_data\approved --out yt_data\formats\top5_wNN.json`
    picks the newest approved clips and leaves the script as TODO.

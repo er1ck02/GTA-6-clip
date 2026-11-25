@@ -181,7 +181,7 @@ def _mute(mute: list | None, t_in: float) -> str:
     return "".join(f",volume=0:enable='between(t,{max(0.0, a - t_in):.3f},{b - t_in:.3f})'" for a, b in (mute or []))
 
 
-def wide_clip(out: Path, *, clip: Path, t_in: float, t_out: float, layout: Layout, overlays: list[Path],
+def wide_clip(out: Path, *, clip: Path, t_in: float, t_out: float, layout: Layout, overlays: list,
               enc: Enc, size: tuple[int, int] = (1920, 1080), pip_w: int = 500, mute: list | None = None) -> Path:
     """The clip as widescreen: gameplay full frame, facecam picture-in-picture bottom-right, credit overlay."""
     W, H = size
@@ -198,9 +198,14 @@ def wide_clip(out: Path, *, clip: Path, t_in: float, t_out: float, layout: Layou
     else:
         fc += [f"[{cur}]{_crop(layout.game)},{_fill(W, H)}[v0]"]
     last = "v0"
-    for i, png in enumerate(overlays, start=1):
-        args += ["-i", str(png)]
-        fc.append(f"[{last}][{i}:v]overlay=0:0[o{i}]")
+    for i, ov in enumerate(overlays, start=1):
+        png, a, b = (ov, None, None) if not isinstance(ov, tuple) else ov     # (png, from_s, to_s): timed overlay
+        args += ["-loop", "1", "-framerate", str(FPS), "-i", str(png)] if a is not None or b is not None \
+            else ["-i", str(png)]
+        en = ""
+        if a is not None or b is not None:
+            en = f":enable='between(t,{a or 0:.3f},{b if b is not None else 1e6:.3f})'"
+        fc.append(f"[{last}][{i}:v]overlay=0:0:shortest=0:eof_action=repeat{en}[o{i}]")
         last = f"o{i}"
     fc.append(f"[{last}]fps={FPS},format=yuv420p[v]")
     fc.append(f"[0:a]aformat=channel_layouts=stereo{_mute(mute, t_in)},{LOUD},apad[a]")

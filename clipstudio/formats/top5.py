@@ -56,12 +56,13 @@ def validate(spec: dict) -> list[dict]:
     ranks = sorted(m.get("rank") for m in ms)
     if ranks != list(range(1, len(ms) + 1)):
         raise meta.RuleError(f"ranks must be 1..{len(ms)} once each, got {ranks}")
-    meta.check_todo(spec.get("title"), spec.get("intro"), spec.get("outro"), where="episode")
-    meta.check_text(spec["title"], spec.get("hook", ""), spec["intro"], spec["outro"], where="episode")
+    minimal = spec.get("style") == "minimal"
+    meta.check_todo(spec.get("title"), *(() if minimal else (spec.get("intro"), spec.get("outro"))), where="episode")
+    meta.check_text(spec["title"], spec.get("hook", ""), spec.get("intro", ""), spec.get("outro", ""), where="episode")
     for m in ms:
         w = f"moment #{m['rank']}"
-        meta.check_todo(m.get("streamer"), m.get("link"), m.get("setup"), m.get("react"), where=w)
-        meta.check_text(m.get("label", ""), m["setup"], m["react"], m.get("short_title", ""), where=w)
+        meta.check_todo(m.get("streamer"), m.get("link"), *(() if minimal else (m.get("setup"), m.get("react"))), where=w)
+        meta.check_text(m.get("label", ""), m.get("setup", ""), m.get("react", ""), m.get("short_title", ""), where=w)
         for k in ("clip", "short_clip"):
             if m.get(k) and not Path(m[k]).exists():
                 raise meta.RuleError(f"{w}: {k} not found: {m[k]}")
@@ -94,32 +95,51 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
     strip = f"{series} · {week}" if week else series
 
     segs: list[tuple[str, Path]] = []
-    # ---- intro: title card over the first moment's gameplay (blurred, so nothing is spoiled)
+    minimal = spec.get("style") == "minimal"
     first = order[0]
     lay0 = C.Layout.for_source(Path(first["clip"]), first.get("layout")).with_mask(first.get("mask"))
-    narr = speak(spec["intro"], vcfg)
-    segs.append(("Intro", C.card(seg_dir / "00_intro.mp4", bg_clip=Path(first["clip"]), bg_t=_window(first)[0],
-                                 layout=lay0, overlays=[style.title_card(gfx / "title.png", series, week)],
-                                 narration=narr, dur=max(5.0, duration(narr) + 0.8), size=WIDE, enc=enc, blur=24)))
-    # ---- countdown
-    for m in order:
-        clip, r = Path(m["clip"]), m["rank"]
-        lay = C.Layout.for_source(clip, m.get("layout")).with_mask(m.get("mask"))
-        t_in, t_out = _window(m)
-        narr = speak(m["setup"], vcfg)
-        segs.append((f"#{r} {m['streamer']}" + (f": {m['label']}" if m.get("label") else ""),
-                     C.card(seg_dir / f"{r:02d}a_setup.mp4", bg_clip=clip, bg_t=t_in, layout=lay,
-                            overlays=[style.rank_card(gfx / f"rank{r}.png", r, m["streamer"], m.get("label", ""), strip)],
-                            narration=narr, dur=duration(narr) + 0.7, size=WIDE, enc=enc)))
-        pos = m.get("credit_pos", "tl")
-        lt = style.lower_third(gfx / f"credit{r}.png", r, m["streamer"], m["link"].replace("https://", ""), pos=pos)
-        segs.append(("", C.wide_clip(seg_dir / f"{r:02d}b_clip.mp4", clip=clip, t_in=t_in, t_out=t_out, layout=lay,
-                                     overlays=[lt], enc=enc, mute=m.get("mute"))))
-        last = C.frame_png(clip, t_out - 0.15, gfx / f"last{r}.png", lay, WIDE)
-        narr = speak(m["react"], vcfg)
-        segs.append(("", C.still_card(seg_dir / f"{r:02d}c_react.mp4", image=last,
-                                      overlays=[style.corner_badge(gfx / f"badge{r}.png", r, pos=pos)], narration=narr,
-                                      dur=duration(narr) + 0.5, enc=enc, size=WIDE)))
+    if minimal:
+        # owner's format: no voice. Short title card, then each clip with "#N STREAMER" on screen for the first
+        # seconds and the credit after it, straight into the next clip, short credits card at the end.
+        segs.append(("Intro", C.card(seg_dir / "00_intro.mp4", bg_clip=Path(first["clip"]), bg_t=_window(first)[0],
+                                     layout=lay0, overlays=[style.title_card(gfx / "title.png", series, week)],
+                                     narration=None, dur=float(spec.get("intro_seconds", 2.5)), size=WIDE, enc=enc,
+                                     blur=24)))
+        hold = float(spec.get("rank_seconds", 2.5))
+        for m in order:
+            clip, r = Path(m["clip"]), m["rank"]
+            lay = C.Layout.for_source(clip, m.get("layout")).with_mask(m.get("mask"))
+            t_in, t_out = _window(m)
+            pos = m.get("credit_pos", "tl")
+            rk = style.rank_card(gfx / f"rank{r}.png", r, m["streamer"], m.get("label", ""), strip, dim=60)
+            lt = style.lower_third(gfx / f"credit{r}.png", r, m["streamer"], m["link"].replace("https://", ""), pos=pos)
+            segs.append((f"#{r} {m['streamer']}" + (f": {m['label']}" if m.get("label") else ""),
+                         C.wide_clip(seg_dir / f"{r:02d}_clip.mp4", clip=clip, t_in=t_in, t_out=t_out, layout=lay,
+                                     overlays=[(rk, 0, hold), (lt, hold, None)], enc=enc, mute=m.get("mute"))))
+    else:
+        # ---- intro: title card over the first moment's gameplay (blurred, so nothing is spoiled)
+        narr = speak(spec["intro"], vcfg)
+        segs.append(("Intro", C.card(seg_dir / "00_intro.mp4", bg_clip=Path(first["clip"]), bg_t=_window(first)[0],
+                                     layout=lay0, overlays=[style.title_card(gfx / "title.png", series, week)],
+                                     narration=narr, dur=max(5.0, duration(narr) + 0.8), size=WIDE, enc=enc, blur=24)))
+        for m in order:
+            clip, r = Path(m["clip"]), m["rank"]
+            lay = C.Layout.for_source(clip, m.get("layout")).with_mask(m.get("mask"))
+            t_in, t_out = _window(m)
+            narr = speak(m["setup"], vcfg)
+            segs.append((f"#{r} {m['streamer']}" + (f": {m['label']}" if m.get("label") else ""),
+                         C.card(seg_dir / f"{r:02d}a_setup.mp4", bg_clip=clip, bg_t=t_in, layout=lay,
+                                overlays=[style.rank_card(gfx / f"rank{r}.png", r, m["streamer"], m.get("label", ""), strip)],
+                                narration=narr, dur=duration(narr) + 0.7, size=WIDE, enc=enc)))
+            pos = m.get("credit_pos", "tl")
+            lt = style.lower_third(gfx / f"credit{r}.png", r, m["streamer"], m["link"].replace("https://", ""), pos=pos)
+            segs.append(("", C.wide_clip(seg_dir / f"{r:02d}b_clip.mp4", clip=clip, t_in=t_in, t_out=t_out, layout=lay,
+                                         overlays=[lt], enc=enc, mute=m.get("mute"))))
+            last = C.frame_png(clip, t_out - 0.15, gfx / f"last{r}.png", lay, WIDE)
+            narr = speak(m["react"], vcfg)
+            segs.append(("", C.still_card(seg_dir / f"{r:02d}c_react.mp4", image=last,
+                                          overlays=[style.corner_badge(gfx / f"badge{r}.png", r, pos=pos)], narration=narr,
+                                          dur=duration(narr) + 0.5, enc=enc, size=WIDE)))
     # ---- outro: credits
     top = order[-1]
     credits, seen = [], set()
@@ -130,12 +150,14 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
         ranks = ", ".join(f"#{x['rank']}" for x in order if x["streamer"] == m["streamer"])
         label = m["streamer"] if len(ranks) > 12 else f"{ranks}  {m['streamer']}"
         credits.append((label, m["link"].replace("https://", "")))
-    narr = speak(spec["outro"], vcfg)
+    narr = None if minimal or not spec.get("outro") else speak(spec["outro"], vcfg)
     segs.append(("Credits", C.card(seg_dir / "99_outro.mp4", bg_clip=Path(top["clip"]), bg_t=_window(top)[0],
                                    layout=C.Layout.for_source(Path(top["clip"]), top.get("layout")).with_mask(top.get("mask")),
                                    overlays=[style.end_card(gfx / "end.png", credits,
                                                             spec.get("cta", "subscribe for next week's top 5"))],
-                                   narration=narr, dur=max(8.0, duration(narr) + 1.5), size=WIDE, enc=enc, blur=26)))
+                                   narration=narr, dur=(float(spec.get("outro_seconds", 5.0)) if narr is None
+                                                        else max(8.0, duration(narr) + 1.5)),
+                                   size=WIDE, enc=enc, blur=26)))
 
     episode = C.concat([p for _, p in segs], out_dir / "episode.mp4")
     chapters, t = [], 0.0
@@ -174,7 +196,7 @@ def _description(spec: dict, order: list[dict], chapters: list[tuple[float, str]
     lines = []
     if spec.get("hook"):
         lines += [spec["hook"], ""]
-    lines += [spec.get("about", "Our weekly countdown of the best GTA 6 streamer moments, ranked and narrated by us."), ""]
+    lines += [spec.get("about", "The best GTA 6 streamer moments, ranked."), ""]
     lines += [f"{meta.stamp(t)} {name}" for t, name in chapters] + [""]
     lines += ["Clips from (go support them):"]
     seen = set()

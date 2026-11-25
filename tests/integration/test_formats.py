@@ -105,3 +105,18 @@ def test_mask_pixelates_the_box(tmp_path):
     diff = ImageChops.difference(Image.open(a).convert("RGB"), Image.open(b).convert("RGB"))
     assert diff.crop((0, 0, 540, 300)).getbbox() is not None      # masked area changed
     assert diff.crop((600, 350, 1080, 608)).getbbox() is None     # the rest did not
+
+
+def test_minimal_style_has_no_voice_segments(tmp_path):
+    p = _spec(tmp_path)
+    spec = json.loads(p.read_text())
+    spec["style"] = "minimal"
+    for k in ("intro", "outro"):
+        spec.pop(k)
+    for m in spec["moments"]:
+        m.pop("setup"); m.pop("react")
+    p.write_text(json.dumps(spec))
+    res = top5.build(p, tmp_path / "out", shorts=False, voice_override={"engines": ["silent"]})
+    segs = sorted((tmp_path / "out" / "segments").glob("*.mp4"))
+    assert len(segs) == 5          # intro, 3 clips, credits
+    assert probe(Path(res["episode"])).duration < 3 * 3 + 9

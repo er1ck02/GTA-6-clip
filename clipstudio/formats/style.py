@@ -138,10 +138,11 @@ def title_card(path: Path, title: str, kicker: str, w: int = 1920, h: int = 1080
     return save(img, path)
 
 
-def rank_card(path: Path, rank: int, streamer: str, label: str, series: str, w: int = 1920, h: int = 1080) -> Path:
+def rank_card(path: Path, rank: int, streamer: str, label: str, series: str, w: int = 1920, h: int = 1080,
+              dim: int = 110) -> Path:
     img = canvas(w, h)
     d = ImageDraw.Draw(img)
-    d.rectangle([0, 0, w, h], fill=BG + (110,))
+    d.rectangle([0, 0, w, h], fill=BG + (dim,))
     x = 820
     num = fit_font(d, f"#{rank}", x - 150 - 60, 520, "display", min_size=200)
     gradient_text(img, (150, 190 + (520 - num.size) // 3), f"#{rank}", num)
