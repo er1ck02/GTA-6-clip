@@ -1,6 +1,6 @@
 # Operations handbook
 
-_v1 · 2026-11-25 · owner: operations thread ("Run the media business operations audit")_
+_v2 · 2026-11-25 · owner: operations thread ("Run the media business operations audit")_
 
 The single source of truth for how the GTA 6 clips business runs. Every new agent/thread reads this first. Update it when a strategy changes; bump the version line and add a changelog entry at the bottom.
 
@@ -11,6 +11,8 @@ Grow a GTA 6 streamer-clips brand across short-form platforms and reach **YouTub
 North-star metric (for now): **Shorts views in the trailing 90 days** on @gta6clipsnn, plus subscribers. Secondary: followers on Instagram and TikTok.
 
 YPP gates (from YouTube's public help pages, verify before relying on them): full monetization = 1,000 subscribers + 10M public Shorts views in 90 days (or 4,000 long-form watch hours in 12 months). A lower fan-funding tier exists at 500 subscribers. **Country of residence is still unset on the channel; YPP can't be applied for until Erick sets it.**
+
+**Reused-content risk (research thread, 2026-11-25):** raw streamer clips alone can't get the channel into YPP; YouTube rejects channels whose uploads are mostly reposted content. Original formats (a weekly top 5 with commentary, GTA 6 news / easter-egg Shorts) need to become most of the uploads. Which formats to start is pending Erick's choice.
 
 ## 2. Channels
 
@@ -74,20 +76,25 @@ Scored 1-5 (impact, confidence, effort where 5 = easy, cost where 5 = free).
 |---|---|---|---|---|---|---|
 | 1 | **Free metrics loop**: daily snapshot of every post's views/likes/comments via yt-dlp (public, no credits) + weekly YouTube Studio retention read; auto-fills `metrics.csv` | 5 | 5 | 4 | 5 | We can't learn without data and both paid tools are dry. Unblocks every other experiment |
 | 2 | **First-second payoff gate in clip picking**: score each moment on "payoff ≤1 s from start" + face-reaction size; reject the rest; A/B a cold-open variant (payoff flash, then setup) | 5 | 4 | 3 | 5 | The single strongest pattern in our own data; today ~half of posts break it |
-| 3 | **Free scheduling via Meta Business Suite + YouTube Studio scheduler**: one daily batch session schedules IG + FB Reels and Shorts for the day, ends PC dependence and the vidIQ 3/day cap | 4 | 4 | 3 | 5 | Removes the throughput bottleneck and Erick's 24/7 PC complaint; adds Facebook Reels for ~zero extra work |
+| 3 | **Free scheduling via YouTube Studio's scheduler + Meta Business Suite (Instagram only)**: one daily batch session schedules the day's Shorts and Reels, ends PC dependence and the vidIQ 3/day cap | 4 | 4 | 3 | 5 | Removes the throughput bottleneck and Erick's 24/7 PC complaint. Facebook Reels skipped: Meta's 2026 rules demonetize reposted clips |
 | 4 | **YPP-safe long-form + recurring series**: "GTA 6 streamer moments of the day/week" ranked countdown with original framing (ranking, short typed context cards between clips) | 4 | 3 | 3 | 5 | Long-form watch hours are a second YPP path; added original value lowers "reused content" rejection risk, which is the biggest monetization risk for a clips channel |
 | 5 | **TikTok rescue**: fix bio (it still says "RP"), warm the account (1-2 posts/day, in-app engagement), use TikTok's scheduler, test whether a fresh account outperforms | 3 | 3 | 4 | 5 | TikTok is 0 followers after 18 posts; cheapest platform to test hooks once it is out of the penalty box |
 
 ## 9. Backlog
 
+**In progress:**
+- Metrics loop (opp. 1, ops thread): `python -m clipstudio.ops.metrics snapshot|weekly|daily` (copy at `yt_data\ops\stats_logger.py`), appends public counts to `yt_data\ops\metrics.csv`, weekly winners/losers to `yt_data\ops\weekly\`. Being tested and scheduled daily on the PC.
+- Payoff gate (opp. 2): v2 supervisor prompt handed to the clip quality thread.
+- Monetization/platform research: research thread.
+
 **Next 3 (highest value):**
-1. Metrics loop (opp. 1): `scripts/ops/snapshot_metrics.py` reading the posting record, yt-dlp public counts, appending to `metrics.csv`; daily on the PC.
-2. Payoff gate (opp. 2): add a "payoff offset" field to the supervisor's approval and reject clips with payoff later than ~2 s; hand to the quality thread as a prompt change (see `prompts/supervisor-approval.md` v2 proposal).
-3. Monetization + platform research (opp. 3/4): Meta Business Suite scheduling + Facebook Reels monetization eligibility, YPP reused-content policy for streamer clips, streamer clip permissions (Ludwig/TG clip programs).
+1. Free scheduling (opp. 3): YouTube Studio scheduler for Shorts + Meta Business Suite for Instagram Reels; one daily batch session.
+2. Original formats for YPP (opp. 4): prototype a weekly top 5 with commentary and a GTA 6 news/easter-egg Short once Erick picks.
+3. Feed the first weekly stats summary back into clip picking (streamer and payoff-timing patterns).
 
 **Experiments queued:** cold-open vs straight cut (same moment, two days apart, YouTube only); title with vs without streamer name; post time 12-3 PM ET vs 7-11 PM ET.
 
-**Long-term:** original AI-assisted formats (GTA 6 map/easter-egg explainers using our own captures), second brand for another trending game, streamer clip partnerships (paid clipping deals), affiliate (gaming gear) once audience exists.
+**Long-term:** Facebook Reels only if original formats exist (reposted clips get demonetized there); original AI-assisted formats (GTA 6 map/easter-egg explainers using our own captures), second brand for another trending game, streamer clip partnerships (paid clipping deals), affiliate (gaming gear) once audience exists.
 
 **Technical:** finish Postiz (needs Erick's WSL reboot) or drop it if Meta Business Suite covers IG/FB; Twitch client secret (stand-in discovery); dedupe `MAP.txt` (kreek line appears 3 times).
 
@@ -103,5 +110,7 @@ Scored 1-5 (impact, confidence, effort where 5 = easy, cost where 5 = free).
 Daily (operations thread, short): observe (metrics snapshot + posting record) → pick top weakness → delegate or do → log result here. Weekly: review experiments against `metrics.csv`, rewrite prompts that underperform (bump version in `prompts/`), re-rank opportunities. Report to Erick as done / in progress / proposed / needs you, under 150 words.
 
 ## Changelog
+
+- v2 (2026-11-25): stats logger in progress; Facebook Reels dropped from scheduling; reused-content risk for YPP; backlog refreshed.
 
 - v1 (2026-11-25): first audit, top 5 opportunities, backlog, prompt registry.
