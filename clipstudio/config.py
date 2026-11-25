@@ -220,6 +220,19 @@ class ReframingCfg(_Strict):
         "theburntpeanut": Rect(x=0.165, y=0.72, w=0.125, h=0.28),
         "ishowspeed": Rect(x=0.0, y=0.358, w=0.225, h=0.274),      # the sub counter under the camera stays out
     })
+    # Where each channel's own chat box sits in the stream picture. It is smeared out before anything else is
+    # cut from the frame: nobody moderates that chat for us, and hateful spam in it must never be readable in
+    # a post. Keys are channel names in lower case; boxes are generous on purpose.
+    channel_chat_boxes: dict[str, list[Rect]] = Field(default_factory=lambda: {
+        "xqc": [Rect(x=0.0, y=0.31, w=0.27, h=0.21)],
+        "supertf": [Rect(x=0.77, y=0.77, w=0.23, h=0.23)],
+        "kreek": [Rect(x=0.0, y=0.0, w=0.28, h=0.155)],
+        "ishowspeed": [Rect(x=0.84, y=0.0, w=0.16, h=0.28)],
+        "lacy": [Rect(x=0.0, y=0.27, w=0.27, h=0.19)],
+        "ludwig": [Rect(x=0.0, y=0.59, w=0.19, h=0.16)],
+        "crayator": [Rect(x=0.0, y=0.47, w=0.18, h=0.15)],
+        "stableronaldo": [Rect(x=0.66, y=0.0, w=0.34, h=0.16)],
+    })
     # centre the locked gameplay crop on where the action is over the whole clip (one position, no panning),
     # moving at most this far from gameplay_center_x (fraction of source width). 0 = always the centre.
     focus_max_shift: float = Field(0.14, ge=0, le=0.4)

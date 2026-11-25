@@ -55,6 +55,22 @@ def _cam_in_gameplay(plan: CropPlan, f: PixelRect) -> bool:
     return True
 
 
+def hide_in_source(graph: str, boxes: list[PixelRect] | None) -> str:
+    """Smear the given source rectangles (a stream's own chat box) before any crop is taken from the frame."""
+    if not boxes:
+        return graph
+    chain = ",".join(f"delogo=x={b.x}:y={b.y}:w={b.w}:h={b.h}" for b in boxes)
+    n = graph.count("[0:v]")
+    if n == 0:
+        return graph
+    if n == 1:
+        return graph.replace("[0:v]", f"[0:v]{chain}[srcclean];[srcclean]")
+    labels = [f"[srcclean{i}]" for i in range(n)]
+    for lab in labels:
+        graph = graph.replace("[0:v]", lab, 1)
+    return f"[0:v]{chain},split={n}{''.join(labels)};" + graph
+
+
 PUNCH_IN, PUNCH_HOLD, PUNCH_OUT = 0.15, 0.5, 0.35
 
 
@@ -132,7 +148,8 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
                       punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None,
                       under_ass: str | None = None, face_input: int | None = None,
                       chat_input: tuple[int, int, int] | None = None,
-                      title_input: tuple[int, int, int, float] | None = None) -> str:
+                      title_input: tuple[int, int, int, float] | None = None,
+                      hide_boxes: list[PixelRect] | None = None) -> str:
     """``under_ass``: a second subtitle file drawn before (under) the captions, e.g. the chat overlay.
     ``face_input``: scale factor of a second input that holds the webcam crop already enlarged (AI upscaled),
     aligned to the clip's first frame; the webcam panel is then drawn from it instead of from the source."""
@@ -246,6 +263,7 @@ def build_video_graph(plan: CropPlan, fps: float, ass_name: str | None, enhance:
     if ass_name:
         tail += f",ass={ass_name}"
     # hold the last frame if the source runs out of video before the clip ends; the output is cut with -t
+    graph = hide_in_source(graph, hide_boxes)
     return graph + ";" + tail + ",tpad=stop_mode=clone:stop_duration=5,format=yuv420p[vout]"
 
 
@@ -329,7 +347,8 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
                 punches: list[float] | None = None, cuts: list[tuple[float, float]] | None = None,
                 under_ass: Path | None = None, face_video: Path | None = None, face_scale_factor: int = 4,
                 chat_video: tuple[Path, int, int] | None = None,
-                title_image: tuple[Path, int, int, float] | None = None) -> Path:
+                title_image: tuple[Path, int, int, float] | None = None,
+                hide_boxes: list[PixelRect] | None = None) -> Path:
     src = Path(media.path)
     dur = end - start
     out_dur = dur - sum(b - a for a, b in (cuts or []))
@@ -353,7 +372,7 @@ def render_clip(media: MediaInfo, plan: CropPlan, start: float, end: float, ass_
     n_in += int(bool(chat_video))
     title_in = (n_in, title_image[1], title_image[2], title_image[3]) if title_image else None
     graph = build_video_graph(plan, fps, ass_name, enhance, punches, cuts, under_ass.name if under_ass else None,
-                              face_scale_factor if use_face else None, chat_in, title_in)
+                              face_scale_factor if use_face else None, chat_in, title_in, hide_boxes)
     n_tracks = max(1, len(media.audio_streams)) if acfg.tracks == "all" else 1
     agraph = build_audio_graph(n_tracks, voice_track, acfg, cuts)
     afilt = _audio_filters(acfg, src, start, dur, agraph) if media.has_audio else ""

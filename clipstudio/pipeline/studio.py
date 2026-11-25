@@ -54,7 +54,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 15,
-                  "facecam": 5, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 8, "captions": 9, "render": 15, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 6, "game_subs": 2, "face_sr": 1, "title": 2}
+                  "facecam": 5, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 8, "captions": 9, "render": 16, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 6, "game_subs": 2, "face_sr": 1, "title": 2}
 
 
 @dataclass
@@ -821,11 +821,12 @@ class Studio:
         voice = self.voice_track(media, cfg, self.speech_tracks_used(p))
         punches = self.punches(p, c, cfg)
         k_r = key_of("render", STAGE_VERSIONS["render"], k_plan, k_cap if caps_on else None, c.start, c.end,
-                     p.state.data["source"]["fingerprint"], cfg.section_hash("video", "audio", "export", "enhance"),
+                     p.state.data["source"]["fingerprint"], cfg.section_hash("video", "audio", "export", "enhance", "reframing"),
                      f_ass.read_text(encoding="utf-8") if caps_on else None, voice, punches, c.cuts,
                      (f_chat.read_text(encoding="utf-8") if isinstance(f_chat, Path) else
                       (state.stage("chat_overlay").key if f_chat else None)), k_face, title, title_img[1:] if title_img else None)
         state.data["punches"] = punches
+        hide = self._stream_chat_boxes(p, cfg, media)
         r = run_stage(state, "render", k_r, [f_out],
                       lambda: render_clip(media, plan, c.start, c.end, f_ass if caps_on else None, f_out,
                                           cfg.video, cfg.audio, cfg.export, self.device,
@@ -833,7 +834,7 @@ class Studio:
                                           cuts=c.rel_cuts(), under_ass=f_chat if isinstance(f_chat, Path) else None,
                                           face_video=f_face,
                                           chat_video=f_chat if isinstance(f_chat, tuple) else None,
-                                          title_image=title_img),
+                                          title_image=title_img, hide_boxes=hide),
                       resume=resume, force=force, retries=1)
         cached += [r.name] if r.cached else []
 
@@ -931,6 +932,24 @@ class Studio:
             log.warning("webcam upscaling failed for %s, using the normal scaler: %s", c.id, ex)
             return None, None
         return f_face, k
+
+    @staticmethod
+    def _stream_chat_boxes(p: Project, cfg: Config, media) -> list:
+        """Pixel boxes of this channel's own chat in the source picture (kept inside the frame for delogo)."""
+        from clipstudio.chat.emotes import channel_from_source
+        from clipstudio.core.models import PixelRect
+        try:
+            ch = (channel_from_source(p.source_path()) or "").lower()
+        except (KeyError, TypeError):
+            return []
+        W, H = int(media.width), int(media.height)
+        out = []
+        for b in cfg.reframing.channel_chat_boxes.get(ch, []):
+            x, y = max(1, int(b.x * W)), max(1, int(b.y * H))
+            w, h = min(W - 1 - x, int(b.w * W)), min(H - 1 - y, int(b.h * H))
+            if w > 8 and h > 8:
+                out.append(PixelRect(x=x, y=y, w=w, h=h))
+        return out
 
     @staticmethod
     def _stream_shows_chat(p: Project, cfg: Config) -> bool:

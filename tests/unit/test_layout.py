@@ -197,3 +197,17 @@ def test_webcam_inside_the_gameplay_is_blurred_there_when_shown_on_top():
     assert ("[gblur]" in g) == inside
     off = cfg.enhance.model_copy(update={"hide_gameplay_cam": False})
     assert "[gblur]" not in build_video_graph(plan, 60, None, off)
+
+
+def test_stream_chat_box_is_smeared_before_any_crop():
+    from clipstudio.core.models import PixelRect
+    from clipstudio.rendering.render import build_video_graph, hide_in_source
+    cfg = load_config()
+    assert "supertf" in cfg.reframing.channel_chat_boxes and "ishowspeed" in cfg.reframing.channel_chat_boxes
+    plan = plan_layout(_m(1920, 1080), cfg.reframing, cfg.video, cfg.captions, _det(0.9), None, 0.6)
+    box = [PixelRect(x=1478, y=831, w=440, h=247)]
+    g = build_video_graph(plan, 60, None, cfg.enhance, hide_boxes=box)
+    assert g.startswith("[0:v]delogo=x=1478:y=831:w=440:h=247") and g.count("[0:v]") == 1
+    assert "delogo" not in build_video_graph(plan, 60, None, cfg.enhance)
+    two = hide_in_source("[0:v]null[a];[0:v]null[b]", box)
+    assert two.count("[0:v]") == 1 and "split=2[srcclean0][srcclean1]" in two
