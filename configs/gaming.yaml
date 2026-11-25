@@ -1,0 +1,10 @@
+# Example overlay for a facecam stream: python -m app.cli process --input vod.mp4 --config configs/default.yaml --config configs/gaming.yaml
+reframing:
+  mode: facecam_split
+  facecam_region: {x: 0.0, y: 0.0, w: 0.25, h: 0.30}
+highlights:
+  minimum_duration: 15
+  maximum_duration: 35
+  target_duration: 22
+captions:
+  preset: high_energy

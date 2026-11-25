@@ -1,0 +1,163 @@
+# GTA 6 Clip Studio - default configuration.
+# Every key is optional; omitted keys use the built-in defaults (clipstudio/config.py).
+# Override per run with:  --config my.yaml   or   --set section.key=value
+
+project:
+  name: GTA 6 Clip Studio
+
+processing:
+  profile: balanced        # fast | balanced | quality (sets whisper model size + encoder speed)
+  device: auto             # auto | cpu | cuda
+  resume_enabled: true
+  cache_enabled: true
+
+transcription:
+  backend: faster_whisper
+  # model: small           # name (tiny/base/small/medium/large-v3/large-v3-turbo) or a local CT2 model dir.
+  language: null           # null = auto-detect, or e.g. "en"
+  vad_filter: true
+
+highlights:
+  minimum_duration: 12
+  maximum_duration: 30
+  target_duration: 20
+  minimum_score: 0.55
+  max_candidates: 10
+  remove_duplicates: true
+  duplicate_overlap: 0.3   # max fraction of the shorter clip two candidates may share
+  weights:                 # relative; only ratios matter
+    audio_intensity: 0.25
+    audio_spike: 0.15
+    reaction_language: 0.25
+    speech_energy: 0.10
+    opening_hook: 0.15
+    completeness: 0.10
+    visual_action: 0.10    # these three count only when the signal exists for the source
+    game_event: 0.20
+    chat_activity: 0.20
+
+visual:                    # one low-res pass over the whole video
+  enabled: true
+  sample_fps: 4
+  snap_to_cuts: true
+  ocr: auto                # auto: use Tesseract if installed | on | off
+  ocr_words: [WASTED, BUSTED, MISSION PASSED, MISSION FAILED, ELIMINATED, VICTORY, DEFEAT, KNOCKED]
+
+chat:                      # used when a chat replay file sits next to the video, or with --chat
+  enabled: true
+  window_seconds: 5
+
+chat_overlay:              # the last few chat messages, bottom-left of the clip (text only, no emote images)
+  enabled: true
+  position: facecam        # facecam: bottom-left of the streamer's section | bottom: bottom-left of the clip
+  emotes: true             # emote words as pictures (7TV, BTTV, FFZ sets of the channel)
+  lines: 4
+  lead_seconds: 3          # show each message this much earlier (chat lags the moment it reacts to)
+  bottom: 0.875            # bottom edge of the chat block, as a fraction of frame height
+
+reframing:
+  mode: auto               # auto | gameplay | fit_blur | facecam_split | facecam_pip
+  gameplay_view: 1.0       # share of the game's width shown (1.0 = whole screen); lower = more zoomed in
+  require_facecam: true    # no streamer on screen, no clip
+  # channel_facecams:      # where a channel keeps its camera, when the overlay has no border to detect
+  #   somechannel: {x: 0.0, y: 0.33, w: 0.22, h: 0.22}
+  gameplay_center_x: 0.5   # default crop centre (0..1)
+  tracking: false          # true: follow the action with eased keyframes (stream overlays can mislead it)
+  # facecam_region: {x: 0.02, y: 0.04, w: 0.24, h: 0.30}   # manual override of facecam auto-detection
+  facecam_panel_ratio: 0.5      # streamer fills the top half; the whole game screen sits under it
+  pip_width_ratio: 0.40
+  pip_corner: top_left
+  avoid_facecam_shift: 0.12
+
+vision:
+  enabled: true
+  face_detector: auto      # auto (MediaPipe, then OpenCV) | mediapipe | opencv | none
+  download_models: true    # BlazeFace, ~230 KB, from storage.googleapis.com
+  facecam_auto: true
+  facecam_min_confidence: 0.6
+  facecam_samples: 24
+  tracking_fps: 4
+  deadzone: 0.04
+  max_speed: 0.30
+  smoothing_s: 0.7
+
+video:
+  width: 1080
+  height: 1920
+  fps: 60                  # or "source"
+
+captions:
+  enabled: false           # spoken-word captions (off: the clip carries a title only)
+  preset: bold_viral       # clean_gaming | bold_viral | minimal | high_energy | <your preset>
+  placement: top           # top: where the title card sits, off the action | manual: use vertical_position
+  vertical_position: 0.72
+  lead_seconds: 0.25       # show each caption this much before its word
+  profanity_filter: true   # mask strong swears in captions (f***), drop slurs; audio untouched
+
+audio:
+  normalization: true
+  target_lufs: -14
+  true_peak: -1.5
+  voice_enhancement: light # off | light | strong (strong adds noise reduction, presence EQ, de-esser)
+  duck_game: true          # with a separate mic track, lower game audio while you talk
+  duck_ratio: 4
+
+enhance:
+  sharpen: 0.3             # contrast-adaptive sharpening after scaling (0 = off)
+  deblock: true            # smooth the recording's compression blocks before the crop is enlarged
+  vibrance: 0.06
+  contrast: 0.03
+  punch_zoom: 1.0          # quick zoom on the peak moment (1.0 = off: no zooms or punch-ins)
+  punch_max: 3
+  hook_title: true         # title card on the video (only for titles you or the LLM wrote, never a transcript line)
+  hook_title_seconds: 0    # 0 = the whole clip
+  hide_gameplay_cam: true  # blur the webcam inside the gameplay when it is shown on top
+  face_upscale: auto       # Real-ESRGAN on a small webcam, if installed under models/realesrgan (off | auto | on)
+  trim_black_edges: true      # cut black frames at clip edges (not when you set start/end yourself)
+
+export:
+  encoder: auto            # auto | libx264 | h264_nvenc
+  crf: 18
+  max_bitrate: 16M         # master ceiling; at or under every platform cap, so platform copies are not re-encoded
+  auto_render_top: 3
+
+live:                      # clipstudio live: watch a stream, keep only the moments that trigger
+  buffer_seconds: 90       # older footage is deleted unless a saved moment needs it
+  pre_seconds: 50          # kept before the trigger (build-up: a race before the finish line)
+  post_seconds: 15         # kept after the trigger
+  threshold: 1.0           # higher = fewer, bigger moments
+  cooldown_seconds: 45
+  chat_min_messages: 10     # chat must reach this many messages in 5 s to count (no tiny spikes in empty chats)
+  hype_min_messages: 5      # reaction messages (LUL, W, no way...) in 5 s, likewise
+  clip_commands: ["clip", "clip it", "clip that", "clipit", "!clip"]
+  clip_command_count: 3    # viewers asking for a clip within 10 s
+  auto_process: true       # edit each moment right away
+  channels: []             # stream URLs to watch together (clipstudio live --all, or WATCH ALL in the workstation)
+  max_streams: 8           # streams watched at once
+  max_parallel_edits: 1    # moments edited at the same time across all streams (they queue; the GPU is shared)
+
+upload:                    # nothing is uploaded unless the streamer's channel is listed here
+  allow_channels: []       # e.g. ["ludwig"] for streamers who allow clipping
+
+production:                # `clipstudio production start|stop` (desktop: Start/Stop Production)
+  default_streams: 3       # streams to fill on the very first start (later starts resume the last lineup)
+  substitute: true         # if a channel is offline, watch a live streamer you've clipped before instead
+  substitute_keywords: ["gta", "grand theft auto"]  # a substitute's stream title must mention one ([] = any game)
+  target_streams: 8        # always keep this many streams recording: offline ones are swapped for live GTA streamers
+  # (your past streamers first, then the most-watched live GTA 6 streams among discover_channels on Twitch)
+  idle_keywords: ["sleep stream", "sleeping", "asleep", "zzz", "afk", "brb", "be right back", "just chatting"]
+                           # live but idle (or a non-GTA category) counts as offline and gets swapped out
+  idle_motion_threshold: 1.5  # a picture that barely moves (sleep stream behind a GTA title) for 2 checks = offline
+  idle_cooldown_minutes: 30  # a streamer found asleep isn't tried again before this
+  stand_in_languages: ["en"]  # stand-ins must stream in English (stream language, else an English title)
+  blocked_channels: ["deandeankt"]  # never picked as a stand-in
+  post_stand_ins: true     # stand-ins' clips post automatically (credited), like the lineup's
+  discover_twitch_category: "Grand Theft Auto VI"  # top live streams of this Twitch category first (needs
+                           # ~/.clipstudio/twitch.json with a Twitch app's client_id/client_secret; see docs)
+  discover_youtube_search: "GTA 6"  # plus the most-watched YouTube live streams for this search ("" = off)
+  discover_keywords: ["gta 6", "gta vi", "gta6", "grand theft auto vi"]
+  recheck_minutes: 5       # offline channels are checked again this often; the original returns when it's live
+  keep_awake: true         # Windows won't sleep while production runs
+  backlog_max_age_hours: 24  # moments saved for later are edited on the next start if newer than this
+  auto_update: true        # while running, restart onto new commits of this branch (tests must pass first)
+  update_check_minutes: 10

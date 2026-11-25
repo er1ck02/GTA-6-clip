@@ -1,0 +1,2 @@
+# Optional LLM re-ranking with Claude (Ollama and OpenAI-compatible endpoints need nothing extra)
+anthropic>=1.0
