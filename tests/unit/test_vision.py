@@ -234,3 +234,16 @@ def test_channel_camera_box_is_used_only_when_a_face_is_inside_it(tmp_path):
     assert abs(st._channel_facecam(P("kaicenat"), sure).region.w - 0.22) < 1e-6         # the hand-set box wins
     none = FacecamDetection(region=None, confidence=0.0, method="none")
     assert st._channel_facecam(P("kaicenat"), none).region is None                      # no face at all: no clip
+
+
+def test_our_chat_is_left_off_when_the_stream_already_shows_chat(tmp_path):
+    from clipstudio.config import load_config
+    from clipstudio.pipeline.studio import Studio
+
+    class P:
+        def __init__(self, channel): self._src = tmp_path / "live" / f"{channel}_20261121_205111" / "moments" / "m001.mp4"
+        def source_path(self): return self._src
+
+    cfg = load_config()
+    assert Studio._stream_shows_chat(P("supertf"), cfg) and Studio._stream_shows_chat(P("Ludwig"), cfg)
+    assert not Studio._stream_shows_chat(P("typicalgamer"), cfg)

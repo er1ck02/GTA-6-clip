@@ -54,7 +54,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 15,
-                  "facecam": 5, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 8, "captions": 9, "render": 14, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 6, "game_subs": 2, "face_sr": 1, "title": 2}
+                  "facecam": 5, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 8, "captions": 9, "render": 15, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 6, "game_subs": 2, "face_sr": 1, "title": 2}
 
 
 @dataclass
@@ -932,12 +932,23 @@ class Studio:
             return None, None
         return f_face, k
 
+    @staticmethod
+    def _stream_shows_chat(p: Project, cfg: Config) -> bool:
+        from clipstudio.chat.emotes import channel_from_source
+        try:
+            ch = (channel_from_source(p.source_path()) or "").lower()
+        except (KeyError, TypeError):
+            return False
+        return ch in {c.lower() for c in cfg.chat_overlay.skip_channels}
+
     def _chat_overlay(self, p: Project, c: Candidate, cfg: Config, plan: CropPlan, state: StateFile, d: Path,
                       f_caps: Path | None, resume: bool, force: bool) -> Path | tuple[Path, int, int] | None:
         """Per-clip stage: the chat messages of the clip's time window as an ASS overlay (None = no chat to show)."""
         co = cfg.chat_overlay
         if not (co.enabled and cfg.chat.enabled and p.p("chat").exists() and p.state.stage("chat").status == "done"):
             return None
+        if self._stream_shows_chat(p, cfg):
+            return None     # the stream's own chat is in the picture already: ours would show it twice
         from clipstudio.core.models import ChatMessage, ChatTrack, cut_time
         f_chat, f_meta, f_vid = d / "chat.ass", d / "chat_overlay.json", d / "chat.mov"
         cap_y = CaptionTrack.load(f_caps).layout.baseline_y if f_caps is not None and f_caps.exists() else None

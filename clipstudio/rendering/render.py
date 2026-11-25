@@ -45,12 +45,12 @@ def gameplay_crop(plan: CropPlan) -> str:
 
 
 def _cam_in_gameplay(plan: CropPlan, f: PixelRect) -> bool:
-    """Does at least half of the webcam box lie inside the gameplay crop (in every keyframe)?"""
+    """Is a visible part of the webcam box (a tenth or more) inside the gameplay crop in every keyframe?"""
     for k in plan.keyframes:
         g = k.gameplay
         iw = min(f.x + f.w, g.x + g.w) - max(f.x, g.x)
         ih = min(f.y + f.h, g.y + g.h) - max(f.y, g.y)
-        if iw <= 0 or ih <= 0 or iw * ih < 0.5 * f.w * f.h:
+        if iw <= 0 or ih <= 0 or iw * ih < 0.1 * f.w * f.h:
             return False
     return True
 
