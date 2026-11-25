@@ -83,12 +83,12 @@ Scored 1-5 (impact, confidence, effort where 5 = easy, cost where 5 = free).
 ## 9. Backlog
 
 **In progress:**
-- Metrics loop (opp. 1, ops thread): `python -m clipstudio.ops.metrics snapshot|weekly|daily` (copy at `yt_data\ops\stats_logger.py`), appends public counts to `yt_data\ops\metrics.csv`, weekly winners/losers to `yt_data\ops\weekly\`. Being tested and scheduled daily on the PC.
+- Metrics loop (opp. 1, ops thread): `python -m clipstudio.ops.metrics snapshot|weekly|daily` (copy at `yt_data\ops\stats_logger.py`), appends public counts to `yt_data\ops\metrics.csv`, weekly winners/losers to `yt_data\ops\weekly\`. Tested on the PC 2026-11-25 (YouTube OK; TikTok via profile listing; Instagram view counts aren't public, likes only). Daily 9 AM task waits on Erick running the register command (auto-mode blocked it).
 - Payoff gate (opp. 2): v2 supervisor prompt handed to the clip quality thread.
 - Monetization/platform research: research thread.
 
 **Next 3 (highest value):**
-1. Free scheduling (opp. 3): YouTube Studio scheduler for Shorts + Meta Business Suite for Instagram Reels; one daily batch session.
+1. Free scheduling (opp. 3): workflow in `SCHEDULING.md` (YouTube Studio scheduler + Meta Business Suite for Instagram + TikTok scheduler, one daily batch). Waiting on Erick to connect @gta6clipsnn to Meta Business Suite; YouTube and TikTok scheduling can start now.
 2. Original formats for YPP (opp. 4): prototype a weekly top 5 with commentary and a GTA 6 news/easter-egg Short once Erick picks.
 3. Feed the first weekly stats summary back into clip picking (streamer and payoff-timing patterns).
 
@@ -103,6 +103,8 @@ Scored 1-5 (impact, confidence, effort where 5 = easy, cost where 5 = free).
 - Set **country of residence** on Ricky Spanish (YPP blocker).
 - Say yes/no to the unlisted montage KbZO9y4iM5g going public.
 - Change TikTok bio in the phone app: remove "Best RP moments" (breaks the no-"rp" rule). Suggested: "Daily GTA 6 stream clips | Streamers always credited".
+- Run the one-line PowerShell command that registers the daily stats task (auto-mode won't let Claude create scheduled tasks).
+- Connect @gta6clipsnn to Meta Business Suite (business.facebook.com) for free Instagram scheduling.
 - Optional: New Twitch client secret.
 
 ## 11. Operating cycle
