@@ -77,7 +77,8 @@ def _crop(r: tuple[int, int, int, int]) -> str:
 
 
 def _fill(w: int, h: int) -> str:
-    return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1"
+    # out_range=tv: some sources (720p TypicalGamer) are full-range; mixing ranges shifts contrast between segments
+    return f"scale={w}:{h}:force_original_aspect_ratio=increase:out_range=tv,crop={w}:{h},setsar=1"
 
 
 def _masked(src: str, layout: Layout | None, tag: str) -> tuple[list[str], str]:
@@ -101,10 +102,29 @@ def _ff(args: list[str], out: Path) -> Path:
     return out
 
 
-def frame_png(clip: Path, t: float, out: Path, layout: Layout | None = None, size: tuple[int, int] | None = None) -> Path:
+def clear_of_mask(layout: Layout) -> tuple[int, int, int, int]:
+    """The biggest 16:9 part of the game region that doesn't touch a mask box on its left/right edge
+    (for thumbnails, where a pixelated square looks bad)."""
+    gx, gy, gw, gh = layout.game
+    left, right = gx, gx + gw
+    for x, y, w, h in layout.mask:
+        if x <= gx + 2:
+            left = max(left, x + w)
+        elif x + w >= gx + gw - 2:
+            right = min(right, x)
+    w = max(16, right - left)
+    h = min(gh, int(w * 9 / 16))
+    w = int(h * 16 / 9)
+    return (left + (right - left - w) // 2, gy + (gh - h) // 2, w // 2 * 2, h // 2 * 2)
+
+
+def frame_png(clip: Path, t: float, out: Path, layout: Layout | None = None, size: tuple[int, int] | None = None,
+              avoid_mask: bool = False) -> Path:
     fs, cur = _masked("0:v", layout, "k")
     tail = []
-    if layout:
+    if layout and avoid_mask and layout.mask:
+        tail.append(_crop(clear_of_mask(layout)))
+    elif layout:
         tail.append(_crop(layout.game))
     if size:
         tail.append(_fill(*size))

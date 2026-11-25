@@ -142,9 +142,9 @@ def rank_card(path: Path, rank: int, streamer: str, label: str, series: str, w: 
     img = canvas(w, h)
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, w, h], fill=BG + (110,))
-    num = font(520, "display")
-    gradient_text(img, (150, 190), f"#{rank}", num)
     x = 820
+    num = fit_font(d, f"#{rank}", x - 150 - 60, 520, "display", min_size=200)
+    gradient_text(img, (150, 190 + (520 - num.size) // 3), f"#{rank}", num)
     gradient_bar(img, (x, 400, x + 10, 690))
     f1 = fit_font(d, streamer.upper(), w - x - 160, 150, "display")
     d.text((x + 50, 380), streamer.upper(), font=f1, fill=INK + (255,))
@@ -198,12 +198,14 @@ def end_card(path: Path, credits: list[tuple[str, str]], cta: str, w: int = 1920
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, w, h], fill=BG + (175,))
     gradient_text(img, (140, 110), "CLIPS FROM", font(96, "display"))
-    f1, f2 = font(50), font(32)
+    room = (h - 240) - 280
+    step = min(82, room // max(1, len(credits)))
+    f1, f2 = font(max(26, int(step * 0.6))), font(max(20, int(step * 0.4)))
     y = 280
     for name, link in credits:
         d.text((150, y), name, font=f1, fill=INK + (255,))
-        d.text((150 + d.textlength(name, font=f1) + 30, y + 14), link, font=f2, fill=C1 + (255,))
-        y += 82
+        d.text((150 + d.textlength(name, font=f1) + 30, y + int(step * 0.17)), link, font=f2, fill=C1 + (255,))
+        y += step
     d.text((w // 2, h - 140), cta.upper(), font=fit_font(d, cta.upper(), w - 300, 64, "display"),
            fill=INK + (255,), anchor="mm")
     gradient_bar(img, (w // 2 - 260, h - 90, w // 2 + 260, h - 82))
