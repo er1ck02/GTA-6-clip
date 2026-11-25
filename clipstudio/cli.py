@@ -169,7 +169,55 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-moments", type=int, help="stop after this many moments")
     p.add_argument("--no-process", action="store_true", help="only save the moments; don't edit them")
     p.add_argument("--fast", action="store_true", help="with --input: read the file as fast as possible, not in real time")
+
+    p = sub.add_parser("formats", help="original formats: weekly top 5 (narrated long-form + Shorts), news Shorts")
+    fsub = p.add_subparsers(dest="action", required=True)
+    q = fsub.add_parser("top5", help="build a weekly top 5 episode from a spec (JSON)")
+    q.add_argument("spec", type=Path)
+    q.add_argument("--out", type=Path, required=True)
+    q.add_argument("--no-shorts", action="store_true", help="skip the vertical Short cut-downs")
+    q.add_argument("--voice", help="force a voice engine: edge, kokoro or silent (dry run)")
+    q = fsub.add_parser("news", help="build a GTA 6 news / easter-egg Short from a spec (JSON)")
+    q.add_argument("spec", type=Path)
+    q.add_argument("--out", type=Path, required=True)
+    q.add_argument("--voice", help="force a voice engine: edge, kokoro or silent (dry run)")
+    q = fsub.add_parser("draft", help="top 5 spec skeleton from the newest approved clips (script left as TODO)")
+    q.add_argument("--approved", type=Path, required=True, help="the approved clips folder (has MAP.txt)")
+    q.add_argument("--out", type=Path, required=True)
+    q = fsub.add_parser("voice", help="speak a line with the narrator voice (to audition voices)")
+    q.add_argument("text")
+    q.add_argument("--out", type=Path, required=True, help="output .wav")
+    q.add_argument("--engine", default="edge")
+    q.add_argument("--edge-voice")
+    for q in fsub.choices.values():
+        q.add_argument("--json", action="store_true")
+        q.add_argument("-v", "--verbose", action="store_true")
     return ap
+
+
+def cmd_formats(a) -> int:
+    import shutil as _sh
+
+    from clipstudio.formats import news, top5
+    from clipstudio.formats.voice import VoiceCfg, speak
+
+    vo = {"engines": [a.voice]} if getattr(a, "voice", None) else None
+    if a.action == "top5":
+        res = top5.build(a.spec, a.out, shorts=not a.no_shorts, voice_override=vo)
+    elif a.action == "news":
+        res = news.build(a.spec, a.out, voice_override=vo)
+    elif a.action == "draft":
+        res = {"spec": str(top5.draft(a.approved, a.out))}
+    else:
+        d = {"engines": [a.engine]}
+        if a.edge_voice:
+            d["edge_voice"] = a.edge_voice
+        wav = speak(a.text, VoiceCfg.from_dict(d, cache_dir=a.out.parent / "voice_cache"))
+        a.out.parent.mkdir(parents=True, exist_ok=True)
+        _sh.copy2(wav, a.out)
+        res = {"wav": str(a.out)}
+    print(json.dumps(res, indent=2, default=str, ensure_ascii=False))
+    return 0
 
 
 def cmd_live(a) -> int:
@@ -556,7 +604,7 @@ def main(argv: list[str] | None = None) -> int:
     register_cuda_dlls()
     handlers = {"doctor": cmd_doctor, "process": cmd_process, "review": cmd_review, "export": cmd_export,
                 "resume": cmd_resume, "status": cmd_status, "ui": cmd_ui, "production": cmd_production,
-                "live": cmd_live, "supervise": cmd_supervise}
+                "live": cmd_live, "supervise": cmd_supervise, "formats": cmd_formats}
     def fail(code: int, msg: str) -> int:
         log.error(msg)
         if getattr(a, "json", False):
