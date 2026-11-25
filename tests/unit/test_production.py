@@ -355,7 +355,7 @@ def test_a_still_picture_is_a_sleep_stream_even_with_a_gta_title(cfg, tmp_path, 
     seg = tmp_path / "seg.ts"
     seg.write_bytes(b"x")
     for w in live.watches.values():
-        w.session.ring = SimpleNamespace(segments=[SimpleNamespace(path=seg, end=10.0)])
+        w.session.ring = SimpleNamespace(segments=[SimpleNamespace(path=seg, end=10.0, arrived=time.time())])
     score = {"lacy": 0.2, "big": 9.0}
     monkeypatch.setattr(activity, "motion", lambda paths, **kw: score[current[0]])
     current = [""]
@@ -547,4 +547,41 @@ def test_toggle_starts_when_down_and_stops_safely_when_up(monkeypatch):
     for state in ("down", "production", "old"):
         monkeypatch.setattr(agent, "server_state", lambda port, s=state: s)
         agent.toggle(argparse.Namespace(json=True))
-    assert calls == [("start", True, None), ("stop", False, False), ("stop", False, False)]
+    assert calls == [("start", False, None), ("stop", False, False), ("stop", False, False)]
+
+
+def test_only_gta6_counts_youtube_borrows_category_and_title_fallback():
+    words, games = ["just chatting"], ["gta", "grand theft auto"]
+    assert "not GTA 6" in L.idle_reason(L.LiveCheck(True, "rp", category="Grand Theft Auto V"), words, games)
+    assert L.idle_reason(L.LiveCheck(True, "x", category="Grand Theft Auto VI"), words, games) == ""
+    assert "not GTA" in L.idle_reason(L.LiveCheck(True, "x", category="IRL"), words, games)
+    yt = L.LiveCheck(True, "late night stream", url="https://www.youtube.com/@xqc/live")
+    assert L.idle_reason(yt, words, games) == ""  # unknown game, lenient
+    assert "doesn't mention" in L.idle_reason(yt, words, games, title_if_unknown=True)
+    assert L.idle_reason(L.LiveCheck(True, "GTA 6 heists"), words, games, title_if_unknown=True) == ""
+    assert L.guess_urls("xqc")[1].startswith("https://kick.com/")  # sites that report the game first
+
+
+def test_youtube_stream_takes_the_game_from_twitch_or_kick(cfg, tmp_path, monkeypatch):
+    from clipstudio.production.manager import ProductionManager
+
+    m = ProductionManager.__new__(ProductionManager)
+    m.pc = cfg.production
+    m.state = {}
+    seen = {"https://kick.com/xqc": L.LiveCheck(True, "slots", url="https://kick.com/xqc", category="Slots")}
+    m.check = lambda u: seen.get(u, L.LiveCheck(False, url=u))
+    yt = L.LiveCheck(True, "chill", url="https://www.youtube.com/@xqc/live")
+    assert "Slots" in m._idle(yt)
+
+
+def test_stalled_recording_frees_its_slot(cfg, monkeypatch):
+    from clipstudio.production.manager import ProductionManager
+
+    m = ProductionManager.__new__(ProductionManager)
+    m.pc = cfg.production
+    seg = SimpleNamespace(arrived=time.time() - 600)
+    ring = SimpleNamespace(segments=[seg])
+    m.live = SimpleNamespace(watches={"k": SimpleNamespace(session=SimpleNamespace(ring=ring))})
+    assert m._stalled({"key": "k"})
+    seg.arrived = time.time()
+    assert not m._stalled({"key": "k"})

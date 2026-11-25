@@ -98,3 +98,7 @@ If they pass, production stops quickly (the clip being edited finishes, waiting 
 checkout fast-forwards, the server restarts on the new code and resumes the lineup and the saved moments.
 Edited files or local commits in the checkout mean someone is working there, so nothing is touched. A commit
 whose tests fail is skipped until a newer one arrives. Turn it off with `production.auto_update: false`.
+
+## GTA 6 only
+
+Only a stream that is playing GTA 6 is recorded. Anything else counts as offline and is swapped for a GTA 6 stand-in: another game, GTA V, IRL or Just Chatting, or a sleep stream. Twitch and Kick say which game is on. YouTube doesn't, so the same channel is checked on Twitch and Kick (simulcasts). If the game is still unknown, the title has to mention GTA (`production.require_gta_title`). A recording that has sent no new video for 3 minutes (`production.stall_seconds`) is stopped so its slot is refilled.

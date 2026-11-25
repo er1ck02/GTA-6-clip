@@ -501,7 +501,7 @@ def toggle(a) -> dict:
     """One button: stop safely (every clip in flight finished or saved) if production is up, else start it."""
     launch = resolve_launch(a)
     if server_state(launch["port"]) == "down":
-        for k, v in (("channel", None), ("no_browser", True)):
+        for k, v in (("channel", None), ("no_browser", False)):
             if not hasattr(a, k):
                 setattr(a, k, v)
         return start(a)
