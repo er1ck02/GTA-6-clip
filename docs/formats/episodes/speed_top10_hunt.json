@@ -1,0 +1,230 @@
+{
+  "series": "IShowSpeed's top 10 GTA 6 moments",
+  "week": "The easter egg hunt",
+  "title": "ishowspeed's top 10 gta 6 moments (aliens, demons and a kill room) 😳",
+  "hook": "Speed went hunting for GTA 6's secrets and found aliens, demons and a whole lot of trouble.",
+  "intro": "IShowSpeed spent one day of streams hunting for GTA 6's secrets. Not missions, not money. Secrets. And Leonida delivered. Aliens, demons, a bloody garage, and one very naked man in an elevator. We went through every moment from that hunt, and these are the ten best. Speed's at full volume, so maybe turn yours down a little. Let's go.",
+  "outro": "That's the hunt. Ten moments, one day, zero chill. All of this footage is from IShowSpeed's streams, so go show him some love, the link's in the description. And if you think we got the order wrong, tell me which one should've been number one. Subscribe, because Leonida is not done keeping secrets.",
+  "cta": "subscribe for more gta 6",
+  "thumb_top": "speed's top 10",
+  "thumb_text": "he found aliens",
+  "voice": {
+    "engines": [
+      "edge",
+      "kokoro"
+    ],
+    "edge_voice": "en-US-BrianMultilingualNeural",
+    "edge_rate": "+6%"
+  },
+  "encoder": "h264_nvenc",
+  "extra_tags": [
+    "ishowspeed gta 6",
+    "speed gta 6",
+    "ishowspeed easter eggs",
+    "gta 6 aliens",
+    "gta 6 secrets"
+  ],
+  "moments": [
+    {
+      "rank": 10,
+      "streamer": "IShowSpeed",
+      "link": "youtube.com/@IShowSpeed",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ishowspeed_20261122_100442/moments/m002_393s.mp4",
+      "layout": "wide",
+      "in": 33,
+      "out": 54,
+      "mask": [
+        [
+          1590,
+          0,
+          330,
+          620
+        ]
+      ],
+      "label": "the elevator encounter",
+      "setup": "Number ten. The hunt starts in an elevator, which sounds safe. Speed's playing as Lucia, the doors open, and in walks a grown man wearing nothing but his boxer briefs. No explanation. No shame. Just vibes.",
+      "react": "Speed asking him if he wants to fight aliens naked is a genuinely fair question. And then they hug it out. Leonida is a strange place."
+    },
+    {
+      "rank": 9,
+      "streamer": "IShowSpeed",
+      "link": "youtube.com/@IShowSpeed",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ishowspeed_20261122_103526/moments/m022_1736s.mp4",
+      "layout": "wide",
+      "in": 36,
+      "out": 57,
+      "mask": [
+        [
+          1590,
+          0,
+          330,
+          620
+        ]
+      ],
+      "label": "crocodile fight",
+      "setup": "Number nine. Out in the marsh, Speed stumbles onto two crocodiles going at it. Most people would back away slowly. Speed pulls out his phone.",
+      "react": "World Star, he says, filming a crocodile fight on an in game phone. That is the most Florida thing that has ever happened in a video game, and the game is set in Florida."
+    },
+    {
+      "rank": 8,
+      "streamer": "IShowSpeed",
+      "link": "youtube.com/@IShowSpeed",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ishowspeed_20261122_124521/moments/m017_1602s.mp4",
+      "layout": "wide",
+      "in": 4.5,
+      "out": 36,
+      "mask": [
+        [
+          1590,
+          0,
+          330,
+          620
+        ]
+      ],
+      "label": "beach brawl",
+      "setup": "Number eight. A sunny day at the beach turns into a full brawl. Speed gets knocked straight off the pier, and then things go from bad to worse. But don't count him out yet.",
+      "react": "He got stomped, he got knocked off a pier, and he still found a way to win. That's not a fight, that's a comeback story."
+    },
+    {
+      "rank": 7,
+      "streamer": "IShowSpeed",
+      "link": "youtube.com/@IShowSpeed",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ishowspeed_20261122_103526/moments/m034_3274s.mp4",
+      "layout": "wide",
+      "in": 30,
+      "out": 66,
+      "mask": [
+        [
+          1590,
+          0,
+          330,
+          620
+        ]
+      ],
+      "label": "bigfoot hunt at night",
+      "setup": "Number seven. Night time, deep in the woods, flashlight on. Speed is hunting for Bigfoot. He finds a creepy carved figure in a tree, and then something starts chasing him. Is it Bigfoot? Keep watching.",
+      "react": "It was not Bigfoot. It was a very large, very angry pig. Speed went looking for a legend and got chased by bacon."
+    },
+    {
+      "rank": 6,
+      "streamer": "IShowSpeed",
+      "link": "youtube.com/@IShowSpeed",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ishowspeed_20261122_124521/moments/m022_2040s.mp4",
+      "layout": "wide",
+      "in": 23,
+      "out": 57,
+      "mask": [
+        [
+          1590,
+          0,
+          330,
+          620
+        ]
+      ],
+      "label": "chat trolls the safe code",
+      "setup": "Number six. Speed's stuck at a safe with a keypad and no code. So he does the one thing you should never do on a live stream. He asks chat for help.",
+      "react": "Six seven, six seven. Chat trolled him on the code, and you can feel his soul leave. Lesson learned: never trust chat with a safe."
+    },
+    {
+      "rank": 5,
+      "streamer": "IShowSpeed",
+      "link": "youtube.com/@IShowSpeed",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ishowspeed_20261122_124521/moments/m015_1463s.mp4",
+      "layout": "wide",
+      "in": 22,
+      "out": 58,
+      "mask": [
+        [
+          1590,
+          0,
+          330,
+          620
+        ]
+      ],
+      "label": "the kill room",
+      "setup": "Number five. Speed picks the lock on a random garage, because of course he does. Whatever's behind this door, nobody was supposed to find it.",
+      "react": "A cleaver, tools, and blood everywhere. Speed calls it Dexter Morgan's kill room, and honestly, he might be onto something. Rockstar loves a reference."
+    },
+    {
+      "rank": 4,
+      "streamer": "IShowSpeed",
+      "link": "youtube.com/@IShowSpeed",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ishowspeed_20261122_103526/moments/m004_219s.mp4",
+      "layout": "wide",
+      "in": 28,
+      "out": 60,
+      "mask": [
+        [
+          1590,
+          0,
+          330,
+          620
+        ]
+      ],
+      "label": "the demon ritual",
+      "setup": "Number four. Now we're getting into the scary stuff. Speed finds a purple ritual room, and Jason starts acting very, very wrong. Watch his face when it happens.",
+      "react": "His jaw hit the floor. Possessed Jason grabbing Lucia is the kind of thing that turns an easter egg hunt into a horror movie, and Speed did not sign up for a horror movie."
+    },
+    {
+      "rank": 3,
+      "streamer": "IShowSpeed",
+      "link": "youtube.com/@IShowSpeed",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ishowspeed_20261122_103526/moments/m010_801s.mp4",
+      "layout": "wide",
+      "in": 32,
+      "out": 49,
+      "mask": [
+        [
+          1590,
+          0,
+          330,
+          620
+        ]
+      ],
+      "label": "demon rematch",
+      "setup": "Number three. The demon is back, and this time Speed is ready. Round two. No running, no hiding. He's ending this.",
+      "react": "A fireball, a burning demon, and Speed getting the last word. Revenge has never looked this good in Leonida."
+    },
+    {
+      "rank": 2,
+      "streamer": "IShowSpeed",
+      "link": "youtube.com/@IShowSpeed",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ishowspeed_20261122_100442/moments/m012_1271s.mp4",
+      "layout": "wide",
+      "in": 6.5,
+      "out": 27,
+      "mask": [
+        [
+          1590,
+          0,
+          330,
+          620
+        ]
+      ],
+      "label": "the alien wakes up",
+      "setup": "Number two. Remember the alien body? Speed found one earlier in the hunt, and now Lucia is holding one in her arms. It's not moving. Until it is.",
+      "react": "Its eyes open, it floats up into a UFO, and Speed completely loses it. Alien in my hand, he says. Fair. We'd lose it too."
+    },
+    {
+      "rank": 1,
+      "streamer": "IShowSpeed",
+      "link": "youtube.com/@IShowSpeed",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/formats/src/speed_ufo_rescue.mp4",
+      "layout": "wide",
+      "in": 0,
+      "out": 38,
+      "mask": [
+        [
+          1590,
+          0,
+          330,
+          620
+        ]
+      ],
+      "label": "the alien comes back",
+      "setup": "And number one. Right after the alien floats away, Speed and Lucia get ambushed. Armed men, cars everywhere, nowhere to go. It looks like the end of the hunt. But somebody up there remembers who helped them.",
+      "react": "The UFO came back and blew up their cars. Did the alien just help me, he asks. Yes, Speed. Yes it did. Never judge a book by its cover, and never underestimate an alien you were nice to. That's number one.",
+      "thumb_t": 20
+    }
+  ]
+}

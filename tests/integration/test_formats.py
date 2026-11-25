@@ -30,7 +30,7 @@ def _spec(tmp: Path, n: int = 3) -> Path:
             "outro": "That's the week. See you next time.", "encoder": "libx264",
             "moments": [{"rank": n - i, "clip": c.name, "streamer": f"Streamer{i}", "link": f"youtube.com/@s{i}",
                          "label": "a moment", "setup": "Here is the setup line.", "react": "And that is why.",
-                         "short_title": f"streamer{i} did a thing 😭"} for i, c in enumerate(clips)]}
+                         "short_title": f"streamer{i} did a thing 😭", "mask": [[700, 960, 300, 200]]} for i, c in enumerate(clips)]}
     p = tmp / "ep.json"
     p.write_text(json.dumps(spec))
     return p
@@ -93,3 +93,15 @@ def test_news_refuses_uncited_fact(tmp_path):
 def test_tags_fit_youtube_limit():
     t = meta.tags([f"tag number {i}" for i in range(200)])
     assert sum(len(x) + 3 for x in t) <= 500
+
+
+def test_mask_pixelates_the_box(tmp_path):
+    from clipstudio.formats import compose as C
+    clip = _split_clip(tmp_path / "m.mp4")
+    lay = C.Layout.for_source(clip, "split")
+    a = C.frame_png(clip, 1.0, tmp_path / "a.png", lay)
+    b = C.frame_png(clip, 1.0, tmp_path / "b.png", C.Layout.for_source(clip, "split").with_mask([[0, 960, 540, 300]]))
+    from PIL import Image, ImageChops
+    diff = ImageChops.difference(Image.open(a).convert("RGB"), Image.open(b).convert("RGB"))
+    assert diff.crop((0, 0, 540, 300)).getbbox() is not None      # masked area changed
+    assert diff.crop((600, 350, 1080, 608)).getbbox() is None     # the rest did not

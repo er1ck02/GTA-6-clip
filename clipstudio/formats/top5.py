@@ -96,7 +96,7 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
     segs: list[tuple[str, Path]] = []
     # ---- intro: title card over the first moment's gameplay (blurred, so nothing is spoiled)
     first = order[0]
-    lay0 = C.Layout.for_source(Path(first["clip"]), first.get("layout"))
+    lay0 = C.Layout.for_source(Path(first["clip"]), first.get("layout")).with_mask(first.get("mask"))
     narr = speak(spec["intro"], vcfg)
     segs.append(("Intro", C.card(seg_dir / "00_intro.mp4", bg_clip=Path(first["clip"]), bg_t=_window(first)[0],
                                  layout=lay0, overlays=[style.title_card(gfx / "title.png", series, week)],
@@ -104,7 +104,7 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
     # ---- countdown
     for m in order:
         clip, r = Path(m["clip"]), m["rank"]
-        lay = C.Layout.for_source(clip, m.get("layout"))
+        lay = C.Layout.for_source(clip, m.get("layout")).with_mask(m.get("mask"))
         t_in, t_out = _window(m)
         narr = speak(m["setup"], vcfg)
         segs.append((f"#{r} {m['streamer']}" + (f": {m['label']}" if m.get("label") else ""),
@@ -125,7 +125,7 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
     credits = [(f"#{m['rank']}  {m['streamer']}", m["link"].replace("https://", "")) for m in order]
     narr = speak(spec["outro"], vcfg)
     segs.append(("Credits", C.card(seg_dir / "99_outro.mp4", bg_clip=Path(top["clip"]), bg_t=_window(top)[0],
-                                   layout=C.Layout.for_source(Path(top["clip"]), top.get("layout")),
+                                   layout=C.Layout.for_source(Path(top["clip"]), top.get("layout")).with_mask(top.get("mask")),
                                    overlays=[style.end_card(gfx / "end.png", credits,
                                                             spec.get("cta", "subscribe for next week's top 5"))],
                                    narration=narr, dur=max(8.0, duration(narr) + 1.5), size=WIDE, enc=enc, blur=26)))
@@ -142,7 +142,7 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
     t_in, t_out = _window(top)
     tt = float(top.get("thumb_t") or (t_in + (t_out - t_in) * 0.6))
     frame = C.frame_png(Path(top["clip"]), tt, gfx / "thumb_src.png",
-                        C.Layout.for_source(Path(top["clip"]), top.get("layout")), WIDE)
+                        C.Layout.for_source(Path(top["clip"]), top.get("layout")).with_mask(top.get("mask")), WIDE)
     thumb = style.thumbnail(frame, out_dir / "thumbnail.jpg", spec.get("thumb_top", "top 5 this week"),
                             spec.get("thumb_text", f"{top['streamer']} #1?"))
 

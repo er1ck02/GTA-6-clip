@@ -93,7 +93,8 @@ def build(spec_path: Path, out_dir: Path, *, voice_override: dict | None = None)
     segs, cursor = [], {}
     for i, b in enumerate(spec["beats"], 1):
         clip = Path(b.get("clip") or spec["clip"])
-        lay = C.Layout.for_source(clip, b.get("layout") or spec.get("layout"))
+        lay = C.Layout.for_source(clip, b.get("layout") or spec.get("layout")).with_mask(
+            b.get("mask") if b.get("mask") is not None else spec.get("mask"))
         narr = speak(b["say"], vcfg)
         dur = duration(narr) + float(b.get("pause", 0.35))
         t = float(b["in"]) if b.get("in") is not None else cursor.get(str(clip), 0.0)
