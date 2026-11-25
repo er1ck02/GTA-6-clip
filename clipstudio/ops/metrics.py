@@ -239,6 +239,7 @@ def snapshot(data_dir: Path, fetch: Fetch = run_ytdlp, now: datetime | None = No
                     rows.append(Row(_iso(now), platform, u.rstrip("/").rsplit("/", 1)[-1], url=u, error=err))
                 continue
             r = row_from_info(info, platform, now)
+            r.url = r.url or u
             cap = captions.get(u)
             if cap and (not r.title or r.title.lower().startswith("video by")):
                 r.title, r.streamer = cap, guess_streamer(cap)

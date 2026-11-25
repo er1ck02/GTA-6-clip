@@ -39,8 +39,11 @@ def test_snapshot_logs_videos_errors_and_followers(tmp_path):
     assert yt.views == "4300" and yt.streamer == "typicalgamer" and yt.age_h == "48.0"
     assert yt.url == "https://www.youtube.com/shorts/abc123"
     assert any(r.platform == "youtube" and r.video_id == "_channel" and r.followers == "42" for r in rows)
+    tt = next(r for r in rows if r.platform == "tiktok" and r.video_id == "77")  # video page fails, listing counts used
+    assert tt.views == "134" and tt.streamer == "xqc" and "profile listing" in tt.source
     ig = next(r for r in rows if r.platform == "instagram" and r.video_id == "DgDOeQJBIGF")
-    assert ig.error and not ig.views
+    assert ig.views == "" and ig.likes == "3" and ig.url.endswith("/DgDOeQJBIGF/")  # unknown, never 0
+    assert ig.title == "ludwig lost the race by .001" and ig.streamer == "ludwig"
     M.snapshot(tmp_path, fake_fetch(pages), NOW)                                    # append-only
     assert len(M.read_rows(tmp_path / "ops" / "metrics.csv")) == 2 * len(rows)
 
