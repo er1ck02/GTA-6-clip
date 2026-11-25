@@ -157,15 +157,23 @@ def rank_card(path: Path, rank: int, streamer: str, label: str, series: str, w: 
     return save(img, path)
 
 
-def lower_third(path: Path, rank: int | None, streamer: str, link: str, w: int = 1920, h: int = 1080) -> Path:
-    """Credit shown for the whole clip, top-left."""
+def _place(pos: str, bw: int, bh: int, w: int, h: int, m: tuple[int, int] = (48, 44)) -> tuple[int, int]:
+    """Top-left corner for a box of bw x bh at ``pos`` (tl, tr, bl, br)."""
+    x = m[0] if pos[1] == "l" else w - m[0] - bw
+    y = m[1] if pos[0] == "t" else h - m[1] - bh
+    return x, y
+
+
+def lower_third(path: Path, rank: int | None, streamer: str, link: str, w: int = 1920, h: int = 1080,
+                pos: str = "tl") -> Path:
+    """Credit shown for the whole clip (default top-left; move it off the streamer's webcam with ``pos``)."""
     img = canvas(w, h)
     d = ImageDraw.Draw(img)
     f1, f2 = font(54, "display"), font(30)
     name = streamer.upper()
     tw = max(d.textlength(name, font=f1), d.textlength(link, font=f2))
     bx = 132 if rank is not None else 0
-    x0, y0 = 48, 44
+    x0, y0 = _place(pos, int(bx + tw + 60), 120, w, h)
     d.rounded_rectangle([x0, y0, x0 + bx + tw + 60, y0 + 120], radius=18, fill=BG + (205,))
     if rank is not None:
         gradient_bar(img, (x0, y0, x0 + bx, y0 + 120))
@@ -175,12 +183,13 @@ def lower_third(path: Path, rank: int | None, streamer: str, link: str, w: int =
     return save(img, path)
 
 
-def corner_badge(path: Path, rank: int, w: int = 1920, h: int = 1080) -> Path:
+def corner_badge(path: Path, rank: int, w: int = 1920, h: int = 1080, pos: str = "tl") -> Path:
     img = canvas(w, h)
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, w, h], fill=BG + (95,))
-    gradient_bar(img, (48, 44, 180, 164))
-    d.text((114, 104), f"#{rank}", font=font(64, "display"), fill=BG + (255,), anchor="mm")
+    x, y = _place(pos, 132, 120, w, h)
+    gradient_bar(img, (x, y, x + 132, y + 120))
+    d.text((x + 66, y + 60), f"#{rank}", font=font(64, "display"), fill=BG + (255,), anchor="mm")
     return save(img, path)
 
 
@@ -253,29 +262,36 @@ def short_end(path: Path, line1: str, line2: str, w: int = 1080, h: int = 1920) 
 
 
 def news_card(path: Path, kicker: str, text: str, source: str, game_box: tuple[int, int, int, int],
-              w: int = 1080, h: int = 1920) -> Path:
+              w: int = 1080, h: int = 1920, footage: str = "") -> Path:
     """Fact text above the gameplay window, source line below it."""
     img = canvas(w, h)
     d = ImageDraw.Draw(img)
     gx0, gy0, gx1, gy1 = game_box
     d.rounded_rectangle([40, 150, w - 40, gy0 - 40], radius=30, fill=BG + (215,))
     d.text((90, 200), kicker.upper(), font=font(42), fill=C1 + (255,))
-    f = font(84, "display")
+    f = font(112, "display")
     lines = wrap(d, text.upper(), f, w - 180)
-    while len(lines) > 4 and f.size > 50:
+    while len(lines) > 4 and f.size > 56:
         f = font(f.size - 8, "display")
         lines = wrap(d, text.upper(), f, w - 180)
-    y = 280
-    for i, ln in enumerate(lines[:5]):
+    lines = lines[:5]
+    lh = int(f.size * 1.12)
+    top, bottom = 270, gy0 - 70
+    y = top + max(0, (bottom - top - lh * len(lines)) // 2)
+    for i, ln in enumerate(lines):
         if i == 0:
             gradient_text(img, (90, y), ln, f, glow=False)
         else:
             d.text((90, y), ln, font=f, fill=INK + (255,))
-        y += int(f.size * 1.12)
+        y += lh
     gradient_bar(img, (gx0 - 6, gy0 - 6, gx1 + 6, gy0))
     gradient_bar(img, (gx0 - 6, gy1, gx1 + 6, gy1 + 6))
     if source:
         s = "SOURCE: " + source
         d.rounded_rectangle([40, gy1 + 40, w - 40, gy1 + 130], radius=20, fill=BG + (200,))
         d.text((w // 2, gy1 + 85), s, font=fit_font(d, s, w - 140, 36), fill=MUTED + (255,), anchor="mm")
+    if footage:
+        s = "FOOTAGE: " + footage
+        d.rounded_rectangle([40, gy1 + 150, w - 40, gy1 + 240], radius=20, fill=BG + (200,))
+        d.text((w // 2, gy1 + 195), s, font=fit_font(d, s, w - 140, 36), fill=C1 + (255,), anchor="mm")
     return save(img, path)

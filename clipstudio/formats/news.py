@@ -102,7 +102,9 @@ def build(spec_path: Path, out_dir: Path, *, voice_override: dict | None = None)
             t = 0.0 if dur >= clip_d else max(0.0, clip_d - dur)
         cursor[str(clip)] = t + dur
         src = ", ".join(srcs[x]["name"] for x in (b.get("sources") or []) if x in srcs)
-        card = style.news_card(gfx / f"beat{i}.png", spec.get("kicker", "gta 6 news"), b["show"], src, _box())
+        foot = b.get("footage") or " / ".join(f["streamer"] for f in spec["footage"])
+        card = style.news_card(gfx / f"beat{i}.png", spec.get("kicker", "gta 6 news"), b["show"], src, _box(),
+                               footage=foot)
         segs.append(C.card(parts / f"beat{i:02d}.mp4", bg_clip=clip, bg_t=t, layout=lay, overlays=[card],
                            narration=narr, dur=dur, size=TALL, enc=enc, game_box=GAME_BOX, blur=22, dim=-0.25,
                            lead=0.1))

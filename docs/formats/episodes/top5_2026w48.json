@@ -39,11 +39,13 @@
       "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/xqc_20261122_224909/moments/m014_3302s.mp4",
       "layout": "wide",
       "in": 29.0,
-      "out": 55.6,
+      "out": 52.5,
       "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m014-3302s-3e73cee740_c-719bd2.mp4",
       "short_title": "#4 this week: xqc should not fly jets 😭",
       "setup": "Number four. xQc got his hands on a fighter jet. A man famously calm under pressure, with a totally reasonable plan. Watch the confidence. Then watch the desk.",
-      "react": "Wasted. And that full body launch away from the desk? That's not a reaction, that's an ejection seat. Somebody take the jet keys away from this man."
+      "react": "Wasted. And that full body launch away from the desk? That's not a reaction, that's an ejection seat. Somebody take the jet keys away from this man.",
+      "short_out": 15.5,
+      "credit_pos": "tr"
     },
     {
       "rank": 3,
@@ -57,12 +59,12 @@
       "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m013-3327s-5a60ce477b_c-0e3528.mp4",
       "short_title": "#3 this week: gta 6 is too realistic for ludwig 😭",
       "setup": "Number three. Ludwig went to the gym. Wholesome, right? Except the gyms in GTA 6 come with a little more realism than he signed up for.",
-      "react": "Ten out of ten, game of the century, he says. Ludwig got roasted by a bench press and wrote the review himself. Honestly? Fair."
+      "react": "Ten out of ten, game of the century, he says. Ludwig got roasted by his own workout and wrote the review himself. Honestly? Fair."
     },
     {
       "rank": 2,
       "streamer": "TypicalGamer",
-      "link": "youtube.com/@TypicalGamer",
+      "link": "twitch.tv/typicalgamer",
       "label": "shot through the door",
       "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/typicalgamer_20261122_004040/moments/m004_2803s.mp4",
       "layout": "wide",
@@ -80,7 +82,7 @@
       "label": "found something in a hidden lab",
       "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ishowspeed_20261122_100442/moments/m010_1022s.mp4",
       "layout": "wide",
-      "in": 13.0,
+      "in": 27.0,
       "out": 51.0,
       "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m010-1022s-620d50c4cc_c-f2ec90.mp4",
       "short_title": "#1 this week: speed found something in gta 6 😳",

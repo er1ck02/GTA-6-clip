@@ -82,19 +82,21 @@
       "sources": [
         "gb"
       ],
-      "in": 40
+      "in": 26
     },
     {
       "say": "And according to players, the money glitch still works. For now.",
       "show": "players say the money glitch still works",
       "sources": [
         "psl"
-      ]
+      ],
+      "in": 6
     },
     {
       "say": "Follow for more GTA 6 news.",
       "show": "follow for more gta 6 news",
-      "claim": false
+      "claim": false,
+      "in": 14
     }
   ]
 }
