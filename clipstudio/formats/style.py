@@ -148,10 +148,10 @@ def rank_card(path: Path, rank: int, streamer: str, label: str, series: str, w: 
     gradient_text(img, (150, 190 + (520 - num.size) // 3), f"#{rank}", num)
     gradient_bar(img, (x, 400, x + 10, 690))
     f1 = fit_font(d, streamer.upper(), w - x - 160, 150, "display")
-    d.text((x + 50, 380), streamer.upper(), font=f1, fill=INK + (255,))
+    d.text((x + 50, 380), streamer.upper(), font=f1, fill=INK + (255,), stroke_width=4, stroke_fill=BG + (230,))
     f2 = font(54)
     for i, ln in enumerate(wrap(d, label, f2, w - x - 200)[:2]):
-        d.text((x + 54, 580 + i * 66), ln, font=f2, fill=MUTED + (255,))
+        d.text((x + 54, 580 + i * 66), ln, font=f2, fill=INK + (255,), stroke_width=3, stroke_fill=BG + (230,))
     d.rectangle([0, h - 90, w, h], fill=BG + (200,))
     d.text((w // 2, h - 45), series.upper(), font=font(34), fill=MUTED + (255,), anchor="mm")
     gradient_bar(img, (0, h - 92, w, h - 88))

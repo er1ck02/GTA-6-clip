@@ -166,6 +166,10 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
             chapters.append((t, name))
         t += C.seg_duration(p)
     total = t
+    if minimal:     # YouTube needs chapters >= 10 s: the first clip starts at 0:00, no Intro/Credits chapters
+        chapters = [(a, b) for a, b in chapters if b not in ("Intro", "Credits")]
+        if chapters:
+            chapters[0] = (0.0, chapters[0][1])
 
     # ---- thumbnail from the #1 moment
     t_in, t_out = _window(top)
@@ -204,8 +208,9 @@ def _description(spec: dict, order: list[dict], chapters: list[tuple[float, str]
         if m["streamer"] not in seen:
             seen.add(m["streamer"])
             lines.append(f"{m['streamer']}: {_link(m)}")
-    lines += ["", "All clips belong to the streamers and are credited on screen. Ranking, script and narration are "
-                  "ours. Streamers: want a clip removed? Comment or message and it's gone.", "",
+    ours = "Ranking and edit are ours." if spec.get("style") == "minimal" else "Ranking, script and narration are ours."
+    lines += ["", f"All clips belong to the streamers and are credited on screen. {ours} "
+                  "Streamers: want a clip removed? Comment or message and it's gone.", "",
               "#gta6 #gtavi #gta6moments"]
     return "\n".join(lines)
 
