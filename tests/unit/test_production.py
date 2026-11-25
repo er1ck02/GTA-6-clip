@@ -84,8 +84,10 @@ def session_dir(root: Path, channel: str, stamp: str, moments: list[dict], url: 
 @pytest.fixture
 def cfg(tmp_path):
     # no network in tests: no Twitch category / YouTube search
-    return load_config(overrides=[f"paths.data_dir={tmp_path}", "production.recheck_minutes=1",
-                                  "production.discover_twitch_category=''", "production.discover_youtube_search=''"])
+    c = load_config(overrides=[f"paths.data_dir={tmp_path}", "production.recheck_minutes=1",
+                               "production.discover_twitch_category=''", "production.discover_youtube_search=''"])
+    c.production.priority_channels = []  # tests pick their own lineup
+    return c
 
 
 def mgr(cfg, live, check, **kw):
@@ -585,3 +587,16 @@ def test_stalled_recording_frees_its_slot(cfg, monkeypatch):
     assert m._stalled({"key": "k"})
     seg.arrived = time.time()
     assert not m._stalled({"key": "k"})
+
+
+def test_priority_channels_head_the_lineup(cfg):
+    from clipstudio.production.manager import ProductionManager
+
+    m = ProductionManager.__new__(ProductionManager)
+    m.pc, m.cfg = cfg.production, cfg
+    m.pc.priority_channels = ["IShowSpeed"]
+    m.state = {"lineup": [{"channel": "ludwig", "url": None}]}
+    m._ensure_priority()
+    m._ensure_priority()
+    assert [e["channel"] for e in m.state["lineup"]] == ["ishowspeed", "ludwig"]
+    assert "ishowspeed" in [c.lower() for c in cfg.upload.allow_channels]
