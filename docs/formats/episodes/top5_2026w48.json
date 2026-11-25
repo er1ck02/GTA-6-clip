@@ -29,7 +29,15 @@
       "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m004-430s-93ed6f3321_c-8bbf21.mp4",
       "short_title": "#5 this week: supertf picked the wrong fight 😭",
       "setup": "Number five. SuperTF. Picture this: a calm little street argument. Somebody wants to show off, SuperTF is ready to throw hands, and nobody in this scene is checking for traffic.",
-      "react": "That is the fastest a fist fight has ever turned into a traffic report. Lesson one from Leonida: look both ways before you start swinging."
+      "react": "That is the fastest a fist fight has ever turned into a traffic report. Lesson one from Leonida: look both ways before you start swinging.",
+      "mask": [
+        [
+          1485,
+          845,
+          435,
+          235
+        ]
+      ]
     },
     {
       "rank": 4,
@@ -45,7 +53,15 @@
       "setup": "Number four. xQc got his hands on a fighter jet. A man famously calm under pressure, with a totally reasonable plan. Watch the confidence. Then watch the desk.",
       "react": "Wasted. And that full body launch away from the desk? That's not a reaction, that's an ejection seat. Somebody take the jet keys away from this man.",
       "short_out": 15.5,
-      "credit_pos": "tr"
+      "credit_pos": "tr",
+      "mask": [
+        [
+          0,
+          346,
+          500,
+          220
+        ]
+      ]
     },
     {
       "rank": 3,
@@ -59,7 +75,15 @@
       "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m013-3327s-5a60ce477b_c-0e3528.mp4",
       "short_title": "#3 this week: gta 6 is too realistic for ludwig 😭",
       "setup": "Number three. Ludwig went to the gym. Wholesome, right? Except the gyms in GTA 6 come with a little more realism than he signed up for.",
-      "react": "Ten out of ten, game of the century, he says. Ludwig got roasted by his own workout and wrote the review himself. Honestly? Fair."
+      "react": "Ten out of ten, game of the century, he says. Ludwig got roasted by his own workout and wrote the review himself. Honestly? Fair.",
+      "mask": [
+        [
+          0,
+          636,
+          350,
+          172
+        ]
+      ]
     },
     {
       "rank": 2,
@@ -88,7 +112,15 @@
       "short_title": "#1 this week: speed found something in gta 6 😳",
       "setup": "And number one. IShowSpeed went exploring, which is always a risk. He wandered into a hidden lab, and what he found in there turned into the loudest moment of the week. Volume warning.",
       "react": "Yeah. That's an alien body, in a hidden lab, in GTA 6, and Speed's soul left the building. Whatever Rockstar was hiding back there, Speed found it at full volume.",
-      "thumb_t": 30.0
+      "thumb_t": 30.0,
+      "mask": [
+        [
+          1590,
+          0,
+          330,
+          320
+        ]
+      ]
     }
   ]
 }
