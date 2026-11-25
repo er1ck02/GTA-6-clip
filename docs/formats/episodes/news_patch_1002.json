@@ -46,7 +46,8 @@
         "psl",
         "gb"
       ],
-      "in": 20
+      "in": 20,
+      "footage": "Lacy"
     },
     {
       "say": "Update one point zero zero two dropped on November twenty third, for PS5 and Xbox Series. About six hundred megs on PlayStation, and players say over a gig on Xbox.",
@@ -54,7 +55,8 @@
       "sources": [
         "psl",
         "gb"
-      ]
+      ],
+      "footage": "Lacy"
     },
     {
       "say": "Seven fixes. Crashes, weather that got stuck, broken autosaves, phone calls that never came, which was blocking story missions, and the bug where you couldn't lose your wanted level.",
@@ -64,7 +66,8 @@
         "psl"
       ],
       "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/supertf_20261123_195854/moments/m004_430s.mp4",
-      "in": 30
+      "in": 30,
+      "footage": "SuperTF"
     },
     {
       "say": "Plus, the gym deadlift bar works now, and partners finally hand over the bags so you can sell them to a fence.",
@@ -74,7 +77,8 @@
         "gb"
       ],
       "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ludwig_20261122_123451/moments/m013_3327s.mp4",
-      "in": 8
+      "in": 8,
+      "footage": "Ludwig"
     },
     {
       "say": "But one bug is still out there. Finish the Missing Persons side mission in Kelly County during chapter three, and some players say they're stuck as Lucia, unable to switch back to Jason.",
@@ -82,7 +86,8 @@
       "sources": [
         "gb"
       ],
-      "in": 26
+      "in": 26,
+      "footage": "Lacy"
     },
     {
       "say": "And according to players, the money glitch still works. For now.",
@@ -90,13 +95,15 @@
       "sources": [
         "psl"
       ],
-      "in": 6
+      "in": 6,
+      "footage": "Lacy"
     },
     {
       "say": "Follow for more GTA 6 news.",
       "show": "follow for more gta 6 news",
       "claim": false,
-      "in": 14
+      "in": 14,
+      "footage": "Lacy"
     }
   ]
 }
