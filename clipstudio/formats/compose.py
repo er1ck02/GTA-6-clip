@@ -24,6 +24,13 @@ class Layout:
     """Regions in source pixels: ``game`` (x, y, w, h) and optional ``face``."""
     game: tuple[int, int, int, int]
     face: tuple[int, int, int, int] | None = None
+    # boxes (x, y, w, h, source pixels) pixelated before anything else: the stream's own chat, donation
+    # alerts... Chat can show anything (slurs, spam), so every wide shot of a stream with visible chat masks it.
+    mask: list[tuple[int, int, int, int]] = field(default_factory=list)
+
+    def with_mask(self, mask) -> "Layout":
+        self.mask = [tuple(int(v) for v in b) for b in (mask or [])]
+        return self
 
     @classmethod
     def split(cls) -> "Layout":
@@ -70,7 +77,23 @@ def _crop(r: tuple[int, int, int, int]) -> str:
 
 
 def _fill(w: int, h: int) -> str:
-    return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1"
+    # out_range=tv: some sources (720p TypicalGamer) are full-range; mixing ranges shifts contrast between segments
+    return f"scale={w}:{h}:force_original_aspect_ratio=increase:out_range=tv,crop={w}:{h},setsar=1"
+
+
+def _masked(src: str, layout: Layout | None, tag: str) -> tuple[list[str], str]:
+    """Filters that pixelate ``layout.mask`` boxes on stream ``src``; returns (filters, output label)."""
+    if not layout or not layout.mask:
+        return [], src
+    fs, cur = [], src
+    for i, (x, y, w, h) in enumerate(layout.mask):
+        w, h = max(16, w // 2 * 2), max(16, h // 2 * 2)
+        fs.append(f"[{cur}]split=2[{tag}b{i}][{tag}p{i}]")
+        fs.append(f"[{tag}p{i}]crop={w}:{h}:{x}:{y},scale={max(2, w // 28)}:{max(2, h // 28)},"
+                  f"scale={w}:{h}:flags=neighbor,boxblur=6:2,eq=brightness=-0.15[{tag}q{i}]")
+        fs.append(f"[{tag}b{i}][{tag}q{i}]overlay={x}:{y}[{tag}m{i}]")
+        cur = f"{tag}m{i}"
+    return fs, cur
 
 
 def _ff(args: list[str], out: Path) -> Path:
@@ -79,14 +102,35 @@ def _ff(args: list[str], out: Path) -> Path:
     return out
 
 
-def frame_png(clip: Path, t: float, out: Path, layout: Layout | None = None, size: tuple[int, int] | None = None) -> Path:
-    vf = []
-    if layout:
-        vf.append(_crop(layout.game))
+def clear_of_mask(layout: Layout) -> tuple[int, int, int, int]:
+    """The biggest 16:9 part of the game region that doesn't touch a mask box on its left/right edge
+    (for thumbnails, where a pixelated square looks bad)."""
+    gx, gy, gw, gh = layout.game
+    left, right = gx, gx + gw
+    for x, y, w, h in layout.mask:
+        if x <= gx + 2:
+            left = max(left, x + w)
+        elif x + w >= gx + gw - 2:
+            right = min(right, x)
+    w = max(16, right - left)
+    h = min(gh, int(w * 9 / 16))
+    w = int(h * 16 / 9)
+    return (left + (right - left - w) // 2, gy + (gh - h) // 2, w // 2 * 2, h // 2 * 2)
+
+
+def frame_png(clip: Path, t: float, out: Path, layout: Layout | None = None, size: tuple[int, int] | None = None,
+              avoid_mask: bool = False) -> Path:
+    fs, cur = _masked("0:v", layout, "k")
+    tail = []
+    if layout and avoid_mask and layout.mask:
+        tail.append(_crop(clear_of_mask(layout)))
+    elif layout:
+        tail.append(_crop(layout.game))
     if size:
-        vf.append(_fill(*size))
-    return _ff(["-ss", f"{max(0.0, t):.3f}", "-i", str(clip), "-frames:v", "1"] + (["-vf", ",".join(vf)] if vf else []),
-               out)
+        tail.append(_fill(*size))
+    fs.append(f"[{cur}]" + (",".join(tail) if tail else "null") + "[v]")
+    return _ff(["-ss", f"{max(0.0, t):.3f}", "-i", str(clip), "-filter_complex", ";".join(fs), "-map", "[v]",
+                "-frames:v", "1"], out)
 
 
 def card(out: Path, *, bg_clip: Path, bg_t: float, layout: Layout, overlays: list[Path], narration: Path | None,
@@ -101,13 +145,16 @@ def card(out: Path, *, bg_clip: Path, bg_t: float, layout: Layout, overlays: lis
     src = ["-ss", f"{max(0.0, bg_t):.3f}"] + inp + ["-i", str(bg_clip)]
     args = list(src)
     n = 1
-    fc = [f"[0:v]{_crop(layout.game)},{_fill(W, H)},boxblur={blur}:2,eq=brightness={dim}:saturation=1.1[bg]"]
+    fc, cur = _masked("0:v", layout, "a")
+    fc.append(f"[{cur}]{_crop(layout.game)},{_fill(W, H)},boxblur={blur}:2,eq=brightness={dim}:saturation=1.1[bg]")
     last = "bg"
     if game_box:
         # a second decoder of the same clip (split + an unused branch makes ffmpeg buffer without end)
         args += src
         x, y, w, h = game_box
-        fc.append(f"[{n}:v]{_crop(layout.game)},scale={w}:{h}:force_original_aspect_ratio=decrease,"
+        mf, mcur = _masked(f"{n}:v", layout, "b")
+        fc += mf
+        fc.append(f"[{mcur}]{_crop(layout.game)},scale={w}:{h}:force_original_aspect_ratio=decrease,"
                   f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1[gw]")
         fc.append(f"[{last}][gw]overlay={x}:{y}[v0]")
         last = "v0"
@@ -135,16 +182,16 @@ def wide_clip(out: Path, *, clip: Path, t_in: float, t_out: float, layout: Layou
     W, H = size
     dur = t_out - t_in
     args = ["-ss", f"{t_in:.3f}", "-t", f"{dur:.3f}", "-i", str(clip)]
-    fc = []
+    fc, cur = _masked("0:v", layout, "w")
     if layout.face:
         fx, fy, fw, fh = layout.face
         ph = int(pip_w * fh / fw) // 2 * 2
-        fc += [f"[0:v]split=2[s0][s1]", f"[s0]{_crop(layout.game)},{_fill(W, H)}[g]",
+        fc += [f"[{cur}]split=2[s0][s1]", f"[s0]{_crop(layout.game)},{_fill(W, H)}[g]",
                f"[s1]{_crop(layout.face)},scale={pip_w}:{ph},setsar=1,"
                f"pad={pip_w + 8}:{ph + 8}:4:4:color=0x34e7ff[f]",
                f"[g][f]overlay={W - pip_w - 8 - 40}:{H - ph - 8 - 40}[v0]"]
     else:
-        fc += [f"[0:v]{_crop(layout.game)},{_fill(W, H)}[v0]"]
+        fc += [f"[{cur}]{_crop(layout.game)},{_fill(W, H)}[v0]"]
     last = "v0"
     for i, png in enumerate(overlays, start=1):
         args += ["-i", str(png)]

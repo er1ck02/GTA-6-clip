@@ -96,7 +96,7 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
     segs: list[tuple[str, Path]] = []
     # ---- intro: title card over the first moment's gameplay (blurred, so nothing is spoiled)
     first = order[0]
-    lay0 = C.Layout.for_source(Path(first["clip"]), first.get("layout"))
+    lay0 = C.Layout.for_source(Path(first["clip"]), first.get("layout")).with_mask(first.get("mask"))
     narr = speak(spec["intro"], vcfg)
     segs.append(("Intro", C.card(seg_dir / "00_intro.mp4", bg_clip=Path(first["clip"]), bg_t=_window(first)[0],
                                  layout=lay0, overlays=[style.title_card(gfx / "title.png", series, week)],
@@ -104,7 +104,7 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
     # ---- countdown
     for m in order:
         clip, r = Path(m["clip"]), m["rank"]
-        lay = C.Layout.for_source(clip, m.get("layout"))
+        lay = C.Layout.for_source(clip, m.get("layout")).with_mask(m.get("mask"))
         t_in, t_out = _window(m)
         narr = speak(m["setup"], vcfg)
         segs.append((f"#{r} {m['streamer']}" + (f": {m['label']}" if m.get("label") else ""),
@@ -122,10 +122,17 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
                                       dur=duration(narr) + 0.5, enc=enc, size=WIDE)))
     # ---- outro: credits
     top = order[-1]
-    credits = [(f"#{m['rank']}  {m['streamer']}", m["link"].replace("https://", "")) for m in order]
+    credits, seen = [], set()
+    for m in order:
+        if m["streamer"] in seen:
+            continue
+        seen.add(m["streamer"])
+        ranks = ", ".join(f"#{x['rank']}" for x in order if x["streamer"] == m["streamer"])
+        label = m["streamer"] if len(ranks) > 12 else f"{ranks}  {m['streamer']}"
+        credits.append((label, m["link"].replace("https://", "")))
     narr = speak(spec["outro"], vcfg)
     segs.append(("Credits", C.card(seg_dir / "99_outro.mp4", bg_clip=Path(top["clip"]), bg_t=_window(top)[0],
-                                   layout=C.Layout.for_source(Path(top["clip"]), top.get("layout")),
+                                   layout=C.Layout.for_source(Path(top["clip"]), top.get("layout")).with_mask(top.get("mask")),
                                    overlays=[style.end_card(gfx / "end.png", credits,
                                                             spec.get("cta", "subscribe for next week's top 5"))],
                                    narration=narr, dur=max(8.0, duration(narr) + 1.5), size=WIDE, enc=enc, blur=26)))
@@ -142,13 +149,16 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
     t_in, t_out = _window(top)
     tt = float(top.get("thumb_t") or (t_in + (t_out - t_in) * 0.6))
     frame = C.frame_png(Path(top["clip"]), tt, gfx / "thumb_src.png",
-                        C.Layout.for_source(Path(top["clip"]), top.get("layout")), WIDE)
+                        C.Layout.for_source(Path(top["clip"]), top.get("layout")).with_mask(top.get("mask")), WIDE,
+                        avoid_mask=True)
     thumb = style.thumbnail(frame, out_dir / "thumbnail.jpg", spec.get("thumb_top", "top 5 this week"),
                             spec.get("thumb_text", f"{top['streamer']} #1?"))
 
     desc = _description(spec, order, chapters)
-    tg = meta.tags(meta.TOP5_TAGS, [f"{m['streamer'].lower()} gta 6" for m in order],
-                   [m["streamer"].lower() for m in order], meta.BASE_TAGS, spec.get("extra_tags", []))
+    names = list(dict.fromkeys(m["streamer"].lower() for m in order))
+    group = meta.TOP5_TAGS if len(order) == 5 else [f"top {len(order)} gta 6 moments", "gta 6 best moments",
+                                                    "gta 6 compilation", "gta 6 funniest moments"]
+    tg = meta.tags(spec.get("extra_tags", []), group, [f"{n} gta 6" for n in names], names, meta.BASE_TAGS)
     meta.write_upload(out_dir, file=episode, title=spec["title"], description=desc, tags_=tg, short=False,
                       thumbnail=thumb, visibility=spec.get("visibility", "unlisted"))
     result = {"episode": str(episode), "duration": round(total, 1), "thumbnail": str(thumb),
@@ -164,10 +174,14 @@ def _description(spec: dict, order: list[dict], chapters: list[tuple[float, str]
     lines = []
     if spec.get("hook"):
         lines += [spec["hook"], ""]
-    lines += ["Our weekly countdown of the best GTA 6 streamer moments, ranked and narrated by us.", ""]
+    lines += [spec.get("about", "Our weekly countdown of the best GTA 6 streamer moments, ranked and narrated by us."), ""]
     lines += [f"{meta.stamp(t)} {name}" for t, name in chapters] + [""]
     lines += ["Clips from (go support them):"]
-    lines += [f"#{m['rank']} {m['streamer']}: {_link(m)}" for m in order]
+    seen = set()
+    for m in order:
+        if m["streamer"] not in seen:
+            seen.add(m["streamer"])
+            lines.append(f"{m['streamer']}: {_link(m)}")
     lines += ["", "All clips belong to the streamers and are credited on screen. Ranking, script and narration are "
                   "ours. Streamers: want a clip removed? Comment or message and it's gone.", "",
               "#gta6 #gtavi #gta6moments"]

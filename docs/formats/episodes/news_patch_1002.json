@@ -66,8 +66,16 @@
         "psl"
       ],
       "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/supertf_20261123_195854/moments/m004_430s.mp4",
-      "in": 30,
-      "footage": "SuperTF"
+      "in": 33,
+      "footage": "SuperTF",
+      "mask": [
+        [
+          1485,
+          845,
+          435,
+          235
+        ]
+      ]
     },
     {
       "say": "Plus, the gym deadlift bar works now, and partners finally hand over the bags so you can sell them to a fence.",
@@ -78,7 +86,15 @@
       ],
       "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ludwig_20261122_123451/moments/m013_3327s.mp4",
       "in": 8,
-      "footage": "Ludwig"
+      "footage": "Ludwig",
+      "mask": [
+        [
+          0,
+          636,
+          350,
+          172
+        ]
+      ]
     },
     {
       "say": "But one bug is still out there. Finish the Missing Persons side mission in Kelly County during chapter three, and some players say they're stuck as Lucia, unable to switch back to Jason.",
@@ -105,5 +121,13 @@
       "in": 14,
       "footage": "Lacy"
     }
+  ],
+  "mask": [
+    [
+      0,
+      276,
+      545,
+      235
+    ]
   ]
 }
