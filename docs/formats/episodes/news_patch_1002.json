@@ -1,0 +1,109 @@
+{
+  "title": "gta 6's first patch is out: 7 fixes and one bug still there 😳",
+  "kicker": "gta 6 news",
+  "slug": "news_patch_1002",
+  "summary": "GTA 6 update 1.002.002 (Nov 23, 2026): what Rockstar fixed, and the bug players still report.",
+  "sources": {
+    "psl": {
+      "name": "PlayStation LifeStyle, Nov 23",
+      "url": "https://www.playstationlifestyle.net/2026/11/23/gta-6-update-1002002-november-23-2026-patch-notes"
+    },
+    "gb": {
+      "name": "GamingBible, Nov 23",
+      "url": "https://www.gamingbible.com/news/gta-6-first-update-patch-notes-ps5-xbox-seven-fixes-442192-20261123"
+    }
+  },
+  "footage": [
+    {
+      "streamer": "Lacy",
+      "link": "twitch.tv/lacy"
+    },
+    {
+      "streamer": "Ludwig",
+      "link": "youtube.com/@ludwig"
+    },
+    {
+      "streamer": "SuperTF",
+      "link": "twitch.tv/supertf"
+    }
+  ],
+  "layout": "wide",
+  "encoder": "h264_nvenc",
+  "voice": {
+    "engines": [
+      "edge",
+      "kokoro"
+    ],
+    "edge_voice": "en-US-BrianMultilingualNeural",
+    "edge_rate": "+6%"
+  },
+  "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/lacy_20261122_115808/moments/m022_4642s.mp4",
+  "beats": [
+    {
+      "say": "GTA 6's first patch is out, and if the cops just would not leave you alone, this one's for you.",
+      "show": "gta 6's first patch is here",
+      "sources": [
+        "psl",
+        "gb"
+      ],
+      "in": 20,
+      "footage": "Lacy"
+    },
+    {
+      "say": "Update one point zero zero two dropped on November twenty third, for PS5 and Xbox Series. About six hundred megs on PlayStation, and players say over a gig on Xbox.",
+      "show": "update 1.002.002: ps5 + xbox series",
+      "sources": [
+        "psl",
+        "gb"
+      ],
+      "footage": "Lacy"
+    },
+    {
+      "say": "Seven fixes. Crashes, weather that got stuck, broken autosaves, phone calls that never came, which was blocking story missions, and the bug where you couldn't lose your wanted level.",
+      "show": "crashes, stuck weather, autosaves, story calls, wanted level",
+      "sources": [
+        "gb",
+        "psl"
+      ],
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/supertf_20261123_195854/moments/m004_430s.mp4",
+      "in": 30,
+      "footage": "SuperTF"
+    },
+    {
+      "say": "Plus, the gym deadlift bar works now, and partners finally hand over the bags so you can sell them to a fence.",
+      "show": "gym deadlift bar + fence bags fixed",
+      "sources": [
+        "psl",
+        "gb"
+      ],
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ludwig_20261122_123451/moments/m013_3327s.mp4",
+      "in": 8,
+      "footage": "Ludwig"
+    },
+    {
+      "say": "But one bug is still out there. Finish the Missing Persons side mission in Kelly County during chapter three, and some players say they're stuck as Lucia, unable to switch back to Jason.",
+      "show": "still broken: stuck as lucia after missing persons",
+      "sources": [
+        "gb"
+      ],
+      "in": 26,
+      "footage": "Lacy"
+    },
+    {
+      "say": "And according to players, the money glitch still works. For now.",
+      "show": "players say the money glitch still works",
+      "sources": [
+        "psl"
+      ],
+      "in": 6,
+      "footage": "Lacy"
+    },
+    {
+      "say": "Follow for more GTA 6 news.",
+      "show": "follow for more gta 6 news",
+      "claim": false,
+      "in": 14,
+      "footage": "Lacy"
+    }
+  ]
+}
