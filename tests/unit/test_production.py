@@ -86,7 +86,7 @@ def cfg(tmp_path):
     # no network in tests: no Twitch category / YouTube search
     c = load_config(overrides=[f"paths.data_dir={tmp_path}", "production.recheck_minutes=1",
                                "production.discover_twitch_category=''", "production.discover_youtube_search=''"])
-    c.production.priority_channels = []  # tests pick their own lineup
+    c.production.priority_channels, c.production.extra_channels = [], []  # tests pick their own lineup
     return c
 
 
@@ -594,9 +594,10 @@ def test_priority_channels_head_the_lineup(cfg):
 
     m = ProductionManager.__new__(ProductionManager)
     m.pc, m.cfg = cfg.production, cfg
-    m.pc.priority_channels = ["IShowSpeed"]
-    m.state = {"lineup": [{"channel": "ludwig", "url": None}]}
+    m.pc.priority_channels, m.pc.extra_channels = ["IShowSpeed", "BrettLiftsXP"], ["Dasgasd3m"]
+    m.state = {"lineup": [{"channel": "ludwig", "url": None}, {"channel": "brettliftsxp", "url": "u"}]}
     m._ensure_priority()
     m._ensure_priority()
-    assert [e["channel"] for e in m.state["lineup"]] == ["ishowspeed", "ludwig"]
+    assert [e["channel"] for e in m.state["lineup"]] == ["ishowspeed", "brettliftsxp", "ludwig", "dasgasd3m"]
+    assert m.state["lineup"][1]["url"] == "u"  # moved up, keeps its address
     assert "ishowspeed" in [c.lower() for c in cfg.upload.allow_channels]

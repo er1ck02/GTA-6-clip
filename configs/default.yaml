@@ -150,7 +150,8 @@ production:                # `clipstudio production start|stop` (desktop: Start/
   idle_motion_threshold: 1.5  # a picture that barely moves (sleep stream behind a GTA title) for 2 checks = offline
   idle_cooldown_minutes: 30  # a streamer found asleep isn't tried again before this
   stand_in_languages: ["en"]  # stand-ins must stream in English (stream language, else an English title)
-  priority_channels: ["ishowspeed"]  # always in the lineup, recorded whenever live on GTA 6, ahead of stand-ins
+  priority_channels: ["ishowspeed", "brettliftsxp"]  # head the lineup in this order, recorded whenever live on GTA 6
+  extra_channels: ["dasgasd3m"]  # also in the lineup, at the end (lower priority)
   blocked_channels: ["deandeankt", "xqcow"]  # never picked as a stand-in (xqcow = xqc simulcast)
   post_stand_ins: true     # stand-ins' clips post automatically (credited), like the lineup's
   discover_twitch_category: "Grand Theft Auto VI"  # top live streams of this Twitch category first (needs
