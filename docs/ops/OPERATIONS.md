@@ -1,6 +1,6 @@
 # Operations handbook
 
-_v2 · 2026-11-25 · owner: operations thread ("Run the media business operations audit")_
+_v3 · 2026-11-25 · owner: operations thread ("Run the media business operations audit")_
 
 The single source of truth for how the GTA 6 clips business runs. Every new agent/thread reads this first. Update it when a strategy changes; bump the version line and add a changelog entry at the bottom.
 
@@ -12,7 +12,7 @@ North-star metric (for now): **Shorts views in the trailing 90 days** on @gta6cl
 
 YPP gates (from YouTube's public help pages, verify before relying on them): full monetization = 1,000 subscribers + 10M public Shorts views in 90 days (or 4,000 long-form watch hours in 12 months). A lower fan-funding tier exists at 500 subscribers. **Country of residence is still unset on the channel; YPP can't be applied for until Erick sets it.**
 
-**Reused-content risk (research thread, 2026-11-25):** raw streamer clips alone can't get the channel into YPP; YouTube rejects channels whose uploads are mostly reposted content. Original formats (a weekly top 5 with commentary, GTA 6 news / easter-egg Shorts) need to become most of the uploads. Which formats to start is pending Erick's choice.
+**Reused-content risk (research thread, 2026-11-25):** raw streamer clips alone can't get the channel into YPP; YouTube rejects channels whose uploads are mostly reposted content. Original formats (a weekly top 5 with commentary, GTA 6 news / easter-egg Shorts) need to become most of the uploads. Erick chose both on 2026-11-25; built in `clipstudio/formats` (see `docs/FORMATS.md`, thread "Launch original GTA 6 formats").
 
 ## 2. Channels
 
@@ -89,10 +89,10 @@ Scored 1-5 (impact, confidence, effort where 5 = easy, cost where 5 = free).
 
 **Next 3 (highest value):**
 1. Free scheduling (opp. 3): YouTube Studio scheduler for Shorts + Meta Business Suite for Instagram Reels; one daily batch session.
-2. Original formats for YPP (opp. 4): prototype a weekly top 5 with commentary and a GTA 6 news/easter-egg Short once Erick picks.
+2. Original formats for YPP (opp. 4): built (`docs/FORMATS.md`). First top 5 (week of Nov 24) and first news Short (patch 1.002.002) go up UNLISTED for Erick; public only after his yes. Then: top 5 every week (Mon), news/easter-egg Shorts 2-4 a week, each fact sourced.
 3. Feed the first weekly stats summary back into clip picking (streamer and payoff-timing patterns).
 
-**Experiments queued:** cold-open vs straight cut (same moment, two days apart, YouTube only); title with vs without streamer name; post time 12-3 PM ET vs 7-11 PM ET.
+**Experiments queued:** original-format share: once approved, aim for originals to be most uploads; compare top 5 long-form watch time and news Short views against raw clips at 48 h / 7 d. Narrator voice A/B (Edge Brian vs Andrew) if retention is weak. Top 5 Shorts cut-downs only for moments not already posted as raw Shorts (no duplicates). cold-open vs straight cut (same moment, two days apart, YouTube only); title with vs without streamer name; post time 12-3 PM ET vs 7-11 PM ET.
 
 **Long-term:** Facebook Reels only if original formats exist (reposted clips get demonetized there); original AI-assisted formats (GTA 6 map/easter-egg explainers using our own captures), second brand for another trending game, streamer clip partnerships (paid clipping deals), affiliate (gaming gear) once audience exists.
 
@@ -110,6 +110,8 @@ Scored 1-5 (impact, confidence, effort where 5 = easy, cost where 5 = free).
 Daily (operations thread, short): observe (metrics snapshot + posting record) → pick top weakness → delegate or do → log result here. Weekly: review experiments against `metrics.csv`, rewrite prompts that underperform (bump version in `prompts/`), re-rank opportunities. Report to Erick as done / in progress / proposed / needs you, under 150 words.
 
 ## Changelog
+
+- v3 (2026-11-25): original formats built (weekly top 5 + news Shorts), first episodes pending Erick's review.
 
 - v2 (2026-11-25): stats logger in progress; Facebook Reels dropped from scheduling; reused-content risk for YPP; backlog refreshed.
 

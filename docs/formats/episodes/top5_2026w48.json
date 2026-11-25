@@ -1,0 +1,91 @@
+{
+  "series": "Top 5 GTA 6 streamer moments",
+  "week": "Week of Nov 24, 2026",
+  "title": "top 5 gta 6 streamer moments this week (speed found something 😳)",
+  "hook": "GTA 6 is barely a week old and Leonida is already humbling the biggest streamers around.",
+  "intro": "GTA 6 is barely a week old, and Leonida is already humbling the biggest streamers on the planet. Jets are exploding, gyms are judging people, and somebody found something they really should not have. These are the top five streamer moments of the week. Let's count it down.",
+  "outro": "That's the week in Leonida. Every clip belongs to the streamers you just saw, so go show them some love. Links are in the description. Which one should've been number one? Tell me in the comments, and subscribe for next week's top five.",
+  "thumb_top": "top 5 this week",
+  "thumb_text": "what did speed find?",
+  "voice": {
+    "engines": [
+      "edge",
+      "kokoro"
+    ],
+    "edge_voice": "en-US-BrianMultilingualNeural",
+    "edge_rate": "+6%"
+  },
+  "encoder": "h264_nvenc",
+  "moments": [
+    {
+      "rank": 5,
+      "streamer": "SuperTF",
+      "link": "twitch.tv/supertf",
+      "label": "picked the wrong fight",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/supertf_20261123_195854/moments/m004_430s.mp4",
+      "layout": "wide",
+      "in": 32.6,
+      "out": 60.2,
+      "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m004-430s-93ed6f3321_c-8bbf21.mp4",
+      "short_title": "#5 this week: supertf picked the wrong fight 😭",
+      "setup": "Number five. SuperTF. Picture this: a calm little street argument. Somebody wants to show off, SuperTF is ready to throw hands, and nobody in this scene is checking for traffic.",
+      "react": "That is the fastest a fist fight has ever turned into a traffic report. Lesson one from Leonida: look both ways before you start swinging."
+    },
+    {
+      "rank": 4,
+      "streamer": "xQc",
+      "link": "twitch.tv/xqc",
+      "label": "should not fly jets",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/xqc_20261122_224909/moments/m014_3302s.mp4",
+      "layout": "wide",
+      "in": 29.0,
+      "out": 55.6,
+      "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m014-3302s-3e73cee740_c-719bd2.mp4",
+      "short_title": "#4 this week: xqc should not fly jets 😭",
+      "setup": "Number four. xQc got his hands on a fighter jet. A man famously calm under pressure, with a totally reasonable plan. Watch the confidence. Then watch the desk.",
+      "react": "Wasted. And that full body launch away from the desk? That's not a reaction, that's an ejection seat. Somebody take the jet keys away from this man."
+    },
+    {
+      "rank": 3,
+      "streamer": "Ludwig",
+      "link": "youtube.com/@ludwig",
+      "label": "gta 6 is too realistic",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ludwig_20261122_123451/moments/m013_3327s.mp4",
+      "layout": "wide",
+      "in": 7.4,
+      "out": 35.3,
+      "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m013-3327s-5a60ce477b_c-0e3528.mp4",
+      "short_title": "#3 this week: gta 6 is too realistic for ludwig 😭",
+      "setup": "Number three. Ludwig went to the gym. Wholesome, right? Except the gyms in GTA 6 come with a little more realism than he signed up for.",
+      "react": "Ten out of ten, game of the century, he says. Ludwig got roasted by a bench press and wrote the review himself. Honestly? Fair."
+    },
+    {
+      "rank": 2,
+      "streamer": "TypicalGamer",
+      "link": "youtube.com/@TypicalGamer",
+      "label": "shot through the door",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/typicalgamer_20261122_004040/moments/m004_2803s.mp4",
+      "layout": "wide",
+      "in": 22.5,
+      "out": 50.5,
+      "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m004-2803s-47370722ee_c-8ac454.mp4",
+      "short_title": "#2 this week: tg shot through the door 😳",
+      "setup": "Number two. TypicalGamer. A closed door, a tense standoff, and a man who decides that waiting is for other people. Keep your eyes on that door.",
+      "react": "Straight through it. No knock, no warning, just vibes. And that hand over the mouth tells you even he did not expect that to work."
+    },
+    {
+      "rank": 1,
+      "streamer": "IShowSpeed",
+      "link": "youtube.com/@IShowSpeed",
+      "label": "found something in a hidden lab",
+      "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ishowspeed_20261122_100442/moments/m010_1022s.mp4",
+      "layout": "wide",
+      "in": 13.0,
+      "out": 51.0,
+      "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m010-1022s-620d50c4cc_c-f2ec90.mp4",
+      "short_title": "#1 this week: speed found something in gta 6 😳",
+      "setup": "And number one. IShowSpeed went exploring, which is always a risk. He wandered into a hidden lab, and what he found in there turned into the loudest moment of the week. Volume warning.",
+      "react": "Yeah. That's an alien body, in a hidden lab, in GTA 6, and Speed's soul left the building. Whatever Rockstar was hiding back there, Speed found it at full volume."
+    }
+  ]
+}

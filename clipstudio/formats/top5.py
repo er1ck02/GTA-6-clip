@@ -42,8 +42,10 @@ def load(spec_path: Path) -> dict:
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
     base = Path(spec_path).parent
     for m in spec.get("moments", []):
-        p = Path(m["clip"])
-        m["clip"] = str(p if p.is_absolute() else (base / p))
+        for k in ("clip", "short_clip"):
+            if m.get(k):
+                p = Path(m[k])
+                m[k] = str(p if p.is_absolute() else (base / p))
     return spec
 
 
@@ -60,8 +62,9 @@ def validate(spec: dict) -> list[dict]:
         w = f"moment #{m['rank']}"
         meta.check_todo(m.get("streamer"), m.get("link"), m.get("setup"), m.get("react"), where=w)
         meta.check_text(m.get("label", ""), m["setup"], m["react"], m.get("short_title", ""), where=w)
-        if not Path(m["clip"]).exists():
-            raise meta.RuleError(f"{w}: clip not found: {m['clip']}")
+        for k in ("clip", "short_clip"):
+            if m.get(k) and not Path(m[k]).exists():
+                raise meta.RuleError(f"{w}: {k} not found: {m[k]}")
     return sorted(ms, key=lambda m: -m["rank"])      # countdown order: 5 -> 1
 
 
@@ -176,9 +179,15 @@ def build_shorts(spec: dict, order: list[dict], out_dir: Path, vcfg: VoiceCfg, e
     tmp = out_dir / "_parts"
     made = []
     for m in order:
-        clip, r = Path(m["clip"]), m["rank"]
-        t_in, t_out = _window(m)
-        t_in = float(m.get("short_in", t_in))
+        r = m["rank"]
+        if m.get("short_clip"):          # e.g. the approved 9:16 render of the moment
+            clip = Path(m["short_clip"])
+            t_in = float(m.get("short_in") or 0)
+            t_out = float(m.get("short_out") or probe(clip).duration)
+        else:
+            clip = Path(m["clip"])
+            t_in, t_out = _window(m)
+            t_in = float(m.get("short_in", t_in))
         name = f"top5_{r}_{''.join(c for c in m['streamer'].lower() if c.isalnum())}"
         badge = style.short_badge(tmp / f"{name}_badge.png", r, spec.get("short_series", "this week's top 5 gta 6 moments"),
                                   f"clip: {m['streamer']}", y=int(spec.get("short_badge_y", 1600)))
