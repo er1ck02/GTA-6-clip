@@ -595,7 +595,7 @@ class ProductionCfg(_Strict):
     default_streams: int = Field(3, ge=1, le=32)          # streams to fill on a first start with no saved lineup
     substitute: bool = True                               # an offline channel is replaced by a past streamer who is live
     # a substitute's live title must mention one of these (empty = any game); originals are resumed regardless
-    substitute_keywords: list[str] = Field(default_factory=lambda: ["gta", "grand theft auto"])
+    substitute_keywords: list[str] = Field(default_factory=lambda: ["gta", "grand theft auto", "vice city", "leonida"])
     max_candidates: int = Field(12, ge=1, le=50)          # past streamers checked per substitution
     # keep this many streams recording (0 = just the lineup): offline ones are swapped for live GTA streamers
     target_streams: int = Field(8, ge=0, le=32)
@@ -610,6 +610,12 @@ class ProductionCfg(_Strict):
         "sleep stream", "sleeping", "asleep", "zzz", "afk", "brb", "be right back", "just chatting"])
     # a stream whose picture barely changes (a still room: sleep stream with a GTA title) for this many rechecks
     # in a row counts as offline; mean pixel change between frames 0.5 s apart, 0-255 (gameplay is well above 3)
+    # when the site doesn't say which game is on (YouTube), the same channel on Twitch/Kick is asked; still unknown
+    # and the title doesn't mention GTA (substitute_keywords) = not GTA, swapped out
+    require_gta_title: bool = True
+    # a recording that has sent no new video for this long (the stream ended but the recorder hangs) is stopped
+    # so its slot is refilled (0 = off)
+    stall_seconds: float = Field(180, ge=0)
     idle_motion_threshold: float = Field(1.5, ge=0)       # 0 = off
     idle_motion_checks: int = Field(2, ge=1, le=12)
     idle_cooldown_minutes: float = Field(30, ge=0)        # a streamer found asleep isn't tried again before this

@@ -6,6 +6,7 @@ left unfinished, even after a crash.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import sys
@@ -221,7 +222,35 @@ class ProductionManager:
         until = self.state.get("asleep", {}).get(L.channel_of(r.url or "") or "", 0)
         if until > time.time():
             return "sleep stream (nothing moving on screen)"
-        return L.idle_reason(r, self.pc.idle_keywords, self.pc.substitute_keywords)
+        return L.idle_reason(self._with_game(r), self.pc.idle_keywords, self.pc.substitute_keywords,
+                             self.pc.require_gta_title)
+
+    def _with_game(self, r: L.LiveCheck) -> L.LiveCheck:
+        """YouTube doesn't say which game is on: borrow the category from the same channel live on Twitch/Kick
+        (simulcasts), so a streamer on another game or IRL is caught."""
+        ch = L.channel_of(r.url or "") or ""
+        if r.category or "youtu" not in (r.url or "") or not ch:
+            return r
+        for u in (f"https://www.twitch.tv/{ch.lower()}", f"https://kick.com/{ch.lower()}"):
+            try:
+                x = self.check(u)
+            except Exception:  # noqa: BLE001 - best effort
+                continue
+            if x.live and x.category:
+                return dataclasses.replace(r, category=x.category)
+        return r
+
+    def _stalled(self, s: dict) -> bool:
+        """No new video from this recording for ``stall_seconds``: the stream is gone even if the recorder hangs."""
+        if not self.pc.stall_seconds:
+            return False
+        w = self.live.watches.get(s.get("key"))
+        ring = getattr(getattr(w, "session", None), "ring", None)
+        segs = list(getattr(ring, "segments", []) or [])
+        last = getattr(segs[-1], "arrived", None) if segs else s.get("started_at")
+        if last is None:
+            return False
+        return time.time() - last > self.pc.stall_seconds
 
     def _still(self, s: dict) -> bool:
         """The picture of this recording has barely changed for ``idle_motion_checks`` rechecks in a row."""
@@ -275,6 +304,8 @@ class ProductionManager:
             why = self._idle(r) if r.live else ""
             if not why and r.live and s["action"] in ("substitute", "fill") and not self._stand_in_ok(r):
                 why = "non-English or blocked stream"
+            if not why and self._stalled(s):
+                why = "stream that stopped sending video"
             if not why and self._still(s):
                 why = "sleep stream (nothing moving on screen)"
                 self._still_checks.pop(s["channel"], None)

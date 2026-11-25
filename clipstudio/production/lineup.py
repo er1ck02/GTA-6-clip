@@ -77,7 +77,8 @@ def guess_urls(channel: str) -> list[str]:
     c = channel.lower().lstrip("@")
     if not re.fullmatch(r"[\w.-]+", c):
         return []
-    return [f"https://www.twitch.tv/{c}", f"https://www.youtube.com/@{c}/live", f"https://kick.com/{c}"]
+    # Twitch and Kick first: they report the game being played, YouTube doesn't
+    return [f"https://www.twitch.tv/{c}", f"https://kick.com/{c}", f"https://www.youtube.com/@{c}/live"]
 
 
 def channel_of(url: str) -> str | None:
@@ -205,15 +206,20 @@ def title_matches(title: str, keywords: list[str]) -> bool:
 Idle = Callable[[LiveCheck], str]
 
 
-def idle_reason(r: LiveCheck, idle_words: list[str], game_words: list[str]) -> str:
+def idle_reason(r: LiveCheck, idle_words: list[str], game_words: list[str], title_if_unknown: bool = False) -> str:
     """Why a live stream is not worth recording ("" = it is): a sleep/AFK/Just Chatting stream (title or
-    category), or a category that is known and is not GTA."""
+    category), a category that is known and is not GTA, or (``title_if_unknown``) no category known and a
+    title that doesn't mention GTA either."""
     title, cat = (r.title or "").lower(), (r.category or "").lower()
     for w in idle_words:
         if w and (re.search(rf"(?<![a-z]){re.escape(w.lower())}(?![a-z])", title) or w.lower() in cat):
             return w.lower() if w.lower().endswith("stream") else f"{w.lower()} stream"
     if cat and game_words and not any(g.lower() in cat for g in game_words):
         return f"playing {r.category}, not GTA"
+    if re.search(r"grand theft auto:? (v|iv|iii|san andreas|vice city stories)$|^gta ?(v|iv|5|4)$", cat):
+        return f"playing {r.category}, not GTA 6"
+    if not cat and title_if_unknown and game_words and not any(g.lower() in title for g in game_words):
+        return "not playing GTA (title doesn't mention it)"
     return ""
 
 
