@@ -21,9 +21,10 @@ ranking, script and narration. Code: `clipstudio/formats/`.
 
 ## Pre-upload checklist (every long-form / news build)
 - Stream chat pixelated in every wide shot (`mask` per moment); check frames, chat logs miss things.
-- No copyrighted music the streamer played (Spotify, YouTube music on stream): Content ID claims it
-  (WMG claimed Gorillaz "DARE" on xQc's audio in the first montage). In-game radio is fine. Mute the range with
-  `"mute": [[from, to], ...]` (source seconds) or pick another window.
+- No licensed songs in the audio: Content ID claims them, and that includes songs INSIDE GTA 6 (radio, gym,
+  apartments: WMG claimed Gorillaz "DARE" playing in-game on xQc's stream in the first montage). Game score and
+  ambience are fine. Mute the range with `"mute": [[from, to], ...]` (source seconds) or pick another window, and
+  read YouTube's copyright check while the upload is still unlisted.
 - Script lines match what is on screen (who, what happens, what is said).
 - No black/dark stretches, no menus, credit visible, thumbnail without spoiler or mask square.
 

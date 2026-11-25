@@ -92,7 +92,7 @@ Scored 1-5 (impact, confidence, effort where 5 = easy, cost where 5 = free).
 2. Original formats for YPP (opp. 4): built (`docs/FORMATS.md`). First top 5 (week of Nov 24) and first news Short (patch 1.002.002) go up UNLISTED for Erick; public only after his yes. Then: top 5 every week (Mon), news/easter-egg Shorts 2-4 a week, each fact sourced.
 3. Feed the first weekly stats summary back into clip picking (streamer and payoff-timing patterns).
 
-**Long-form checklist (docs/FORMATS.md):** chat pixelated, no streamer-played copyrighted music (mute it; in-game radio OK), script matches footage, unlisted first.
+**Long-form checklist (docs/FORMATS.md):** chat pixelated, no licensed songs, including GTA 6's own radio (mute them; check YouTube's copyright check while unlisted), script matches footage, unlisted first.
 
 **Experiments queued:** original-format share: once approved, aim for originals to be most uploads; compare top 5 long-form watch time and news Short views against raw clips at 48 h / 7 d. Narrator voice A/B (Edge Brian vs Andrew) if retention is weak. Top 5 Shorts cut-downs only for moments not already posted as raw Shorts (no duplicates). cold-open vs straight cut (same moment, two days apart, YouTube only); title with vs without streamer name; post time 12-3 PM ET vs 7-11 PM ET.
 
