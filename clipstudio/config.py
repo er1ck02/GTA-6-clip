@@ -262,6 +262,11 @@ class ChatCfg(_Strict):
 class ChatOverlayCfg(_Strict):
     """Stream chat drawn on the clip (needs a chat replay for the source; live mode records one)."""
     enabled: bool = True
+    # Channels whose stream already shows its chat inside the picture: drawing ours as well shows chat twice,
+    # so it is left off for them. Lower case channel names; add a channel when its layout shows chat.
+    skip_channels: list[str] = Field(default_factory=lambda: [
+        "supertf", "kreek", "ludwig", "stableronaldo", "xqc", "lacy", "crayator", "ishowspeed", "livesdoolka",
+        "theburntpeanut"])
     lines: int = Field(4, ge=1, le=10)                 # messages visible at once
     size: float = Field(0.0175, gt=0.008, le=0.05)     # font size as a fraction of frame height
     width: float = Field(0.62, gt=0.2, le=0.95)        # widest a line may be, as a fraction of frame width
