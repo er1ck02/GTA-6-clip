@@ -24,7 +24,7 @@
       "label": "picked the wrong fight",
       "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/supertf_20261123_195854/moments/m004_430s.mp4",
       "layout": "wide",
-      "in": 32.6,
+      "in": 37.0,
       "out": 60.2,
       "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m004-430s-93ed6f3321_c-8bbf21.mp4",
       "short_title": "#5 this week: supertf picked the wrong fight 😭",
@@ -40,7 +40,7 @@
       ],
       "mute": [
         [
-          32.6,
+          37.0,
           40.5
         ]
       ]
@@ -76,7 +76,7 @@
       "label": "gta 6 is too realistic",
       "clip": "C:/Users/Erck8/GTA-6-clip/yt_data/live/ludwig_20261122_123451/moments/m013_3327s.mp4",
       "layout": "wide",
-      "in": 7.4,
+      "in": 19.0,
       "out": 35.3,
       "short_clip": "C:/Users/Erck8/GTA-6-clip/yt_data/approved/m013-3327s-5a60ce477b_c-0e3528.mp4",
       "short_title": "#3 this week: gta 6 is too realistic for ludwig 😭",
@@ -88,12 +88,6 @@
           636,
           350,
           172
-        ]
-      ],
-      "mute": [
-        [
-          7.4,
-          19.0
         ]
       ]
     },
