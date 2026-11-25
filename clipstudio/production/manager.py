@@ -341,7 +341,9 @@ class ProductionManager:
         try:
             running = self._running()
             held = [s for s in self._recording_slots() if s["action"] in ("substitute", "fill")]
-            held_wanted = {s["wanted"] for s in held if s["action"] == "substitute"}
+            # lineup names a held stand-in covers, and lineup names a held slot records itself (counted once)
+            held_wanted = ({s["wanted"] for s in held if s["action"] == "substitute"}
+                           | {(s.get("channel") or "").lower() for s in held})
             lineup = [e for e in self.state["lineup"]
                       if (e.get("channel") or L.channel_of(e.get("url") or "") or "").lower() not in held_wanted]
             target = self.pc.target_streams
