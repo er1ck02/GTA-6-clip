@@ -114,7 +114,7 @@ def build(spec_path: Path, out_dir: Path, *, shorts: bool = True, voice_override
         pos = m.get("credit_pos", "tl")
         lt = style.lower_third(gfx / f"credit{r}.png", r, m["streamer"], m["link"].replace("https://", ""), pos=pos)
         segs.append(("", C.wide_clip(seg_dir / f"{r:02d}b_clip.mp4", clip=clip, t_in=t_in, t_out=t_out, layout=lay,
-                                     overlays=[lt], enc=enc)))
+                                     overlays=[lt], enc=enc, mute=m.get("mute"))))
         last = C.frame_png(clip, t_out - 0.15, gfx / f"last{r}.png", lay, WIDE)
         narr = speak(m["react"], vcfg)
         segs.append(("", C.still_card(seg_dir / f"{r:02d}c_react.mp4", image=last,

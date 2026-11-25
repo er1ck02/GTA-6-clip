@@ -176,8 +176,13 @@ def card(out: Path, *, bg_clip: Path, bg_t: float, layout: Layout, overlays: lis
     return _ff(args, out)
 
 
+def _mute(mute: list | None, t_in: float) -> str:
+    """volume filters silencing source-time ranges (music the streamer played: Content ID claims it)."""
+    return "".join(f",volume=0:enable='between(t,{max(0.0, a - t_in):.3f},{b - t_in:.3f})'" for a, b in (mute or []))
+
+
 def wide_clip(out: Path, *, clip: Path, t_in: float, t_out: float, layout: Layout, overlays: list[Path],
-              enc: Enc, size: tuple[int, int] = (1920, 1080), pip_w: int = 500) -> Path:
+              enc: Enc, size: tuple[int, int] = (1920, 1080), pip_w: int = 500, mute: list | None = None) -> Path:
     """The clip as widescreen: gameplay full frame, facecam picture-in-picture bottom-right, credit overlay."""
     W, H = size
     dur = t_out - t_in
@@ -198,7 +203,7 @@ def wide_clip(out: Path, *, clip: Path, t_in: float, t_out: float, layout: Layou
         fc.append(f"[{last}][{i}:v]overlay=0:0[o{i}]")
         last = f"o{i}"
     fc.append(f"[{last}]fps={FPS},format=yuv420p[v]")
-    fc.append(f"[0:a]aformat=channel_layouts=stereo,{LOUD},apad[a]")
+    fc.append(f"[0:a]aformat=channel_layouts=stereo{_mute(mute, t_in)},{LOUD},apad[a]")
     args += ["-filter_complex", ";".join(fc), "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}"] + enc.args()
     return _ff(args, out)
 

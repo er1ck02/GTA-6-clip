@@ -19,6 +19,14 @@ ranking, script and narration. Code: `clipstudio/formats/`.
   Change to public only after his yes. Upload only to Ricky Spanish (@gta6clipsnn), never @wettoefungus.
 - Titles must describe what is in the video. Checked by a person.
 
+## Pre-upload checklist (every long-form / news build)
+- Stream chat pixelated in every wide shot (`mask` per moment); check frames, chat logs miss things.
+- No copyrighted music the streamer played (Spotify, YouTube music on stream): Content ID claims it
+  (WMG claimed Gorillaz "DARE" on xQc's audio in the first montage). In-game radio is fine. Mute the range with
+  `"mute": [[from, to], ...]` (source seconds) or pick another window.
+- Script lines match what is on screen (who, what happens, what is said).
+- No black/dark stretches, no menus, credit visible, thumbnail without spoiler or mask square.
+
 ## Voice
 Free neural TTS, no account: `edge` (Microsoft Edge read-aloud voices via `edge-tts`, needs internet;
 default `en-US-BrianMultilingualNeural`, +6% rate), falling back to `kokoro` (open-weight Kokoro-82M, offline,
