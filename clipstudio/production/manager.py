@@ -162,15 +162,25 @@ class ProductionManager:
             posted.append(ch)
 
     def _ensure_priority(self) -> None:
-        """production.priority_channels head the lineup every round: recorded whenever they're live on GTA 6,
-        ahead of (and bumping) stand-ins, and their clips post credited like the rest of the lineup."""
+        """production.priority_channels head the lineup every round, in that order: recorded whenever they're
+        live on GTA 6, ahead of (and bumping) stand-ins. production.extra_channels are kept in the lineup at the
+        end (lower priority). Both post credited like the rest of the lineup."""
+        norm = lambda c: c.lower().lstrip("@").strip()  # noqa: E731
+        prio = [norm(c) for c in self.pc.priority_channels if norm(c)]
         lineup = self.state.setdefault("lineup", [])
+        by = {(e.get("channel") or "").lower(): e for e in lineup}
+        rest = [e for e in lineup if (e.get("channel") or "").lower() not in prio]
+        lineup[:] = [by.get(ch) or {"channel": ch, "url": None} for ch in prio] + rest
         have = {(e.get("channel") or "").lower() for e in lineup}
-        for ch in reversed([c.lower().lstrip("@") for c in self.pc.priority_channels if c.strip()]):
-            if ch not in have:
-                lineup.insert(0, {"channel": ch, "url": None})
-            if ch not in {c.lower().lstrip("@") for c in self.cfg.upload.allow_channels}:
+        for ch in (norm(c) for c in self.pc.extra_channels):
+            if ch and ch not in have:
+                lineup.append({"channel": ch, "url": None})
+                have.add(ch)
+        allowed = {norm(c) for c in self.cfg.upload.allow_channels}
+        for ch in prio + [norm(c) for c in self.pc.extra_channels]:
+            if ch and ch not in allowed:
                 self.cfg.upload.allow_channels.append(ch)
+                allowed.add(ch)
 
     def _running(self) -> dict[str, Any]:
         """channel -> watch, for streams recording right now."""

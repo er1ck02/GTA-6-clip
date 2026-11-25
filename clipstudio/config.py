@@ -636,7 +636,9 @@ class ProductionCfg(_Strict):
     # ([] = any); and channels never to stand in
     stand_in_languages: list[str] = Field(default_factory=lambda: ["en"])
     # always in the lineup, checked first, recorded whenever live on GTA 6 (ahead of stand-ins); clips post credited
-    priority_channels: list[str] = Field(default_factory=lambda: ["ishowspeed"])
+    priority_channels: list[str] = Field(default_factory=lambda: ["ishowspeed", "brettliftsxp"])
+    # also always in the lineup, after everyone else (lower priority); clips post credited
+    extra_channels: list[str] = Field(default_factory=lambda: ["dasgasd3m"])
     blocked_channels: list[str] = Field(default_factory=lambda: ["deandeankt", "xqcow"])
     post_stand_ins: bool = True  # stand-ins' clips post automatically (credited) like the lineup's, not held for review
     # Twitch's live directory for this game, most viewers first, picked before anything else (needs a free Twitch
