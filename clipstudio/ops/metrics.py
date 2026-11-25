@@ -129,7 +129,10 @@ def _iso(t: datetime) -> str:
 
 
 def list_videos(url: str, fetch: Fetch, cookie_args: list[str]) -> tuple[list[str], dict, str]:
-    """Video URLs on a channel/profile page (flat, one request) + the playlist info + error text."""
+    """Video URLs on a channel/profile page (flat, one request) + the playlist info + error text.
+
+    ``info["_by_url"]`` maps each URL to its flat entry: TikTok's profile listing carries view/like counts
+    while its per-video page often fails, so those counts are used when the video page can't be read."""
     code, out, err = fetch(["--flat-playlist", "-J"] + cookie_args + [url])
     if code != 0 or not out.strip():
         return [], {}, _err(err, code)
@@ -137,13 +140,15 @@ def list_videos(url: str, fetch: Fetch, cookie_args: list[str]) -> tuple[list[st
         data = json.loads(out)
     except json.JSONDecodeError:
         return [], {}, "could not parse yt-dlp output"
-    urls = []
+    urls, by_url = [], {}
     for e in data.get("entries") or []:
         u = e.get("url") or e.get("webpage_url") or ""
         if u and not u.startswith("http") and "youtube" in url:
             u = f"https://www.youtube.com/shorts/{u}" if "/shorts" in url else f"https://www.youtube.com/watch?v={u}"
         if u:
             urls.append(u)
+            by_url[u] = e
+    data["_by_url"] = by_url
     return urls, data, ""
 
 
@@ -171,6 +176,23 @@ def instagram_urls(data_dir: Path, logs: Iterable[str]) -> list[str]:
     return found
 
 
+def instagram_captions(data_dir: Path, logs: Iterable[str]) -> dict[str, str]:
+    """Reel URL -> our caption, from posted.log lines ``time | file | caption | url``."""
+    caps: dict[str, str] = {}
+    for u in instagram_urls(data_dir, logs):
+        caps[u] = ""
+    for rel in logs:
+        p = data_dir / rel
+        if not p.exists():
+            continue
+        for line in p.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+            parts = [x.strip() for x in line.split("|")]
+            m = INSTAGRAM_URL.search(line)
+            if m and len(parts) >= 4 and not caps.get(m.group(0)):
+                caps[m.group(0)] = parts[2]
+    return caps
+
+
 def load_channels(data_dir: Path) -> dict:
     p = data_dir / "ops" / "channels.json"
     if p.exists():
@@ -188,6 +210,8 @@ def snapshot(data_dir: Path, fetch: Fetch = run_ytdlp, now: datetime | None = No
         cookies = cfg.get("cookies") or ""
         cookie_args = ["--cookies", cookies] if cookies else []
         urls: list[str] = []
+        flat: dict[str, dict] = {}
+        captions: dict[str, str] = {}
         followers = ""
         for page in cfg.get("urls") or []:
             if any(b in page.lower() for b in BLOCKED):
@@ -196,17 +220,28 @@ def snapshot(data_dir: Path, fetch: Fetch = run_ytdlp, now: datetime | None = No
             if err:
                 rows.append(Row(_iso(now), platform, "_page", url=page, error=err))
             followers = followers or _num(info.get("channel_follower_count"))
+            flat.update(info.get("_by_url") or {})
             urls += [u for u in found if u not in urls]
         if platform == "instagram":
-            urls += [u for u in instagram_urls(data_dir, cfg.get("posted_logs") or []) if u not in urls]
+            captions = instagram_captions(data_dir, cfg.get("posted_logs") or [])
+            urls += [u for u in captions if u not in urls]
         for u in urls:
             if any(b in u.lower() for b in BLOCKED):
                 continue
             info, err = video_info(u, fetch, cookie_args)
             if err:
-                rows.append(Row(_iso(now), platform, u.rstrip("/").rsplit("/", 1)[-1], url=u, error=err))
+                entry = flat.get(u) or {}
+                if entry.get("view_count") is not None:     # profile listing still has the counts
+                    r = row_from_info({"webpage_url": u, **entry}, platform, now)
+                    r.source = SOURCE + " (profile listing)"
+                    rows.append(r)
+                else:
+                    rows.append(Row(_iso(now), platform, u.rstrip("/").rsplit("/", 1)[-1], url=u, error=err))
                 continue
             r = row_from_info(info, platform, now)
+            cap = captions.get(u)
+            if cap and (not r.title or r.title.lower().startswith("video by")):
+                r.title, r.streamer = cap, guess_streamer(cap)
             rows.append(r)
             followers = followers or _num(info.get("channel_follower_count"))
         if followers:
@@ -280,8 +315,8 @@ def summarize(rows: list[dict], now: datetime | None = None, days: int = 7) -> s
             last = snaps[-1]
             posted = last.get("posted_utc") or ""
             vids.append({"id": vid, "title": last.get("title") or vid, "streamer": last.get("streamer") or "?",
-                         "posted": posted, "views": int(_f(last.get("views")) or 0),
-                         "v48": views_at(snaps, 48, 36, 72), "url": last.get("url") or ""})
+                         "posted": posted, "views": None if _f(last.get("views")) is None else int(_f(last.get("views"))),
+                         "v48": views_at(snaps, 48, 40, 56), "url": last.get("url") or ""})
         out.append(f"## {platform}")
         fl = sorted(followers.get(platform, []))
         if fl:
@@ -289,7 +324,8 @@ def summarize(rows: list[dict], now: datetime | None = None, days: int = 7) -> s
             out.append(f"- Followers: {fl[-1][1]} ({fl[-1][1] - week[0]:+d} this week)")
         recent = [v for v in vids if v["posted"] and v["posted"] >= _iso(since)]
         out.append(f"- Videos tracked: {len(vids)}, posted this week: {len(recent)}, "
-                   f"total views now: {sum(v['views'] for v in vids)}")
+                   f"total views now: {sum(v['views'] or 0 for v in vids)}"
+                   + ("" if any(v["views"] is not None for v in vids) or not vids else " (view counts not public)"))
         judged = [v for v in vids if v["v48"] is not None]
         if judged:
             hits = [v for v in judged if v["v48"] >= HIT_VIEWS]
@@ -299,13 +335,13 @@ def summarize(rows: list[dict], now: datetime | None = None, days: int = 7) -> s
             out += [f"1. {v['title']} ({v['streamer']}): {v['v48']}" for v in ranked[:5]]
             if len(ranked) > 5:
                 out += ["", "Losers:"]
-                out += [f"1. {v['title']} ({v['streamer']}): {v['v48']}" for v in ranked[-3:][::-1]]
+                out += [f"1. {v['title']} ({v['streamer']}): {v['v48']}" for v in ranked[5:][-3:][::-1]]
         else:
-            ranked = sorted(vids, key=lambda v: v["views"], reverse=True)
-            out.append("- No 48 h readings yet; top by total views:")
+            ranked = sorted((v for v in vids if v["views"] is not None), key=lambda v: v["views"], reverse=True)
+            out.append("- No 48 h readings yet (40-56 h old)" + ("; top by total views:" if ranked else "."))
             out += [f"  1. {v['title']} ({v['streamer']}): {v['views']}" for v in ranked[:5]]
         per: dict[str, list[int]] = defaultdict(list)
-        for v in judged or vids:
+        for v in judged or [v for v in vids if v["views"] is not None]:
             per[v["streamer"]].append(v["v48"] if v["v48"] is not None else v["views"])
         if per:
             avg = sorted(((sum(x) / len(x), s, len(x)) for s, x in per.items()), reverse=True)
