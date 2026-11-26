@@ -669,6 +669,8 @@ class RetentionCfg(_Strict):
     clips_per_day: int = Field(6, ge=1)                   # ... at this many a day; the best are kept
     priority_bonus: float = Field(0.15, ge=0, le=1)       # added to priority channels' (IShowSpeed) clip score
     buffer_min_age_minutes: float = Field(60, ge=0)       # leftover ring-buffer segment of a stopped session
+    min_age_minutes: float = Field(120, ge=0)             # nothing younger is touched (edits in flight)
+    logs_keep_days: float = Field(7, ge=0)                # project.log.jsonl of a settled project
 
 
 class Config(_Strict):

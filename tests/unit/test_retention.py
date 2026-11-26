@@ -14,7 +14,7 @@ def _cfg(**rc):
     return load_config(overrides=[f"retention.{k}={v}" for k, v in rc.items()])
 
 
-def _file(p: Path, size=10, age_h=0.0) -> Path:
+def _file(p: Path, size=10, age_h=10.0) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(b"x" * size)
     t = time.time() - age_h * 3600
@@ -137,6 +137,24 @@ def test_formats_specs_and_outside_paths_are_protected(tmp_path):
                                                encoding="utf-8")
     pl = retention.plan(_cfg(), data)
     assert not _gone(pl, s / "moments" / "m1.mp4") and not _gone(pl, outside)
+
+
+def test_edits_in_flight_and_stale_unedited_moments(tmp_path):
+    data = tmp_path / "data"
+    busy = data / "projects" / "p-busy"                       # analysing: no clips yet, log just written
+    wav = _file(busy / "analysis" / "audio.wav", age_h=5)
+    _file(busy / "project.log.jsonl", age_h=0)
+    idle = data / "projects" / "p-idle"                       # finished long ago, nothing rendered
+    old_log = _file(idle / "project.log.jsonl", age_h=24 * 8)
+    idle_wav = _file(idle / "analysis" / "audio.wav", age_h=24 * 8)
+    s = _session(data, "s", [("m1", "queued", None)])
+    stale = s / "moments" / "m1.mp4"
+    fresh_skip = _file(s / "moments" / "m2.mp4", age_h=0.5)
+    pl = retention.plan(_cfg(), data)
+    assert not _gone(pl, wav) and _gone(pl, idle_wav) and _gone(pl, old_log)
+    assert not _gone(pl, stale) and not _gone(pl, fresh_skip)     # 24 h old: production may still resume it
+    os.utime(stale, (time.time() - 50 * 3600,) * 2)
+    assert _gone(retention.plan(_cfg(), data), stale)
 
 
 def test_cli_dry_run_touches_nothing(tmp_path, capsys):

@@ -10,13 +10,16 @@ disk forever (150 GB in four days). The rules, all tunable under ``retention:`` 
 2. Ring-buffer segments left in ``live/<session>/buffer`` by a session that is no longer recording.
 3. Renders: a rejected clip's videos, and renders that never got a review packet once they are
    ``unreviewed_max_age_hours`` old.
-4. Intermediates of settled projects: ``analysis/*.wav``, ``clips/*/*.mov`` (chat overlay), ``source/*.part``.
+4. Intermediates of settled projects: ``analysis/*.wav``, ``clips/*/*.mov`` (chat overlay), ``source/*.part``,
+   and their ``project.log.jsonl`` after ``logs_keep_days``. Unedited moments production will no longer resume
+   (twice ``production.backlog_max_age_hours``) go too.
 5. Approved clips. Posted ones (``approved/posted.jsonl``, or ``instagram/posted.log``) stay ``posted_keep_days``
    after their first post (cross-posting and the weekly top 5 use them), then the approved copy and the render
    go. Unposted ones are capped at ``backlog_days * clips_per_day``, best first (review score, plus
    ``priority_bonus`` for production's priority channels such as IShowSpeed); the rest are retired.
 
-Never touched: anything a ``formats/`` spec points at, anything under ``formats/``, files outside the data folder,
+Never touched: files younger than ``min_age_minutes`` and projects with a state or log file that recent (an
+edit in flight), anything a ``formats/`` spec points at, anything under ``formats/``, files outside the data folder,
 and the buffer of a session that is still recording. ``plan()`` only lists what would go; ``apply()`` deletes.
 Only local files are deleted: nothing here talks to YouTube, TikTok or Instagram.
 """
@@ -34,6 +37,7 @@ log = get_logger("retention")
 
 VIDEO = {".mp4", ".mov", ".mkv", ".ts", ".webm", ".flv", ".m4v"}
 SETTLED_MOMENT = ("skipped", "failed")
+UNEDITED = ("saved", "queued", "pending")
 LEDGER = "posted.jsonl"
 
 
@@ -175,6 +179,8 @@ def plan(cfg, data_dir: Path, now: float | None = None, active_sessions: Iterabl
             return
         if data_dir not in p.parents or (data_dir / "formats") in p.parents:
             return
+        if _age_h(p, now) * 60 < rc.min_age_minutes:     # still being written, or just made
+            return
         seen.add(p)
         pl.actions.append(Action(p, _size(p), reason))
 
@@ -190,6 +196,9 @@ def plan(cfg, data_dir: Path, now: float | None = None, active_sessions: Iterabl
         if not proj.is_dir():
             continue
         done, in_backlog = True, False
+        # a project whose state or log changed recently is being analysed, rendered or re-rendered
+        if any(_age_h(f, now) * 60 < rc.min_age_minutes for f in proj.iterdir() if f.is_file()):
+            done = False
         for cd in sorted((proj / "clips").glob("*")):
             if not cd.is_dir():
                 continue
@@ -266,8 +275,13 @@ def plan(cfg, data_dir: Path, now: float | None = None, active_sessions: Iterabl
         for pat, why in (("analysis/*.wav", "analysis audio"), ("source/*.part", "partial download")):
             for f in proj.glob(pat):
                 drop(f, why)
+        log_f = proj / "project.log.jsonl"
+        if log_f.exists() and _age_h(log_f, now) / 24 >= rc.logs_keep_days:
+            drop(log_f, "old project log")
 
     # --- raw recordings and leftover buffer segments
+    # production does not resume unedited moments older than backlog_max_age_hours (0 = it resumes all)
+    stale_h = 2 * cfg.production.backlog_max_age_hours
     for q in sorted((data_dir / "live").glob("*/queue.json")):
         sess = _norm(q.parent)
         doc = _read(q) or {}
@@ -283,6 +297,8 @@ def plan(cfg, data_dir: Path, now: float | None = None, active_sessions: Iterabl
                 proj = m.get("project")
                 if not proj or settled.get(proj, not (data_dir / "projects" / proj).exists()):
                     drop(p, "raw recording (edited, nothing left to post)")
+            elif st in UNEDITED and stale_h and _age_h(p, now) >= stale_h:
+                drop(p, "raw recording (never edited, too old to resume)")
         if sess not in active:
             for f in (q.parent / "buffer").glob("*"):
                 if f.is_file() and _age_h(f, now) * 60 >= rc.buffer_min_age_minutes:
