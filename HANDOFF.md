@@ -1,4 +1,4 @@
-# AI Clips / GTA-6-clip: handoff (2026-11-26)
+# AI Clips / GTA-6-clip: handoff (updated 2026-11-26, end of session)
 
 Start here. Coordination happens in Universal Brain (dashboard http://127.0.0.1:4317, project `ai-clips`):
 check its inbox first.
@@ -12,7 +12,8 @@ check its inbox first.
 - Narration is optional, used where it improves a video.
 
 ## State
-- Production (recorder) is STOPPED (owner, 2026-11-26). Start: `.venv\Scripts\python.exe -m app.cli production start
+- Production (recorder) is STOPPED (owner, 2026-11-26; confirmed again at end of session, nothing running).
+  Restart only when the owner says so (Brain task #21). `production status` lists where each channel resumes. Start: `.venv\Scripts\python.exe -m app.cli production start
   --no-browser`. Stop: `... production stop`. Status: `... production status`.
 - Auto-upload is OFF: `~/.clipstudio/config.yaml` has `upload.allow_channels: []`. The old list of 11 streamers is in
   `config.yaml.bak-20261126`. Keep it empty.
@@ -26,7 +27,8 @@ check its inbox first.
    panic, vehicle chaos; search words listed there) against new transcripts daily.
 2. First build: supertf airport-security moment (Nov 23; projects `m011-1255s-b20ec28aae` -> `m014-1613s-db078db09b`),
    re-pulled from the VOD and edited.
-3. Merge the formats worktree's newer commits into the main line.
+3. Merge the formats worktree's newer commits into the main line (owner rules are on branch
+   `claude/formats-owner-rules`, pushed 2026-11-26).
 
 ## Repo notes
 - Untracked run artefacts (acceptance/long/yt run logs, acc_data*, long_data*, 17 GB yt_data/) are deliberately
