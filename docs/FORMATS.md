@@ -9,6 +9,13 @@ ranking, script and narration. Code: `clipstudio/formats/`.
 | Weekly top 5 GTA 6 streamer moments | 16:9 long-form (aim 4-8 min) + one vertical Short per moment | weekly |
 | GTA 6 news / easter-egg Short | 9:16, 30-60 s, every fact sourced on screen and in the description | 2-4 a week |
 
+## Owner rules (2026-11-26)
+- Make what is trending and follow the numbers. ChatGPT picks the next videos from trend research plus our
+  view data (Universal Brain task #14); Claude builds them.
+- The clipper may keep recording streams, but nothing is released unedited: no raw re-posts.
+- Narration is optional. Add it to a video when it makes that video better (context, a storyline, a joke the
+  footage needs), not by default.
+
 ## Rules the build enforces
 - Never "rp" / "role play" anywhere (title, script, tags, description).
 - Every clip credits its streamer: on screen for the whole clip, in the end credits, in the description.
