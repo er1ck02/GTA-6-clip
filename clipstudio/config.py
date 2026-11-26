@@ -658,6 +658,19 @@ class ProductionCfg(_Strict):
     update_run_tests: bool = True
 
 
+class RetentionCfg(_Strict):
+    """What stays on disk (see clipstudio/retention.py). Only local files are ever deleted."""
+    enabled: bool = True                                  # production runs it every `every_minutes`
+    every_minutes: float = Field(30, ge=1, le=1440)
+    skipped_keep_hours: float = Field(6, ge=0)            # raw recording of a moment the picker skipped
+    unreviewed_max_age_hours: float = Field(48, ge=1)     # a render that never got a review packet
+    posted_keep_days: float = Field(7, ge=0)              # approved clip after its first post (cross-posts, top 5)
+    backlog_days: float = Field(3, ge=0)                  # unposted approved clips kept: days of posting ...
+    clips_per_day: int = Field(6, ge=1)                   # ... at this many a day; the best are kept
+    priority_bonus: float = Field(0.15, ge=0, le=1)       # added to priority channels' (IShowSpeed) clip score
+    buffer_min_age_minutes: float = Field(60, ge=0)       # leftover ring-buffer segment of a stopped session
+
+
 class Config(_Strict):
     project: ProjectCfg = ProjectCfg()
     paths: PathsCfg = PathsCfg()
@@ -680,6 +693,7 @@ class Config(_Strict):
     live: LiveCfg = LiveCfg()
     upload: UploadCfg = UploadCfg()
     production: ProductionCfg = ProductionCfg()
+    retention: RetentionCfg = RetentionCfg()
 
     def section_hash(self, *sections: str) -> str:
         """Stable hash of the given config sections, used for stage cache keys."""

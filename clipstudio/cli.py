@@ -109,6 +109,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--post-title", help="caption to post with")
     p.add_argument("--reviewer", default="supervisor")
 
+    p = sub.add_parser("retention", help="free disk: list (or with --apply delete) local footage that can no "
+                       "longer become a post; `retention posted FILE --platform X` records a post")
+    _common(p)
+    p.add_argument("action", nargs="?", choices=["sweep", "posted"], default="sweep")
+    p.add_argument("file", nargs="?", help="(posted) the approved clip's file name")
+    p.add_argument("--platform", dest="posted_platform", help="(posted) youtube, tiktok, instagram, ...")
+    p.add_argument("--url", default="", help="(posted) link to the post")
+    p.add_argument("--apply", action="store_true", help="(sweep) delete; without it nothing is touched")
+    p.add_argument("--manifest", type=Path, help="(sweep) write every path that would go to this file")
+
     p = sub.add_parser("export", help="render clips (accepted ones, given ids, or top N)")
     _common(p)
     p.add_argument("--project", required=True)
@@ -597,6 +607,35 @@ def cmd_ui(a) -> int:
     return 0
 
 
+def cmd_retention(a) -> int:
+    """Show (or delete) what the retention rules would remove; or record that a clip was posted."""
+    from clipstudio import retention
+
+    cfg = _cfg(a)
+    data_dir = Path(cfg.paths.data_dir).expanduser().resolve()
+    if a.action == "posted":
+        if not a.file or not a.posted_platform:
+            raise ClipStudioError("retention posted needs FILE and --platform")
+        retention.mark_posted(data_dir, a.file, a.posted_platform, a.url)
+        _emit(a, {"posted": a.file, "platform": a.posted_platform})
+        return 0
+    pl = retention.plan(cfg, data_dir)
+    if a.manifest:
+        a.manifest.write_text("".join(f"{x.size}\t{x.reason}\t{x.path}\n" for x in pl.actions), encoding="utf-8")
+    doc = {"plan": pl.summary()}
+    if a.apply:
+        doc["result"] = retention.apply(pl)
+    if a.json:
+        _emit(a, doc)
+    else:
+        for why, s in doc["plan"]["by_reason"].items():
+            print(f"{s['gb']:>8.2f} GB {s['files']:>6} files  {why}")
+        print(f"{doc['plan']['gb']:>8.2f} GB total" + ("" if a.apply else "  (dry run: add --apply to delete)"))
+        if a.apply:
+            print(f"freed {doc['result']['freed_gb']} GB, {doc['result']['failed_count']} file(s) could not be deleted")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     a = build_parser().parse_args(argv)
     setup_logging(getattr(a, "verbose", False))
@@ -604,7 +643,8 @@ def main(argv: list[str] | None = None) -> int:
     register_cuda_dlls()
     handlers = {"doctor": cmd_doctor, "process": cmd_process, "review": cmd_review, "export": cmd_export,
                 "resume": cmd_resume, "status": cmd_status, "ui": cmd_ui, "production": cmd_production,
-                "live": cmd_live, "supervise": cmd_supervise, "formats": cmd_formats}
+                "live": cmd_live, "supervise": cmd_supervise, "formats": cmd_formats,
+                "retention": cmd_retention}
     def fail(code: int, msg: str) -> int:
         log.error(msg)
         if getattr(a, "json", False):

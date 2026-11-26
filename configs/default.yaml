@@ -163,3 +163,13 @@ production:                # `clipstudio production start|stop` (desktop: Start/
   backlog_max_age_hours: 24  # moments saved for later are edited on the next start if newer than this
   auto_update: true        # while running, restart onto new commits of this branch (tests must pass first)
   update_check_minutes: 10
+
+retention:                 # what stays on disk; production sweeps every_minutes (`clipstudio retention` to preview)
+  enabled: true
+  every_minutes: 30
+  skipped_keep_hours: 6    # raw recording of a moment the picker judged weak
+  unreviewed_max_age_hours: 48  # renders that never got a review packet
+  posted_keep_days: 7      # approved clip after its first post (cross-posting, weekly top 5), then deleted
+  backlog_days: 3          # unposted approved clips kept: 3 days ...
+  clips_per_day: 6         # ... at 6 a day = the best 18; the rest are retired and deleted
+  priority_bonus: 0.15     # score boost for production.priority_channels (IShowSpeed) when ranking the backlog

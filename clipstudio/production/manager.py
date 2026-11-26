@@ -79,6 +79,7 @@ class ProductionManager:
         self.edit_times: deque[float] = deque(maxlen=30)
         self._edit_t0: dict[tuple, float] = {}
         self._next_recheck = 0.0
+        self._next_retention = time.time() + 120    # first sweep shortly after start, not at import
         self._planning = False
         self._still_checks: dict[str, int] = {}
         self.awake = KeepAwake()
@@ -430,9 +431,23 @@ class ProductionManager:
                     self._follow()
                 elif self.mode == "draining":
                     self._check_drained()
+                if self.mode in ("running", "draining"):
+                    self._retention()
             except Exception as e:  # noqa: BLE001 - the loop must survive anything
                 log.error("production loop: %s", e)
         self.awake.want(False)
+
+    def _retention(self, force: bool = False) -> dict | None:
+        """Delete local footage that can no longer become a post (see clipstudio/retention.py)."""
+        rc = self.cfg.retention
+        if not rc.enabled or (not force and time.time() < self._next_retention):
+            return None
+        self._next_retention = time.time() + rc.every_minutes * 60
+        from clipstudio import retention
+
+        active = [Path(w.session.out) for w in self._watches() if getattr(w, "running", False)
+                  and getattr(getattr(w, "session", None), "out", None)]
+        return retention.run(self.cfg, self.data_dir, active_sessions=active)
 
     def _follow(self) -> None:
         """Keep the lineup in step with reality: streams added or stopped by hand, streams that went offline,
