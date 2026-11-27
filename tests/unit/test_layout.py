@@ -221,3 +221,17 @@ def test_credit_line_sits_under_the_title_or_alone(tmp_path):
     alone = render_title("", tmp_path / "a.png", 1080, 1920, credit="twitch.tv/supertf")
     assert alone and alone[1] < plain[1] * 1.2
     assert render_title("", tmp_path / "n.png", 1080, 1920, credit="  ") is None
+
+
+def test_credit_names_the_stream_the_moment_came_from(tmp_path):
+    import json
+    from clipstudio.pipeline.studio import credit_from_source
+    for url, want in (("https://www.twitch.tv/supertf", "twitch.tv/supertf"),
+                      ("https://www.youtube.com/@IShowSpeed/live", "youtube.com/@IShowSpeed"),
+                      ("https://kick.com/someone", "kick.com/someone")):
+        sess = tmp_path / f"x{len(want)}_20261122_103526"
+        (sess / "moments").mkdir(parents=True)
+        (sess / "source.json").write_text(json.dumps({"url": url}))
+        assert credit_from_source("{link}", sess / "moments" / "m001_10s.mp4") == want
+    assert credit_from_source("{link}", tmp_path / "loose.mp4") == ""          # unknown stream: no wrong credit
+    assert credit_from_source("clip by us", tmp_path / "loose.mp4") == "clip by us"

@@ -481,8 +481,9 @@ class EnhanceCfg(_Strict):
     hide_gameplay_cam: bool = True
     title_size: float = Field(0.034, gt=0.01, le=0.1)      # title text height as a fraction of frame height
     # the streamer's credit, drawn under the title for the whole clip (owner rule: every release credits its
-    # streamer on screen). "{channel}" is the channel the moment was recorded from; "" = no credit line.
-    credit: str = "twitch.tv/{channel}"
+    # streamer on screen). "{link}" is the stream the moment was recorded from (its session's source.json url:
+    # "twitch.tv/supertf", "youtube.com/@IShowSpeed"), "{channel}" the bare channel name; "" = no credit line.
+    credit: str = "{link}"
     credit_size: float = Field(0.022, gt=0.008, le=0.06)    # credit text height as a fraction of frame height
     # AI upscaling of the webcam picture with Real-ESRGAN, when the program is installed under
     # <models_dir>/realesrgan/ (nothing is downloaded by Clip Studio itself). "auto": only for a small webcam

@@ -876,18 +876,20 @@ class Studio:
 
     @staticmethod
     def _credit_text(p: Project, cfg: Config) -> str:
-        """The on-screen streamer credit ("twitch.tv/<channel>"), or "" when off or the channel is unknown."""
+        """The on-screen streamer credit, or "" when off or the stream is unknown.
+
+        ``{link}`` is the stream the moment was recorded from, as its session's source.json names it
+        ("twitch.tv/supertf", "youtube.com/@IShowSpeed", "kick.com/..."); ``{channel}`` is the bare channel name."""
         tpl = (cfg.enhance.credit or "").strip()
         if not tpl:
             return ""
-        if "{channel}" not in tpl:
+        if "{channel}" not in tpl and "{link}" not in tpl:
             return tpl
-        from clipstudio.chat.emotes import channel_from_source
         try:
-            ch = channel_from_source(p.source_path())
+            src = p.source_path()
         except Exception:
-            ch = None
-        return tpl.replace("{channel}", ch) if ch else ""
+            return ""
+        return credit_from_source(tpl, src)
 
     def _title_image(self, p: Project, title: str | None, cfg: Config, plan: CropPlan, state: StateFile, d: Path,
                      resume: bool, force: bool) -> tuple[Path, int, int, float] | None:
@@ -1192,3 +1194,33 @@ class Studio:
                         self.cfg.highlights.minimum_score)
             good = [pool[0].id]
         return good
+
+
+def stream_link(source: Path) -> str | None:
+    """"twitch.tv/<channel>" / "youtube.com/@<handle>" for a live moment, from its session's source.json url."""
+    if source.parent.name != "moments":
+        return None
+    f = source.parent.parent / "source.json"
+    try:
+        url = str(json.loads(f.read_text(encoding="utf-8")).get("url") or "")
+    except (OSError, ValueError):
+        return None
+    if not url.startswith("http"):
+        return None
+    link = url.split("://", 1)[1]
+    link = link[4:] if link.startswith("www.") else link
+    link = link.split("?", 1)[0].rstrip("/")
+    for tail in ("/live", "/streams", "/videos"):
+        if link.endswith(tail):
+            link = link[: -len(tail)]
+    return link or None
+
+
+def credit_from_source(tpl: str, source: Path) -> str:
+    """Fill a credit template ({link}, {channel}) for a moment; "" when what it needs is unknown."""
+    from clipstudio.chat.emotes import channel_from_source
+    ch = channel_from_source(source)
+    link = stream_link(source)
+    if ("{channel}" in tpl and not ch) or ("{link}" in tpl and not link):
+        return ""
+    return tpl.replace("{link}", link or "").replace("{channel}", ch or "")
