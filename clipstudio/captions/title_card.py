@@ -48,13 +48,20 @@ def _runs(text: str) -> list[tuple[bool, str]]:
 
 
 def render_title(text: str, out: Path, frame_w: int, frame_h: int, size: float = 0.034, max_width: float = 0.9,
-                 max_lines: int = 2, min_scale: float = 0.7) -> tuple[int, int] | None:
-    """Write the title picture to ``out`` (PNG with alpha). Returns its (width, height), or None for no text."""
+                 max_lines: int = 2, min_scale: float = 0.7, credit: str = "",
+                 credit_size: float = 0.022) -> tuple[int, int] | None:
+    """Write the title picture to ``out`` (PNG with alpha). Returns its (width, height), or None for no text.
+
+    ``credit``: the streamer's credit (e.g. "twitch.tv/supertf"), a smaller line under the title. With no title
+    the picture is the credit line alone."""
     from PIL import Image, ImageDraw, ImageFont
 
     text = " ".join(text.split())
-    if not text:
+    credit = " ".join(credit.split())
+    if not text and not credit:
         return None
+    if not text:
+        text, credit, size = credit, "", credit_size
     fs0 = max(14, int(round(size * frame_h)))
     _, font_file = resolve_font(TEXT_FONTS, True)
     limit = int(frame_w * max_width)
@@ -92,8 +99,25 @@ def render_title(text: str, out: Path, frame_w: int, frame_h: int, size: float =
     line_h = int(fs * 1.28)
     w = int(max(width(ln) for ln in lines)) + 4 * stroke
     h = line_h * len(lines) + 3 * stroke
+    cfont = None
+    if credit:
+        cfs = max(12, int(round(credit_size * frame_h)))
+        try:
+            cfont = ImageFont.truetype(font_file, cfs) if font_file else ImageFont.load_default()
+        except OSError:
+            cfont = ImageFont.load_default()
+        while cfont.getlength(credit) > limit and cfs > 12:
+            cfs -= 2
+            cfont = ImageFont.truetype(font_file, cfs) if font_file else cfont
+        cstroke = max(2, int(round(cfs * 0.12)))
+        w = max(w, int(cfont.getlength(credit)) + 4 * cstroke)
+        title_h = h
+        h += int(cfs * 1.3) + cstroke
     img = Image.new("RGBA", (w + (w % 2), h + (h % 2)), (0, 0, 0, 0))
     dr = ImageDraw.Draw(img)
+    if cfont is not None:
+        dr.text(((img.width - cfont.getlength(credit)) / 2, title_h), credit, font=cfont, fill=(225, 225, 225, 255),
+                stroke_width=cstroke, stroke_fill=(0, 0, 0, 255))
     for i, ln in enumerate(lines):
         x = (img.width - width(ln)) / 2
         y = stroke + i * line_h

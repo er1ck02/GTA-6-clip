@@ -54,7 +54,7 @@ def source_black_seconds(segs: list[tuple[float, float]], start: float, end: flo
 
 SILENT_TRACK_DBFS = -60.0  # a "mic" stream whose loudest half second is quieter than this carries no speech
 STAGE_VERSIONS = {"metadata": 2, "extract_audio": 2, "speech_audio": 2, "transcribe": 2, "loudness": 1, "candidates": 15,
-                  "facecam": 5, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 8, "captions": 9, "render": 16, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 6, "game_subs": 2, "face_sr": 1, "title": 2}
+                  "facecam": 5, "track": 2, "visual": 1, "chat": 1, "rank": 2, "plan": 8, "captions": 9, "render": 16, "qc": 6, "platforms": 1, "edges": 1, "framing": 3, "chat_overlay": 6, "game_subs": 2, "face_sr": 1, "title": 3}
 
 
 @dataclass
@@ -816,7 +816,7 @@ class Studio:
         f_chat = self._chat_overlay(p, c, cfg, plan, state, d, f_caps if caps_on else None, resume, force)
 
         f_face, k_face = self._face_upscale(p, c, cfg, plan, state, d, resume, force)
-        title_img = self._title_image(title, cfg, plan, state, d, resume, force)
+        title_img = self._title_image(p, title, cfg, plan, state, d, resume, force)
 
         voice = self.voice_track(media, cfg, self.speech_tracks_used(p))
         punches = self.punches(p, c, cfg)
@@ -824,7 +824,8 @@ class Studio:
                      p.state.data["source"]["fingerprint"], cfg.section_hash("video", "audio", "export", "enhance", "reframing"),
                      f_ass.read_text(encoding="utf-8") if caps_on else None, voice, punches, c.cuts,
                      (f_chat.read_text(encoding="utf-8") if isinstance(f_chat, Path) else
-                      (state.stage("chat_overlay").key if f_chat else None)), k_face, title, title_img[1:] if title_img else None)
+                      (state.stage("chat_overlay").key if f_chat else None)), k_face, title, title_img[1:] if title_img else None,
+                     self._credit_text(p, cfg))
         state.data["punches"] = punches
         hide = self._stream_chat_boxes(p, cfg, media)
         r = run_stage(state, "render", k_r, [f_out],
@@ -873,18 +874,36 @@ class Studio:
         plats = self._platforms(state, c, cfg, f_out, qc, platforms, resume, force, k_r)
         return ClipResult(c.id, f_out, qc, round(time.perf_counter() - t0, 2), cached, plats)
 
-    def _title_image(self, title: str | None, cfg: Config, plan: CropPlan, state: StateFile, d: Path,
+    @staticmethod
+    def _credit_text(p: Project, cfg: Config) -> str:
+        """The on-screen streamer credit ("twitch.tv/<channel>"), or "" when off or the channel is unknown."""
+        tpl = (cfg.enhance.credit or "").strip()
+        if not tpl:
+            return ""
+        if "{channel}" not in tpl:
+            return tpl
+        from clipstudio.chat.emotes import channel_from_source
+        try:
+            ch = channel_from_source(p.source_path())
+        except Exception:
+            ch = None
+        return tpl.replace("{channel}", ch) if ch else ""
+
+    def _title_image(self, p: Project, title: str | None, cfg: Config, plan: CropPlan, state: StateFile, d: Path,
                      resume: bool, force: bool) -> tuple[Path, int, int, float] | None:
         """Per-clip stage: the title as a picture, and where it goes (centred in the band above the streamer,
         or above the gameplay when there is no webcam). None when the clip has no written title."""
-        if not title:
+        credit = self._credit_text(p, cfg)
+        if not title and not credit:
             return None
         f_png, f_meta = d / "title.png", d / "title.json"
-        k = key_of("title", STAGE_VERSIONS["title"], title, cfg.enhance.title_size, plan.out_width, plan.out_height)
+        k = key_of("title", STAGE_VERSIONS["title"], title, cfg.enhance.title_size, plan.out_width, plan.out_height,
+                   credit, cfg.enhance.credit_size)
 
         def do() -> None:
             from clipstudio.captions.title_card import render_title
-            size = render_title(title, f_png, plan.out_width, plan.out_height, cfg.enhance.title_size)
+            size = render_title(title or "", f_png, plan.out_width, plan.out_height, cfg.enhance.title_size,
+                                credit=credit, credit_size=cfg.enhance.credit_size)
             f_meta.write_text(json.dumps({"size": size}))
 
         try:

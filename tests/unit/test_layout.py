@@ -211,3 +211,13 @@ def test_stream_chat_box_is_smeared_before_any_crop():
     assert "delogo" not in build_video_graph(plan, 60, None, cfg.enhance)
     two = hide_in_source("[0:v]null[a];[0:v]null[b]", box)
     assert two.count("[0:v]") == 1 and "split=2[srcclean0][srcclean1]" in two
+
+
+def test_credit_line_sits_under_the_title_or_alone(tmp_path):
+    from clipstudio.captions.title_card import render_title
+    plain = render_title("supertf vs airport security 😭", tmp_path / "p.png", 1080, 1920)
+    credited = render_title("supertf vs airport security 😭", tmp_path / "c.png", 1080, 1920, credit="twitch.tv/supertf")
+    assert credited[1] > plain[1] and credited[0] <= 1080 * 0.95     # one more (smaller) line underneath
+    alone = render_title("", tmp_path / "a.png", 1080, 1920, credit="twitch.tv/supertf")
+    assert alone and alone[1] < plain[1] * 1.2
+    assert render_title("", tmp_path / "n.png", 1080, 1920, credit="  ") is None
